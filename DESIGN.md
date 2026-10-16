@@ -7,10 +7,11 @@ why the project exists and in what order it is built; README.md what there is
 and how to run it.
 
 **Status: proposed at the end of milestone M0 and decided with the user on
-2026-10-16; section 7 records the decisions. M1, one process on one cog, was
-built the same evening: sections 3 and 4 say where what is built differs from
-what was proposed.** What M0 measured is in section 6 and in `erl/stats.txt`;
-what M1 measured is in section 8.
+2026-10-16; section 7 records the decisions. M1, one process on one cog, and
+M2, processes and messages on that cog, were built the same evening and
+night: sections 3 and 4 say where what is built differs from what was
+proposed.** What M0 measured is in section 6 and in `erl/stats.txt`; what M1
+and M2 measured is in section 8.
 
 ## 1. The pieces
 
@@ -135,8 +136,26 @@ with the live X registers; one that allocates asks `ensure` for the room and
 reads its arguments again after, a collection having perhaps moved them; and
 one that fails says so by its result, the handler going to the fail label or
 raising. The comparison of terms and the writing of terms keep the parts
-still to do on stacks of their own, sixty-four deep. Reductions are counted
-at every call and not yet acted on; that is M2's scheduler.
+still to do on stacks of their own, sixty-four deep.
+
+**As built in M2**, still on one scheduler: a process's turn ends at the
+call that spends its last reduction, 2,000 a turn, where its arguments are
+the live X registers and are saved in its table entry, sixteen at most,
+which is why the packer refuses a function of more arguments; and at a
+`receive` that finds no message, where nothing is live. The run queue is a
+list through the table. `send` copies the message into a fragment of the
+pool, sharing the literals and nothing else, and appends it to the receiver's
+mailbox; the receive instructions walk the mailbox from where the last
+receive stopped, `remove_message` moves the message's fragment to the
+process's pending list, and the next collection, which the sixteenth pending
+fragment forces, treats the pending fragments as from-space, copies what is
+live out of them and frees them, so that a term read out of a message is
+never copied twice and never dangles. `wait_timeout` records a deadline in
+milliseconds from the `Millis` hook; the scheduler wakes the processes whose
+time has passed before each turn and, with nothing to run, spins until the
+earliest. A fun is local, an external function's or a BIF's, which its second
+long says; `apply` by name finds the function in the image's table, puts the
+arguments in the X registers and has the handler jump, or calls the BIF.
 
 **What the interpreter cannot do** in OctoGo: recurse in a goroutine without a
 `--gostack` bound, so term comparison and message copying are written with an
@@ -316,3 +335,25 @@ checked build tests every index. Where the time goes is M5's question, with
 p2-11's `prof/` as the method; the figures here are the baseline it starts
 from. For the demos they are enough: the four modules together run in just
 over a second.
+
+**M2**, the same night: `vm/proc.ogo` and `vm/message.ogo` and the handlers
+of `send` and the six receive instructions, and `spawn/1`, `spawn/3`,
+`send/2`, `apply/2`, `apply/3` and `is_process_alive/1` among the BIFs, now
+85. The twin holds nine modules to `erl`: the four of M1 and `funs`,
+`pingpong`, `ring` (100 processes, a token 10,000 hops around them), `sieve`
+(27 processes in a chain) and `counter` (a server, references, two
+timeouts). All nine agree, and so does the board, line for line, with the
+image of `demo` now 2,912 longs of code and 60 functions:
+
+| Build | 351,393 instructions in | Instructions a second |
+| --- | --- | --- |
+| checked, 160 MHz | 4,552 ms | 77,195 |
+| `--unchecked`, 160 MHz | 3,751 ms | 93,679 |
+
+Of the time, 1,010 ms are `counter`'s two waits, in which nothing runs; the
+rest is about 99,000 instructions a second checked and 128,000 unchecked,
+below M1's figure because a `send` copies and allocates and a `receive`
+walks the mailbox, which an instruction count does not show. The OctoGo
+checker took M2 as it took M1; Go found one thing OctoGo allows, the BIF
+table's initializer reaching `apply`, which reaches the table, so the table
+is filled in `init`.

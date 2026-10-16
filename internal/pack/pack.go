@@ -67,11 +67,12 @@ type packer struct {
 	labels    map[*beam.File]map[int]uint32    // label -> code offset
 	fixups    []fixup
 	funFixups []funFixup
+	litFixups []funFixup
 	errs      []string
 }
 
 type funFixup struct {
-	at    int // in Funs
+	at    int // in Funs, or in Literals for a litFixup
 	file  *beam.File
 	label int
 }
@@ -147,6 +148,14 @@ func Pack(paths []string, opts Options) (*Image, error) {
 		}
 		p.img.Funs[fx.at] = off
 	}
+	for _, fx := range p.litFixups {
+		off, ok := p.labels[fx.file][fx.label]
+		if !ok {
+			p.errorf("%s: an external fun's label %d is nowhere", fx.file.Name, fx.label)
+			continue
+		}
+		p.img.Literals[fx.at] = off
+	}
 	if len(p.errs) > 0 {
 		return nil, errors.New(strings.Join(p.errs, "\n"))
 	}
@@ -209,6 +218,9 @@ func (p *packer) collect() error {
 		p.owners[f] = map[int]*function{}
 		for _, fn := range fns {
 			k := fnKey{f.Module, fn.Name, fn.Arity}
+			if fn.Arity > MaxArity {
+				return fmt.Errorf("%s: %s has %d arguments, and the VM keeps %d X registers across a switch", f.Name, k, fn.Arity, MaxArity)
+			}
 			x := &function{key: k, file: f, fn: fn, export: exported[k], index: len(p.funcs)}
 			p.funcs[k] = x
 			for _, in := range fn.Instrs {
@@ -268,6 +280,13 @@ func (p *packer) reach(entry fnKey) []*function {
 	for _, fn := range all {
 		if fn.export {
 			add(fn)
+		}
+	}
+	for _, f := range p.files {
+		for _, t := range f.Literals {
+			if t.Kind == beam.TermExport {
+				add(p.funcs[fnKey{t.Atom, t.Elems[0].Atom, int(t.Elems[1].Int)}])
+			}
 		}
 	}
 	for i := 0; i < len(work); i++ {
@@ -371,7 +390,19 @@ func (p *packer) layoutTerm(t beam.Term) (uint32, error) {
 	case beam.TermMap:
 		return 0, errors.New("a map, which is not in version 1")
 	case beam.TermExport:
-		return 0, errors.New("a fun of an external function, which is not yet done")
+		m := beam.MFA{Module: t.Atom, Function: t.Elems[0].Atom, Arity: int(t.Elems[1].Int)}
+		at := len(p.img.Literals)
+		if bif, ok := bifIndex(m); ok {
+			p.img.Literals = append(p.img.Literals, Header(HdrFun, FunHeadLongs), uint32(bif), FunHead(m.Arity, 0, FunBif))
+			return BoxedPtr(at), nil
+		}
+		fn, ok := p.funcs[fnKey{m.Module, m.Function, m.Arity}]
+		if !ok {
+			return 0, fmt.Errorf("fun %s, which is no BIF and no function of the modules packed", m)
+		}
+		p.img.Literals = append(p.img.Literals, Header(HdrFun, FunHeadLongs), 0, FunHead(m.Arity, 0, FunExport))
+		p.litFixups = append(p.litFixups, funFixup{at: at + 1, file: fn.file, label: fn.fn.Entry})
+		return BoxedPtr(at), nil
 	}
 	return 0, fmt.Errorf("a term of kind %d", t.Kind)
 }
@@ -542,6 +573,9 @@ func (p *packer) funIndex(f *beam.File, idx int) int {
 		return i
 	}
 	l := f.Funs[idx]
+	if l.Arity > MaxArity {
+		p.errorf("%s: a fun of %s with %d arguments and free variables together, and the VM keeps %d X registers across a switch", f.Name, l.Name, l.Arity, MaxArity)
+	}
 	i := len(p.img.Funs) / 3
 	p.funs[f][idx] = i
 	p.img.Funs = append(p.img.Funs, 0, uint32(l.Arity), uint32(l.NumFree))
@@ -623,6 +657,9 @@ func (p *packer) supported(op beam.Opcode) bool {
 		beam.OpGetList, beam.OpGetHd, beam.OpGetTl, beam.OpPutList, beam.OpPutTuple2,
 		beam.OpGetTupleElement, beam.OpSetTupleElement, beam.OpUpdateRecord,
 		beam.OpCallFun, beam.OpCallFun2,
+		beam.OpSend, beam.OpLoopRec, beam.OpLoopRecEnd, beam.OpWait, beam.OpWaitTimeout, beam.OpTimeout,
+		beam.OpRemoveMessage, beam.OpRecvMarkerBind, beam.OpRecvMarkerClear, beam.OpRecvMarkerReserve,
+		beam.OpRecvMarkerUse,
 		beam.OpBadmatch, beam.OpCaseEnd, beam.OpIfEnd, beam.OpBadrecord:
 		return true
 	}

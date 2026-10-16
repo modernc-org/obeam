@@ -11,14 +11,16 @@ scheduler on each of seven cogs. The user is the author of OctoGo (`../ogo`) and
 p2-11 (`../p2-11`); the idea came from a talk with a friend who likes Erlang on
 2026-10-16.
 
-**Status, 2026-10-16, night: M1 built.** The user said go that afternoon; M0
+**Status, 2026-10-16, night: M2 built.** The user said go that afternoon; M0
 (the reader, the corpus, DESIGN.md) was done by evening, DESIGN.md's open
-points decided with the user, and M1, one process on one cog, built the same
-night: the packer writes the image, the VM in `vm/` runs `fac`, `fib`, `lst`
-and `tuples` under the Go twin with the same bytes `erl` prints, and the
-board prints the same lines: 176,700 instructions in 1,238 ms checked at
-160 MHz, 142,730 a second (DESIGN.md section 8). Next: M2, processes and
-messages (funs are already in). The files:
+points decided with the user, M1 (one process on one cog) built and
+committed (e1a384e), and M2 (processes, messages, receive with timeouts,
+funs and apply, on one scheduler) built the same night: nine modules of the
+corpus run under the Go twin with the bytes `erl` prints, and the board
+prints the same lines (DESIGN.md section 8 has the figures). Next: M3,
+seven scheduler cogs, which makes the X registers, `bargs`, the format
+buffer and the writer's and comparer's stacks per scheduler, and puts the
+run queue, the pool and the mailboxes under locks. The files:
 
 - `ASSESSMENT.md`: the consolidated assessment and the plan. Verdict: start,
   staged. It holds the measured facts (opcode counts, AtomVM's size, what a
@@ -184,6 +186,18 @@ the tree or be ahead of what this file knows; do not install over it.
   `allocate` zeroes the slots so the collector reads only terms.
 - Check a change three ways: `ogo build ./vm` (the OctoGo checker, seconds),
   `make twin` (Go, and the oracle against `erl`), and the board.
+- **Never run the twin, or `make test`, in a shell that has `ulimit -v
+  4000000` set for the compiler cap**: `erl` reserves more virtual memory
+  than that at boot and dies with `load_failed` of its own kernel modules,
+  which the test reports as `erl: exit status 1` for every module. Cap the
+  compiler in a subshell, `(ulimit -v 4000000; ogo build .)`, and nothing
+  else. Found 2026-10-16, twice, before the crash dump said why.
+- A process's turn ends only at a call (`jump`) or a `receive` that waits;
+  what is saved is the call's arguments, `maxArity` of them. A message lives
+  in a fragment of the pool until the receiver's next collection; `inFrom`
+  counts the pending fragments as from-space. The timers are `Millis`'s
+  milliseconds; without the hook `now()` ticks once a reading, so a timeout
+  still ends.
 
 ## The host tool and the corpus
 

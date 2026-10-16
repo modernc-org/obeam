@@ -15,76 +15,91 @@
 type handler func(pc uint32) uint32
 
 var handlers = [256]handler{
-	opHalt:             hHalt,
-	opFuncInfo:         hFuncInfo,
-	opCall:             hCall,
-	opCallLast:         hCallLast,
-	opCallOnly:         hCallOnly,
-	opCallBif:          hCallBif,
-	opBif0:             hBif0,
-	opBif1:             hBif1,
-	opBif2:             hBif2,
-	opGcBif1:           hGcBif1,
-	opGcBif2:           hGcBif2,
-	opGcBif3:           hGcBif3,
-	opAllocate:         hAllocate,
-	opAllocateHeap:     hAllocateHeap,
-	opDeallocate:       hDeallocate,
-	opInitYregs:        hInitYregs,
-	opTrim:             hTrim,
-	opSwap:             hSwap,
-	opTestHeap:         hTestHeap,
-	opReturn:           hReturn,
-	opMove:             hMove,
-	opJump:             hJump,
-	opSelectVal:        hSelectVal,
-	opSelectTupleArity: hSelectTupleArity,
-	opIsLt:             hIsLt,
-	opIsGe:             hIsGe,
-	opIsEq:             hIsEq,
-	opIsNe:             hIsNe,
-	opIsEqExact:        hIsEqExact,
-	opIsNeExact:        hIsNeExact,
-	opIsInteger:        hIsInteger,
-	opIsFloat:          hIsFloat,
-	opIsNumber:         hIsNumber,
-	opIsAtom:           hIsAtom,
-	opIsPid:            hIsPid,
-	opIsReference:      hIsReference,
-	opIsPort:           hIsPort,
-	opIsNil:            hIsNil,
-	opIsBinary:         hIsBinary,
-	opIsBitstr:         hIsBinary,
-	opIsList:           hIsList,
-	opIsNonemptyList:   hIsNonemptyList,
-	opIsTuple:          hIsTuple,
-	opTestArity:        hTestArity,
-	opIsTaggedTuple:    hIsTaggedTuple,
-	opIsBoolean:        hIsBoolean,
-	opIsFunction:       hIsFunction,
-	opIsFunction2:      hIsFunction2,
-	opIsMap:            hIsMap,
-	opGetList:          hGetList,
-	opGetHd:            hGetHd,
-	opGetTl:            hGetTl,
-	opPutList:          hPutList,
-	opPutTuple2:        hPutTuple2,
-	opGetTupleElement:  hGetTupleElement,
-	opSetTupleElement:  hSetTupleElement,
-	opUpdateRecord:     hUpdateRecord,
-	opMakeFun3:         hMakeFun3,
-	opCallFun:          hCallFun,
-	opCallFun2:         hCallFun2,
-	opBadmatch:         hBadmatch,
-	opCaseEnd:          hCaseEnd,
-	opIfEnd:            hIfEnd,
-	opBadrecord:        hBadrecord,
+	opHalt:              hHalt,
+	opFuncInfo:          hFuncInfo,
+	opCall:              hCall,
+	opCallLast:          hCallLast,
+	opCallOnly:          hCallOnly,
+	opCallBif:           hCallBif,
+	opBif0:              hBif0,
+	opBif1:              hBif1,
+	opBif2:              hBif2,
+	opGcBif1:            hGcBif1,
+	opGcBif2:            hGcBif2,
+	opGcBif3:            hGcBif3,
+	opAllocate:          hAllocate,
+	opAllocateHeap:      hAllocateHeap,
+	opDeallocate:        hDeallocate,
+	opInitYregs:         hInitYregs,
+	opTrim:              hTrim,
+	opSwap:              hSwap,
+	opTestHeap:          hTestHeap,
+	opReturn:            hReturn,
+	opMove:              hMove,
+	opJump:              hJump,
+	opSelectVal:         hSelectVal,
+	opSelectTupleArity:  hSelectTupleArity,
+	opIsLt:              hIsLt,
+	opIsGe:              hIsGe,
+	opIsEq:              hIsEq,
+	opIsNe:              hIsNe,
+	opIsEqExact:         hIsEqExact,
+	opIsNeExact:         hIsNeExact,
+	opIsInteger:         hIsInteger,
+	opIsFloat:           hIsFloat,
+	opIsNumber:          hIsNumber,
+	opIsAtom:            hIsAtom,
+	opIsPid:             hIsPid,
+	opIsReference:       hIsReference,
+	opIsPort:            hIsPort,
+	opIsNil:             hIsNil,
+	opIsBinary:          hIsBinary,
+	opIsBitstr:          hIsBinary,
+	opIsList:            hIsList,
+	opIsNonemptyList:    hIsNonemptyList,
+	opIsTuple:           hIsTuple,
+	opTestArity:         hTestArity,
+	opIsTaggedTuple:     hIsTaggedTuple,
+	opIsBoolean:         hIsBoolean,
+	opIsFunction:        hIsFunction,
+	opIsFunction2:       hIsFunction2,
+	opIsMap:             hIsMap,
+	opGetList:           hGetList,
+	opGetHd:             hGetHd,
+	opGetTl:             hGetTl,
+	opPutList:           hPutList,
+	opPutTuple2:         hPutTuple2,
+	opGetTupleElement:   hGetTupleElement,
+	opSetTupleElement:   hSetTupleElement,
+	opUpdateRecord:      hUpdateRecord,
+	opMakeFun3:          hMakeFun3,
+	opCallFun:           hCallFun,
+	opCallFun2:          hCallFun2,
+	opSend:              hSend,
+	opLoopRec:           hLoopRec,
+	opLoopRecEnd:        hLoopRecEnd,
+	opWait:              hWait,
+	opWaitTimeout:       hWaitTimeout,
+	opTimeout:           hTimeout,
+	opRemoveMessage:     hRemoveMessage,
+	opRecvMarkerBind:    hRecvMarkerBind,
+	opRecvMarkerClear:   hRecvMarkerClear,
+	opRecvMarkerReserve: hRecvMarkerReserve,
+	opRecvMarkerUse:     hRecvMarkerUse,
+	opBadmatch:          hBadmatch,
+	opCaseEnd:           hCaseEnd,
+	opIfEnd:             hIfEnd,
+	opBadrecord:         hBadrecord,
 }
 
-// run interprets a process from where it continues until it ends.
+// run interprets a process from where it continues until it ends, waits
+// for a message, or has used its reductions.
 func run(p *Proc) {
 	cur = p
 	p.state = procRunning
+	for i := uint32(0); i < p.nsave; i++ {
+		x[i] = p.xsave[i]
+	}
 	pc := p.pc
 	for pc != 0 {
 		h := handlers[code[pc]&0xff]
@@ -109,22 +124,29 @@ func hFuncInfo(pc uint32) uint32 {
 }
 
 func hCall(pc uint32) uint32 {
-	cur.reds--
 	cur.cp = pc + 3
-	return code[pc+2]
+	return jump(code[pc+2], code[pc+1])
 }
 
 func hCallLast(pc uint32) uint32 {
-	cur.reds--
 	n := code[pc+3]
 	cur.cp = arena[cur.stop] >> 3
 	cur.stop += n + 1
-	return code[pc+2]
+	return jump(code[pc+2], code[pc+1])
 }
 
 func hCallOnly(pc uint32) uint32 {
+	return jump(code[pc+2], code[pc+1])
+}
+
+// jump is a call's last step: it costs a reduction, and when the process has
+// none left its turn ends here, with live X registers saved.
+func jump(target, live uint32) uint32 {
 	cur.reds--
-	return code[pc+2]
+	if cur.reds <= 0 {
+		return yield(target, live)
+	}
+	return target
 }
 
 func hReturn(pc uint32) uint32 {
@@ -192,7 +214,7 @@ func hSwap(pc uint32) uint32 {
 
 func hTestHeap(pc uint32) uint32 {
 	need, live := code[pc+1], code[pc+2]
-	if cur.htop+need > cur.stop && !gc(live, need, 0) {
+	if (cur.htop+need > cur.stop || cur.forceGC) && !gc(live, need, 0) {
 		raiseAtom(atomError, atomSystemLimit)
 		return 0
 	}
@@ -390,8 +412,9 @@ func hCallFun2(pc uint32) uint32 {
 	return callFun(code[pc+2], src(code[pc+3]), pc+4)
 }
 
-// callFun calls a fun with its arguments in x0 and up, its environment put
-// after them.
+// callFun calls a fun with its arguments in x0 and up: a local or external
+// one by putting its environment after them and jumping, a BIF's by calling
+// the BIF.
 func callFun(arity, f, next uint32) uint32 {
 	if !isFun(f) {
 		raiseTagged(atomError, atomBadfun, f)
@@ -401,14 +424,28 @@ func callFun(arity, f, next uint32) uint32 {
 		raiseTagged(atomError, atomBadarity, f)
 		return 0
 	}
+	if funKind(f) == funBif {
+		for i := uint32(0); i < arity; i++ {
+			bargs[i] = x[i]
+		}
+		nbargs = arity
+		curLive = int32(arity)
+		r := bifs[funCode(f)].f(arity)
+		nbargs = 0
+		if r == nonValue {
+			raise(mkAtom(bifClass), bifReason)
+			return 0
+		}
+		x[0] = r
+		return next
+	}
 	n := funFree(f)
 	i := boxIdx(f) + 1 + funHeadLongs
 	for k := uint32(0); k < n; k++ {
 		x[arity+k] = arena[i+k]
 	}
-	cur.reds--
 	cur.cp = next
-	return funCode(f)
+	return jump(funCode(f), arity+n)
 }
 
 func hBadmatch(pc uint32) uint32 {
@@ -447,8 +484,88 @@ func hCallBif(pc uint32) uint32 {
 		raise(mkAtom(bifClass), bifReason)
 		return 0
 	}
+	if r == jumpValue {
+		// apply: the BIF set x0 and up and left where to go in bifJump.
+		cur.cp = pc + 3
+		return jump(bifJump, bifLive)
+	}
 	x[0] = r
 	return pc + 3
+}
+
+// The messages. send's pid is in x0 and its message in x1; the receive
+// instructions walk the mailbox from where the last one stopped.
+
+func hSend(pc uint32) uint32 {
+	if !sendMsg(x[0], x[1]) {
+		raise(mkAtom(bifClass), bifReason)
+		return 0
+	}
+	x[0] = x[1]
+	return pc + 1
+}
+
+// hLoopRec puts the message a receive is looking at in its destination, or
+// goes to the fail label when there is none.
+func hLoopRec(pc uint32) uint32 {
+	c := cur.mboxCur
+	if c == noBlock {
+		return code[pc+1]
+	}
+	store(code[pc+2], arena[c+2])
+	return pc + 3
+}
+
+// hLoopRecEnd looks at the next message and goes back to the receive.
+func hLoopRecEnd(pc uint32) uint32 {
+	cur.mboxPrev = cur.mboxCur
+	cur.mboxCur = arena[cur.mboxCur]
+	return code[pc+1]
+}
+
+func hRemoveMessage(pc uint32) uint32 {
+	takeMessage()
+	if cur.timed {
+		cur.timed = false
+		ntimed--
+	}
+	return pc + 1
+}
+
+func hWait(pc uint32) uint32 {
+	return sleep(code[pc+1], false, 0, 0)
+}
+
+// hWaitTimeout waits for a message or for a time in milliseconds, infinity
+// being no time.
+func hWaitTimeout(pc uint32) uint32 {
+	t := src(code[pc+2])
+	if t == mkAtom(atomInfinity) {
+		return sleep(code[pc+1], false, 0, 0)
+	}
+	if !isSmall(t) || smallVal(t) < 0 {
+		raiseAtom(atomError, atomTimeoutValue)
+		return 0
+	}
+	return sleep(code[pc+1], true, uint32(smallVal(t)), pc+3)
+}
+
+// hTimeout is where a timed-out receive goes on: the mailbox is looked at
+// from its head again.
+func hTimeout(pc uint32) uint32 {
+	cur.mboxCur = cur.mboxHead
+	cur.mboxPrev = noBlock
+	return pc + 1
+}
+
+// The receive markers shortcut the mailbox scan of a receive that waits for
+// a fresh reference; without them the scan is only longer.
+func hRecvMarkerBind(pc uint32) uint32  { return pc + 3 }
+func hRecvMarkerClear(pc uint32) uint32 { return pc + 2 }
+func hRecvMarkerUse(pc uint32) uint32   { return pc + 2 }
+func hRecvMarkerReserve(pc uint32) uint32 {
+	store(code[pc+1], mkSmall(0))
+	return pc + 2
 }
 
 func hBif0(pc uint32) uint32 {

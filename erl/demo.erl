@@ -2,8 +2,8 @@
 %% Use of this source code is governed by a BSD-style
 %% license that can be found in the LICENSE file.
 
-%% demo: what the board runs at milestone M1: the four modules a single
-%% process can run, one after the other.
+%% demo: what the board runs: the modules of the corpus the VM can run, one
+%% after the other. counter waits a second for a reply that never comes.
 -module(demo).
 -export([main/0]).
 
@@ -11,4 +11,9 @@ main() ->
     fac:main(),
     fib:main(),
     lst:main(),
-    tuples:main().
+    tuples:main(),
+    funs:main(),
+    pingpong:main(),
+    ring:main(),
+    sieve:main(),
+    counter:main().

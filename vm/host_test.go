@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"modernc.org/obeam/internal/pack"
 )
@@ -28,7 +29,7 @@ func TestErl(t *testing.T) {
 	if err != nil {
 		t.Skip("no erl on PATH")
 	}
-	for _, m := range []string{"fac", "fib", "lst", "tuples"} {
+	for _, m := range []string{"fac", "fib", "lst", "tuples", "funs", "pingpong", "ring", "sieve", "counter"} {
 		t.Run(m, func(t *testing.T) {
 			img, err := pack.Pack([]string{filepath.Join(root, "erl", m+".beam")}, pack.Options{Lines: true})
 			if err != nil {
@@ -46,14 +47,20 @@ func TestErl(t *testing.T) {
 	}
 }
 
-var testOut []byte
+var (
+	testOut   []byte
+	testStart = time.Now()
+)
 
 func testWrite(b byte) { testOut = append(testOut, b) }
+
+func testMillis() uint32 { return uint32(time.Since(testStart).Milliseconds()) }
 
 // runImage loads an image, runs its entry and returns what it printed.
 func runImage(img *pack.Image) []byte {
 	Load(img.Code, img.Literals, img.Atoms, img.Funcs, img.Funs, img.Lines, img.Files)
 	Out = testWrite
+	Millis = testMillis
 	testOut = testOut[:0]
 	Run(img.Entry)
 	return append([]byte(nil), testOut...)

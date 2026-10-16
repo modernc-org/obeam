@@ -790,3 +790,174 @@ func bifP2Rnd(n uint32) uint32 {
 	}
 	return intResult(int64(Rnd()))
 }
+
+// Processes: spawn, send, apply.
+
+// findFunction returns the code offset of a function of the image by its
+// module and function atoms and arity.
+func findFunction(m, f, arity uint32) (uint32, bool) {
+	for i := 0; i+3 < len(funcs); i += 4 {
+		if mkAtom(funcs[i+1]) == m && mkAtom(funcs[i+2]) == f && funcs[i+3]&0xff == arity {
+			return funcs[i], true
+		}
+	}
+	return 0, false
+}
+
+// listToArgs puts a list's elements in bargs and answers how many, or -1
+// for what is no list of at most maxArity.
+func listToX(l uint32) int32 {
+	n := int32(0)
+	for isCons(l) {
+		if n == maxArity {
+			return -1
+		}
+		x[n] = arena[consIdx(l)]
+		n++
+		l = arena[consIdx(l)+1]
+	}
+	if l != nilTerm {
+		return -1
+	}
+	return n
+}
+
+// spawnAt makes a process to run the code at entry with the n arguments in
+// x0 and up, copied to it, and queues it.
+func spawnAt(entry, n uint32) uint32 {
+	longs := uint32(0)
+	for i := uint32(0); i < n; i++ {
+		s := termSize(x[i])
+		if s < 0 {
+			return failAtom(atomSystemLimit)
+		}
+		longs += uint32(s)
+	}
+	p := spawn(entry, n, longs)
+	if p == nil {
+		return failAtom(atomSystemLimit)
+	}
+	for i := uint32(0); i < n; i++ {
+		root, end := copyTerm(x[i], p.htop)
+		p.xsave[i] = root
+		p.htop = end
+	}
+	enqueue(p)
+	return p.pid()
+}
+
+// bifSpawn1 spawns a fun of no arguments: its environment is what the new
+// process begins with.
+func bifSpawn1(n uint32) uint32 {
+	f := bargs[0]
+	if !isFun(f) || funArity(f) != 0 || funKind(f) == funBif {
+		return badarg()
+	}
+	free := funFree(f)
+	i := boxIdx(f) + 1 + funHeadLongs
+	for k := uint32(0); k < free; k++ {
+		x[k] = arena[i+k]
+	}
+	return spawnAt(funCode(f), free)
+}
+
+// bifSpawn3 spawns a function of the image by name, with a list of arguments.
+func bifSpawn3(n uint32) uint32 {
+	m, f, args := bargs[0], bargs[1], bargs[2]
+	if !isAtom(m) || !isAtom(f) {
+		return badarg()
+	}
+	na := listToX(args)
+	if na < 0 {
+		return badarg()
+	}
+	entry, ok := findFunction(m, f, uint32(na))
+	if !ok {
+		return failAtom(atomUndef)
+	}
+	return spawnAt(entry, uint32(na))
+}
+
+func bifSend(n uint32) uint32 {
+	if !sendMsg(bargs[0], bargs[1]) {
+		return nonValue
+	}
+	return bargs[1]
+}
+
+// bifApply3 calls a function of the image by name with a list of arguments:
+// the arguments go to x0 and up and the handler jumps. A BIF is called here.
+func bifApply3(n uint32) uint32 {
+	m, f, args := bargs[0], bargs[1], bargs[2]
+	if !isAtom(m) || !isAtom(f) {
+		return badarg()
+	}
+	na := listToX(args)
+	if na < 0 {
+		return badarg()
+	}
+	if entry, ok := findFunction(m, f, uint32(na)); ok {
+		bifJump = entry
+		bifLive = uint32(na)
+		return jumpValue
+	}
+	for i := range bifs {
+		if int(bifs[i].arity) != int(na) {
+			continue
+		}
+		b := bifNames[i]
+		if mkAtom(b.module) != m || mkAtom(b.function) != f {
+			continue
+		}
+		for k := int32(0); k < na; k++ {
+			bargs[k] = x[k]
+		}
+		nbargs = uint32(na)
+		return bifs[i].f(uint32(na))
+	}
+	return failAtom(atomUndef)
+}
+
+// bifApply2 calls a fun with a list of arguments.
+func bifApply2(n uint32) uint32 {
+	f, args := bargs[0], bargs[1]
+	if !isFun(f) {
+		return failWith(atomError, f)
+	}
+	na := listToX(args)
+	if na < 0 {
+		return badarg()
+	}
+	if funArity(f) != uint32(na) {
+		return failWith(atomError, f)
+	}
+	if funKind(f) == funBif {
+		for k := int32(0); k < na; k++ {
+			bargs[k] = x[k]
+		}
+		nbargs = uint32(na)
+		return bifs[funCode(f)].f(uint32(na))
+	}
+	free := funFree(f)
+	i := boxIdx(f) + 1 + funHeadLongs
+	for k := uint32(0); k < free; k++ {
+		x[uint32(na)+k] = arena[i+k]
+	}
+	bifJump = funCode(f)
+	bifLive = uint32(na) + free
+	return jumpValue
+}
+
+func bifIsProcessAlive(n uint32) uint32 {
+	if !isPid(bargs[0]) {
+		return badarg()
+	}
+	return boolTerm(procAt(bargs[0]) != nil)
+}
+
+// A bifName is a BIF's module and function, as indexes of well-known atoms.
+type bifName struct {
+	module, function uint32
+}
+
+const noAtom = 0xffffffff

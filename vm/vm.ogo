@@ -45,13 +45,26 @@ func Load(c, literals []uint32, a []string, fc, fn, ln []uint32, fl []string) {
 }
 
 // Run starts a process at a function of no arguments at the code offset
-// entry, runs it to its end, and reports whether it ended normally rather
-// than with an exception.
+// entry and schedules it and whatever it spawns until it ends, and reports
+// whether it ended normally rather than with an exception. The others are
+// left where they are, as halt leaves them.
 func Run(entry uint32) bool {
-	p := spawn(entry)
+	p := spawn(entry, 0, 0)
 	if p == nil {
 		return false
 	}
-	run(p)
+	enqueue(p)
+	for p.state != procExited && p.state != procFailed {
+		wakeExpired()
+		q := dequeue()
+		if q == nil {
+			if !idle() {
+				outString("** every process waits, and none for a time\n")
+				return false
+			}
+			continue
+		}
+		run(q)
+	}
 	return p.state == procExited
 }

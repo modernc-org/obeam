@@ -28,7 +28,8 @@ twin:
 
 # image regenerates image/image.ogo, what the board runs, from the corpus.
 IMAGE_ENTRY   = demo:main/0
-IMAGE_MODULES = erl/demo.beam erl/fac.beam erl/fib.beam erl/lst.beam erl/tuples.beam
+IMAGE_MODULES = erl/demo.beam erl/fac.beam erl/fib.beam erl/lst.beam erl/tuples.beam erl/funs.beam \
+	erl/pingpong.beam erl/ring.beam erl/sieve.beam erl/counter.beam
 
 image: $(BEAMS)
 	mkdir -p image

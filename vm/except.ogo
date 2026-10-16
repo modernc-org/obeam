@@ -13,6 +13,8 @@ var (
 	bifClass  uint32 // an atom index
 	bifReason uint32 // a term
 	bifTag    uint32 // an atom index when the reason is {Tag, bifReason}, else 0xffffffff
+	bifJump   uint32 // where a BIF that answers jumpValue has the process go on
+	bifLive   uint32 // and how many X registers it set
 )
 
 const noTag = 0xffffffff

@@ -42,7 +42,18 @@ const (
 
 	PidIndexBits = 8  // the process table has 256 entries
 	PidGenBits   = 19 // the generation above the index
-	FunHeadLongs = 2  // a fun's longs after its header and before its environment: the code offset, then arity and free count
+	FunHeadLongs = 2  // a fun's longs after its header and before its environment: the code offset or BIF number, then FunHead
+	MaxArity     = 16 // the most arguments a function may take: what a scheduler saves of the X registers at a switch
+
+	// A fun's kind, in FunHead.
+	FunLocal  = 0 // made by make_fun3: its first long is the code offset of its body
+	FunExport = 1 // fun m:f/a of a function in the image: the code offset
+	FunBif    = 2 // fun m:f/a of a BIF: the BIF's number
+
+	// JumpValue is what a BIF answers to have the handler go on at the code
+	// offset it left in bifJump, with x0 and up as it set them: apply's way of
+	// calling a function. Like NonValue, never a term.
+	JumpValue = 1<<6 | HdrNonValue<<3 | 7
 
 	// A register marker, in code only: an x register ends in 0111, a y
 	// register in 1111, the number above.
@@ -71,3 +82,9 @@ func YReg(n int) uint32 { return uint32(n)<<4 | MarkY }
 
 // Pid makes the term of the process at an index, in a generation.
 func Pid(index, gen int) uint32 { return uint32(gen)<<13 | uint32(index)<<5 | ImmPid }
+
+// FunHead makes the second long of a fun: its arity, its free variables and
+// its kind.
+func FunHead(arity, free, kind int) uint32 {
+	return uint32(arity) | uint32(free)<<16 | uint32(kind)<<24
+}

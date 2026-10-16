@@ -110,6 +110,17 @@ func writeFlat(t uint32) {
 		writeInt(int64(t >> 5))
 		out('>')
 	case isFun(t):
+		if funKind(t) == funExport {
+			if m, f, a, ok := funcAt(funCode(t)); ok {
+				outString("fun ")
+				writeAtom(m)
+				out(':')
+				writeAtom(f)
+				out('/')
+				writeInt(int64(a))
+				return
+			}
+		}
 		outString("#Fun<")
 		writeInt(int64(funCode(t)))
 		out('.')

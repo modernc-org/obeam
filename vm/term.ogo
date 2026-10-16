@@ -93,10 +93,12 @@ func mkInt(v int64) uint32 {
 	return mkBoxed(i)
 }
 
-// funArity returns the arity a fun is called with, and funFree how many free
-// variables it carries.
+// funArity returns the arity a fun is called with, funFree how many free
+// variables it carries, funKind whether it is local, an external function or
+// a BIF, and funCode its code offset, or its BIF's number.
 func funArity(t uint32) uint32 { return arena[boxIdx(t)+2] & 0xffff }
-func funFree(t uint32) uint32  { return arena[boxIdx(t)+2] >> 16 }
+func funFree(t uint32) uint32  { return arena[boxIdx(t)+2] >> 16 & 0xff }
+func funKind(t uint32) uint32  { return arena[boxIdx(t)+2] >> 24 }
 func funCode(t uint32) uint32  { return arena[boxIdx(t)+1] }
 
 // binaryLen returns the length of a binary in bytes, and binaryByte its byte

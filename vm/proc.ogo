@@ -3,13 +3,17 @@
 // license that can be found in the LICENSE file.
 
 // Processes: the table, a process's block with its heap growing up and its
-// stack down, and what a scheduler keeps of the one it runs.
+// stack down, its mailbox, the run queue, and what a scheduler keeps of the
+// one it runs.
 
 const (
 	maxProcs   = 1 << pidIndexBits
 	maxX       = 64 // X registers
-	initOrder  = 6  // a new process's block: 64 longs
+	maxSaveX   = maxArity
+	initOrder  = 6 // a new process's block: 64 longs
 	reductions = 2000
+	maxPending = 16 // messages taken out of the mailbox and still in their fragments, before a collection is forced
+	noProc     = 0xffffffff
 
 	procFree = iota
 	procRunnable
@@ -30,6 +34,29 @@ type Proc struct {
 	pc    uint32 // where it continues
 	cp    uint32 // the continuation: the code offset a return goes to, 0 for none
 	reds  int32
+	next  uint32 // the run queue's link: the next process's index, or noProc
+
+	// The X registers saved while it is not running: a call's arguments, or
+	// nothing at a receive.
+	xsave [maxSaveX]uint32
+	nsave uint32
+
+	// The mailbox: fragments linked through their first long, and the one a
+	// receive is looking at, cur, with the one before it, prev, for taking
+	// it out; cur is noBlock at the end.
+	mboxHead, mboxTail uint32
+	mboxCur, mboxPrev  uint32
+
+	// The fragments of messages taken out and not yet copied to the heap,
+	// which the next collection does.
+	pending  uint32
+	npending uint32
+	forceGC  bool
+
+	// A receive's timeout: when it ends, and where the process continues.
+	deadline  uint32
+	timed     bool
+	timeoutPC uint32
 }
 
 var (
@@ -40,57 +67,137 @@ var (
 	nbargs   uint32       // how many of them
 	curLive  int32        // how many X registers are live while a BIF runs, or -1 for a BIF that may not allocate
 	refCount uint32
+	runHead  uint32 // the run queue
+	runTail  uint32
+	ntimed   uint32 // processes waiting with a timeout
+	fakeMs   uint32 // the clock where there is no Millis hook: a tick a reading
 )
 
 func procsInit() {
 	for i := range procs {
 		procs[i].state = procFree
 	}
+	runHead = noProc
+	runTail = noProc
+	ntimed = 0
+	fakeMs = 0
 }
 
-// spawn makes a process that begins at a code offset with its arguments in
-// x0 and up, and returns nil when the table or the arena is full.
-func spawn(entry uint32) *Proc {
+// now is the time in milliseconds.
+func now() uint32 {
+	if Millis == nil {
+		fakeMs++
+		return fakeMs
+	}
+	return Millis()
+}
+
+// spawn makes a process that begins at a code offset with nargs arguments,
+// which the caller puts in its xsave, with a block large enough for them to
+// be copied in, and returns nil when the table or the arena is full. It is
+// not queued yet.
+func spawn(entry, nargs, argLongs uint32) *Proc {
+	order := orderFor(argLongs + 1<<initOrder)
+	if order == 0xff {
+		return nil
+	}
 	for i := range procs {
 		p := &procs[i]
 		if p.state != procFree {
 			continue
 		}
-		b := allocBlock(initOrder)
+		b := allocBlock(order)
 		if b == noBlock {
 			return nil
 		}
 		p.state = procRunnable
 		p.gen++
 		p.block = b
-		p.order = initOrder
+		p.order = order
 		p.htop = b
-		p.stop = b + 1<<initOrder
+		p.stop = b + 1<<order
 		p.pc = entry
 		p.cp = 0
 		p.reds = reductions
+		p.next = noProc
+		p.nsave = nargs
+		p.mboxHead = noBlock
+		p.mboxTail = noBlock
+		p.mboxCur = noBlock
+		p.mboxPrev = noBlock
+		p.pending = noBlock
+		p.npending = 0
+		p.forceGC = false
+		p.timed = false
 		return p
 	}
 	return nil
 }
 
-func (p *Proc) pid() uint32 { return mkPid(uint32(p.index()), p.gen) }
-
-func (p *Proc) index() int {
+func (p *Proc) index() uint32 {
 	for i := range procs {
 		if &procs[i] == p {
-			return i
+			return uint32(i)
 		}
 	}
-	return -1
+	return noProc
 }
+
+func (p *Proc) pid() uint32 { return mkPid(p.index(), p.gen) }
 
 func (p *Proc) blockEnd() uint32 { return p.block + 1<<p.order }
 
-// exit ends a process and returns its block.
+// procAt returns the live process a pid names, or nil.
+func procAt(pid uint32) *Proc {
+	if !isPid(pid) {
+		return nil
+	}
+	p := &procs[pidIdx(pid)]
+	if p.gen != pid>>(5+pidIndexBits) || p.state == procFree || p.state == procExited || p.state == procFailed {
+		return nil
+	}
+	return p
+}
+
+// enqueue puts a process at the end of the run queue.
+func enqueue(p *Proc) {
+	p.state = procRunnable
+	p.next = noProc
+	i := p.index()
+	if runTail == noProc {
+		runHead = i
+	} else {
+		procs[runTail].next = i
+	}
+	runTail = i
+}
+
+// dequeue takes the process at the head of the run queue, or nil.
+func dequeue() *Proc {
+	if runHead == noProc {
+		return nil
+	}
+	p := &procs[runHead]
+	runHead = p.next
+	if runHead == noProc {
+		runTail = noProc
+	}
+	return p
+}
+
+// exit ends a process and returns its block and its fragments.
 func (p *Proc) exit(state uint8) {
 	p.state = state
+	if p.timed {
+		p.timed = false
+		ntimed--
+	}
 	freeBlock(p.block, p.order)
+	freeFragments(p.mboxHead)
+	freeFragments(p.pending)
+	p.mboxHead = noBlock
+	p.mboxTail = noBlock
+	p.pending = noBlock
 }
 
 // yreg returns the arena index of y register i of the running process.
@@ -121,7 +228,7 @@ func store(d, v uint32) {
 // it must, with live X registers as roots. It reports whether there is room;
 // when there is not, the BIF fails with system_limit.
 func ensure(n uint32, live int32) bool {
-	if cur.htop+n <= cur.stop {
+	if cur.htop+n <= cur.stop && !cur.forceGC {
 		return true
 	}
 	if live < 0 {
@@ -131,5 +238,90 @@ func ensure(n uint32, live int32) bool {
 		failAtom(atomSystemLimit)
 		return false
 	}
+	return true
+}
+
+// yield ends the running process's turn at a call: its arguments, live
+// X registers, are saved, and it goes to the end of the run queue, to go on
+// at target.
+func yield(target, live uint32) uint32 {
+	p := cur
+	for i := uint32(0); i < live; i++ {
+		p.xsave[i] = x[i]
+	}
+	p.nsave = live
+	p.pc = target
+	p.reds = reductions
+	enqueue(p)
+	return 0
+}
+
+// sleep puts the running process to wait for a message, to go on at the
+// receive's label, and, when timed, at timeoutPC once the time has passed.
+func sleep(label uint32, timed bool, ms uint32, timeoutPC uint32) uint32 {
+	p := cur
+	p.state = procWaiting
+	p.nsave = 0
+	p.pc = label
+	if timed {
+		p.deadline = now() + ms
+		p.timeoutPC = timeoutPC
+		if !p.timed {
+			ntimed++
+		}
+		p.timed = true
+	} else if p.timed {
+		p.timed = false
+		ntimed--
+	}
+	return 0
+}
+
+// wake queues a waiting process: woken by a message it goes on at the
+// receive, by its timeout after it.
+func wake(p *Proc, byTimeout bool) {
+	if p.timed {
+		p.timed = false
+		ntimed--
+	}
+	if byTimeout {
+		p.pc = p.timeoutPC
+	}
+	enqueue(p)
+}
+
+// wakeExpired queues every process whose timeout has passed.
+func wakeExpired() {
+	if ntimed == 0 {
+		return
+	}
+	t := now()
+	for i := range procs {
+		p := &procs[i]
+		if p.state == procWaiting && p.timed && int32(t-p.deadline) >= 0 {
+			wake(p, true)
+		}
+	}
+}
+
+// idle, with nothing to run, waits for the earliest timeout and queues its
+// process; it reports false when no process has one.
+func idle() bool {
+	if ntimed == 0 {
+		return false
+	}
+	var best *Proc
+	for i := range procs {
+		p := &procs[i]
+		if p.state == procWaiting && p.timed && (best == nil || int32(p.deadline-best.deadline) < 0) {
+			best = p
+		}
+	}
+	if best == nil {
+		return false
+	}
+	for int32(now()-best.deadline) < 0 {
+	}
+	wake(best, true)
 	return true
 }

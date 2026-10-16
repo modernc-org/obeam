@@ -32,6 +32,19 @@ var WellKnownAtoms = []string{
 	"exit", "throw", "EXIT",
 	"erlang", "lists", "io", "p2",
 	"millisecond", "microsecond", "nanosecond", "second", "native",
+	"timeout_value",
+	// The BIFs apply/3 can reach by name: the functions of the table whose
+	// names are atoms a program would write.
+	"abs", "length", "hd", "tl", "element", "setelement", "tuple_size", "self",
+	"spawn", "send", "apply", "is_process_alive", "integer_to_list",
+	"list_to_integer", "atom_to_list", "min", "max", "make_ref", "display",
+	"monotonic_time", "reverse", "member", "keyfind", "format", "put_chars", "nl",
+	"pin_high", "pin_low", "pin_toggle", "pin_float", "pin_in", "pin_write",
+	"cog", "get_ct", "clock_freq", "rnd",
+	"is_atom", "is_integer", "is_number", "is_float", "is_list", "is_tuple",
+	"is_boolean", "is_function", "is_pid", "is_reference", "is_binary", "is_record",
+	"not", "and", "or", "xor", "band", "bor", "bxor", "bsl", "bsr", "bnot", "div", "rem",
+	"+", "-", "*", "==", "/=", "=:=", "=/=", "<", ">", "=<", ">=", "++", "--",
 }
 
 // A Bif is a function the VM implements itself: what an import of it resolves
@@ -100,6 +113,12 @@ var Bifs = []Bif{
 	{"erlang", "min", 2, "bifMin"},
 	{"erlang", "max", 2, "bifMax"},
 	{"erlang", "self", 0, "bifSelf"},
+	{"erlang", "spawn", 1, "bifSpawn1"},
+	{"erlang", "spawn", 3, "bifSpawn3"},
+	{"erlang", "send", 2, "bifSend"},
+	{"erlang", "apply", 2, "bifApply2"},
+	{"erlang", "apply", 3, "bifApply3"},
+	{"erlang", "is_process_alive", 1, "bifIsProcessAlive"},
 	{"erlang", "make_ref", 0, "bifMakeRef"},
 	{"erlang", "error", 1, "bifError1"},
 	{"erlang", "error", 2, "bifError2"},

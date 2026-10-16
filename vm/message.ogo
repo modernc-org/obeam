@@ -1,0 +1,220 @@
+// Copyright 2026 The obeam Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file.
+
+// Messages: a term is copied into a fragment, a block of the pool, which is
+// appended to the receiver's mailbox; the receiver reads it there, and the
+// fragment goes to the heap at the receiver's next collection. A fragment's
+// first longs are the link to the next, its order, and the message. The copy
+// shares nothing but the literals, as Erlang's does.
+
+const fragHead = 3
+
+const msgDepth = 128
+
+var (
+	msgStack [msgDepth]uint32
+	cpTo     uint32 // where a copy writes next
+)
+
+// termSize returns how many longs a copy of a term takes, counting a shared
+// part once for each reference, as the copy does. It is -1 for a term nested
+// deeper than the stack goes.
+func termSize(t uint32) int32 {
+	size := int32(0)
+	sp := 0
+	for {
+		for {
+			if t&3 == tagList {
+				i := consIdx(t)
+				if i < litEnd {
+					break
+				}
+				size += 2
+				if sp == msgDepth {
+					return -1
+				}
+				msgStack[sp] = arena[i]
+				sp++
+				t = arena[i+1]
+				continue
+			}
+			if t&3 == tagBoxed {
+				i := boxIdx(t)
+				if i < litEnd {
+					break
+				}
+				h := arena[i]
+				n := hdrSize(h)
+				size += int32(1 + n)
+				first := uint32(1)
+				if hdrKind(h) == hdrFun {
+					first = 1 + funHeadLongs
+				}
+				if hdrKind(h) == hdrTuple || hdrKind(h) == hdrFun {
+					for k := first; k <= n; k++ {
+						if sp == msgDepth {
+							return -1
+						}
+						msgStack[sp] = arena[i+k]
+						sp++
+					}
+				}
+			}
+			break
+		}
+		if sp == 0 {
+			return size
+		}
+		sp--
+		t = msgStack[sp]
+	}
+}
+
+// copyTerm copies a term to the longs from dst on, the room having been made
+// by termSize, and returns the copy's term and the long after it. What is in
+// the literal heap is shared, nothing else.
+func copyTerm(t, dst uint32) (uint32, uint32) {
+	cpTo = dst
+	root := copyObj(t)
+	for scan := dst; scan < cpTo; {
+		w := arena[scan]
+		if w&7 == 7 {
+			switch hdrKind(w) {
+			case hdrTuple:
+				scan++
+			case hdrFun:
+				scan += 1 + funHeadLongs
+			default:
+				scan += 1 + hdrSize(w)
+			}
+			continue
+		}
+		arena[scan] = copyObj(w)
+		scan++
+	}
+	return root, cpTo
+}
+
+// copyObj copies the one object a term points to, if it is not a literal,
+// and returns the term of the copy.
+func copyObj(t uint32) uint32 {
+	switch t & 3 {
+	case tagList:
+		i := consIdx(t)
+		if i < litEnd {
+			return t
+		}
+		n := cpTo
+		arena[n] = arena[i]
+		arena[n+1] = arena[i+1]
+		cpTo += 2
+		return mkCons(n)
+	case tagBoxed:
+		i := boxIdx(t)
+		if i < litEnd {
+			return t
+		}
+		size := hdrSize(arena[i]) + 1
+		n := cpTo
+		for k := uint32(0); k < size; k++ {
+			arena[n+k] = arena[i+k]
+		}
+		cpTo += size
+		return mkBoxed(n)
+	}
+	return t
+}
+
+// sendMsg sends a message to a pid: it is copied into a fragment and appended
+// to the receiver's mailbox, and the receiver is woken if it waits. A message
+// to a process that is gone is dropped. It fails for what is no pid, and for
+// a message there is no room for.
+func sendMsg(to, msg uint32) bool {
+	if !isPid(to) {
+		badarg()
+		return false
+	}
+	p := procAt(to)
+	if p == nil {
+		return true
+	}
+	size := termSize(msg)
+	if size < 0 {
+		failAtom(atomSystemLimit)
+		return false
+	}
+	order := orderFor(fragHead + uint32(size))
+	if order == 0xff {
+		failAtom(atomSystemLimit)
+		return false
+	}
+	b := allocBlock(order)
+	if b == noBlock {
+		failAtom(atomSystemLimit)
+		return false
+	}
+	root, _ := copyTerm(msg, b+fragHead)
+	arena[b] = noBlock
+	arena[b+1] = order
+	arena[b+2] = root
+	if p.mboxTail == noBlock {
+		p.mboxHead = b
+	} else {
+		arena[p.mboxTail] = b
+	}
+	if p.mboxCur == noBlock {
+		p.mboxCur = b
+		p.mboxPrev = p.mboxTail
+	}
+	p.mboxTail = b
+	if p.state == procWaiting {
+		wake(p, false)
+	}
+	return true
+}
+
+// freeFragments returns a list of fragments to the pool.
+func freeFragments(b uint32) {
+	for b != noBlock {
+		next := arena[b]
+		freeBlock(b, arena[b+1])
+		b = next
+	}
+}
+
+// takeMessage takes the message a receive is looking at out of the mailbox:
+// its fragment goes to the pending list, and the receive begins again at the
+// head.
+func takeMessage() {
+	p := cur
+	c := p.mboxCur
+	next := arena[c]
+	if p.mboxPrev == noBlock {
+		p.mboxHead = next
+	} else {
+		arena[p.mboxPrev] = next
+	}
+	if p.mboxTail == c {
+		p.mboxTail = p.mboxPrev
+	}
+	p.mboxCur = p.mboxHead
+	p.mboxPrev = noBlock
+	arena[c] = p.pending
+	p.pending = c
+	p.npending++
+	if p.npending >= maxPending {
+		p.forceGC = true
+	}
+}
+
+// inPending reports whether an arena index is in one of the running
+// process's pending fragments.
+func inPending(i uint32) bool {
+	for b := cur.pending; b != noBlock; b = arena[b] {
+		if i >= b && i < b+1<<arena[b+1] {
+			return true
+		}
+	}
+	return false
+}

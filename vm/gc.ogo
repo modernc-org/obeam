@@ -20,6 +20,9 @@ func gc(live, heapNeed, stackNeed uint32) bool {
 	p := cur
 	end := p.blockEnd()
 	used := p.htop - p.block + end - p.stop
+	for b := p.pending; b != noBlock; b = arena[b] {
+		used += 1 << arena[b+1]
+	}
 	order := orderFor(used + heapNeed + stackNeed)
 	if order == 0xff {
 		return false
@@ -75,6 +78,10 @@ func gc(live, heapNeed, stackNeed uint32) bool {
 	}
 
 	freeBlock(p.block, p.order)
+	freeFragments(p.pending)
+	p.pending = noBlock
+	p.npending = 0
+	p.forceGC = false
 	p.block = nb
 	p.order = order
 	p.htop = gcTo
@@ -82,8 +89,11 @@ func gc(live, heapNeed, stackNeed uint32) bool {
 	return p.htop+heapNeed <= p.stop-stackNeed
 }
 
-// inFrom reports whether an arena index is in the old block.
-func inFrom(i uint32) bool { return i >= gcFrom && i < gcFromE }
+// inFrom reports whether an arena index is in the old block or in a fragment
+// of a message taken out of the mailbox.
+func inFrom(i uint32) bool {
+	return i >= gcFrom && i < gcFromE || cur.pending != noBlock && inPending(i)
+}
 
 // evac returns the term moved to the new block, moving what it points to if
 // that is in the old block and has not moved yet.
