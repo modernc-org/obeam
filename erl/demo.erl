@@ -16,4 +16,5 @@ main() ->
     pingpong:main(),
     ring:main(),
     sieve:main(),
-    counter:main().
+    counter:main(),
+    cogs:main().

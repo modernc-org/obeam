@@ -11,16 +11,18 @@ scheduler on each of seven cogs. The user is the author of OctoGo (`../ogo`) and
 p2-11 (`../p2-11`); the idea came from a talk with a friend who likes Erlang on
 2026-10-16.
 
-**Status, 2026-10-16, night: M2 built.** The user said go that afternoon; M0
+**Status, 2026-10-16, night: M3 built.** The user said go that afternoon; M0
 (the reader, the corpus, DESIGN.md) was done by evening, DESIGN.md's open
-points decided with the user, M1 (one process on one cog) built and
-committed (e1a384e), and M2 (processes, messages, receive with timeouts,
-funs and apply, on one scheduler) built the same night: nine modules of the
-corpus run under the Go twin with the bytes `erl` prints, and the board
-prints the same lines (DESIGN.md section 8 has the figures). Next: M3,
-seven scheduler cogs, which makes the X registers, `bargs`, the format
-buffer and the writer's and comparer's stacks per scheduler, and puts the
-run queue, the pool and the mailboxes under locks. The files:
+points decided with the user, M1 (one process on one cog, e1a384e), M2
+(processes, messages, receive with timeouts, funs and apply, 18c3c27) and
+M3 (seven scheduler cogs, locks, the pin ring) built the same night: nine
+modules of the corpus run under the Go twin on seven goroutines with the
+bytes `erl` prints, clean under the race detector, and the board prints the
+same lines on seven cogs and shows `cogs`' workers spread over them
+(DESIGN.md section 8 has the figures). Next: M4, exceptions caught (`try`,
+`catch`, `raise`, `build_stacktrace`), floats, links and exit signals,
+`io:format`'s remaining directives, loading an image from the SD card. The
+files:
 
 - `ASSESSMENT.md`: the consolidated assessment and the plan. Verdict: start,
   staged. It holds the measured facts (opcode counts, AtomVM's size, what a
@@ -198,6 +200,24 @@ the tree or be ahead of what this file knows; do not install over it.
   counts the pending fragments as from-space. The timers are `Millis`'s
   milliseconds; without the hook `now()` ticks once a reading, so a timeout
   still ends.
+- **Every function that touches a scheduler's own state takes `s *sched`
+  first**: the X registers, `bargs`, the BIF verdict, the collector's and
+  copier's pointers, the stacks and the format buffer are fields of it, and
+  nothing of them is a package variable. A scheduler's identity is that
+  pointer; OctoGo has no cog-local storage.
+- **The lock order**: a stripe (`stripe(p)`, a process's mailbox and state),
+  then the run queue or the pool; the table's lock (`lockProcs`) and the pool
+  are never held while taking anything else; nothing holds the run queue
+  while taking a stripe (`wakeExpired` releases it between entries). A
+  process's `state` is written under its stripe by whoever writes it; a
+  turn's end is `s.left`, not the state. Check a synchronization change with
+  the race detector on the twin:
+  `cd build/twin && OBEAM_ROOT=$PWD/../.. go test -race -tags twin -run TestErl ./vm`
+  (native arch; `GOARCH=386` has no race detector). It was clean at the end
+  of M3 and should stay so.
+- The scheduler cogs drive no pin: `main.ogo` posts pin BIFs to a ring and
+  does them on main's cog, since several cogs' drives on a pin OR together.
+  `p2:cog/0` is the scheduler's number, not the cog's.
 
 ## The host tool and the corpus
 

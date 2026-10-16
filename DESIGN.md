@@ -7,11 +7,11 @@ why the project exists and in what order it is built; README.md what there is
 and how to run it.
 
 **Status: proposed at the end of milestone M0 and decided with the user on
-2026-10-16; section 7 records the decisions. M1, one process on one cog, and
-M2, processes and messages on that cog, were built the same evening and
-night: sections 3 and 4 say where what is built differs from what was
-proposed.** What M0 measured is in section 6 and in `erl/stats.txt`; what M1
-and M2 measured is in section 8.
+2026-10-16; section 7 records the decisions. M1, one process on one cog, M2,
+processes and messages on that cog, and M3, seven scheduler cogs, were built
+the same evening and night: sections 3 and 4 say where what is built differs
+from what was proposed.** What M0 measured is in section 6 and in
+`erl/stats.txt`; what M1, M2 and M3 measured is in section 8.
 
 ## 1. The pieces
 
@@ -156,6 +156,36 @@ time has passed before each turn and, with nothing to run, spins until the
 earliest. A fun is local, an external function's or a BIF's, which its second
 long says; `apply` by name finds the function in the image's table, puts the
 arguments in the X registers and has the handler jump, or calls the BIF.
+
+**As built in M3**, seven schedulers, each a goroutine, so a cog, started by
+`Start` and stopped when the entry process ends. Everything a scheduler
+keeps of its own, the process it runs, the X registers, a BIF's arguments
+and verdict, the collector's and the copier's pointers, the stacks of
+comparing and writing, the format buffer and its counts, is a `sched`
+struct, one per scheduler in a package array, and every function that
+touches one is given it as its first argument: OctoGo has no storage that is
+one cog's, and threading the pointer costs a register a call and makes the
+same code Go. The locks come through hooks, the board's `p2.NewLock`,
+`TryLock` and `Unlock`, the host's mutexes, so that the twin runs the same
+synchronization. There are eight: the pool, the run queue, the table's free
+slots, the output, and four stripes of mailboxes, a process's by its index.
+A process's state is written under its stripe only, by whoever writes it, so
+that a sender that finds it waiting may make it runnable and queue it, and
+the owner, about to wait, looks once more under the lock for a message that
+came since the receive looked, which is what keeps a wakeup from being lost.
+A timed wait puts the process on a list under the run queue's lock, which
+every scheduler walks before a turn; an entry that no longer stands for a
+timed wait is dropped there. A turn ends by `yield`, `sleep` or `raise`,
+each saying so in the scheduler, so that `run` reads no state a sender may be
+writing. The order the locks are taken in, where two are held: a stripe,
+then the run queue or the pool; nothing holds the run queue while taking a
+stripe. A process that ends frees its slot. `p2:cog/0` answers the
+scheduler's number, 0 to 6, the cog's own being nothing OctoGo tells. And
+since what several cogs drive on a pin is the OR of it, the scheduler cogs
+drive no pin: `main.ogo` posts their pin BIFs to a ring under a lock of its
+own and does them on main's cog, which has nothing else to do, a read
+waiting for its answer. Go's race detector, run on the twin, found the
+three unsynchronized reads the first version had and finds none now.
 
 **What the interpreter cannot do** in OctoGo: recurse in a goroutine without a
 `--gostack` bound, so term comparison and message copying are written with an
@@ -357,3 +387,31 @@ walks the mailbox, which an instruction count does not show. The OctoGo
 checker took M2 as it took M1; Go found one thing OctoGo allows, the BIF
 table's initializer reaching `apply`, which reaches the table, so the table
 is filled in `init`.
+
+**M3**, the same night: the `sched` struct and its threading through every
+handler and BIF, the locks, the timer list, the pin ring in `main.ogo`, and
+`erl/cogs.erl`, seven workers that each count to 20,000 in tail calls and
+report which scheduler ran them last. The twin runs the nine modules on
+seven goroutines under mutexes and holds them to `erl` as before, five runs
+in a row and twice under the race detector. On the board, the image of
+`demo` with `cogs` added, 3,240 longs of code, on seven scheduler cogs:
+
+| Build, 160 MHz | 912,500 instructions in | a second |
+| --- | --- | --- |
+| checked, 7 schedulers | 4,949 ms | 184,387 |
+| `--unchecked`, 7 schedulers | 4,031 ms | 226,391 |
+| `--unchecked`, 1 scheduler, the same image | 7,744 ms | 117,774 |
+
+Seven cogs run the demo in half the time of one, 2.2 times faster once
+`counter`'s 1,010 ms of waiting are taken out of both; most of the demo is
+one process at a time, and only `cogs`' seven workers and the ring's and the
+sieve's processes have anything to run beside each other. The single
+scheduler's 117,774 a second is below M2's 128,000 by the locks, which it
+takes as the seven do.
+
+`cogs` printed `[{1,20000,3},{2,20000,4},{3,20000,3},{4,20000,6},{5,20000,1},{6,20000,1},{7,20000,6}]`
+on one run and a different spread on the next: the seven workers on four or
+five of the seven schedulers at a time, which is the picture the project was
+started for. The count of instructions varies by a few dozen from run to run,
+a receive that looks and finds nothing costing an instruction or two more or
+less. 604 collections.

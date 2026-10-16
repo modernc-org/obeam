@@ -81,15 +81,15 @@ func intVal(t uint32) int64 {
 
 // mkInt makes the term of an integer: small where it fits, boxed on the heap
 // otherwise; the caller has made room for three longs.
-func mkInt(v int64) uint32 {
+func mkInt(s *sched, v int64) uint32 {
 	if fitsSmall(v) {
 		return mkSmall(int32(v))
 	}
-	i := cur.htop
+	i := s.cur.htop
 	arena[i] = mkHeader(hdrInt64, 2)
 	arena[i+1] = uint32(v)
 	arena[i+2] = uint32(v >> 32)
-	cur.htop += 3
+	s.cur.htop += 3
 	return mkBoxed(i)
 }
 

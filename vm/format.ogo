@@ -17,15 +17,13 @@ type wframe struct {
 	tail  bool // of a list: an improper tail has been written, the bracket is owed
 }
 
-var wstack [writeDepth]wframe
-
 // writeTerm writes a term as ~w does, or as ~p does when pretty is set: a
 // list of printable characters as a string.
-func writeTerm(t uint32, pretty bool) {
+func writeTerm(s *sched, t uint32, pretty bool) {
 	sp := 0
-	wpush(&sp, t, pretty)
+	wpush(s, &sp, t, pretty)
 	for sp > 0 {
-		f := &wstack[sp-1]
+		f := &s.wstack[sp-1]
 		if !f.list {
 			if f.i > tupleArity(f.t) {
 				out('}')
@@ -37,7 +35,7 @@ func writeTerm(t uint32, pretty bool) {
 			}
 			e := tupleElem(f.t, f.i)
 			f.i++
-			wpush(&sp, e, pretty)
+			wpush(s, &sp, e, pretty)
 			continue
 		}
 		if f.tail || f.t == nilTerm {
@@ -48,7 +46,7 @@ func writeTerm(t uint32, pretty bool) {
 		if !isCons(f.t) {
 			out('|')
 			f.tail = true
-			wpush(&sp, f.t, pretty)
+			wpush(s, &sp, f.t, pretty)
 			continue
 		}
 		if !f.first {
@@ -57,13 +55,13 @@ func writeTerm(t uint32, pretty bool) {
 		f.first = false
 		i := consIdx(f.t)
 		f.t = arena[i+1]
-		wpush(&sp, arena[i], pretty)
+		wpush(s, &sp, arena[i], pretty)
 	}
 }
 
 // wpush writes a term that has no parts, or opens a compound one and puts it
 // on the stack.
-func wpush(sp *int, t uint32, pretty bool) {
+func wpush(s *sched, sp *int, t uint32, pretty bool) {
 	switch {
 	case isCons(t):
 		if pretty && isString(t) {
@@ -74,14 +72,14 @@ func wpush(sp *int, t uint32, pretty bool) {
 			panic("vm: a term nested too deeply to write")
 		}
 		out('[')
-		wstack[*sp] = wframe{t: t, list: true, first: true}
+		s.wstack[*sp] = wframe{t: t, list: true, first: true}
 		*sp++
 	case isTuple(t):
 		if *sp == writeDepth {
 			panic("vm: a term nested too deeply to write")
 		}
 		out('{')
-		wstack[*sp] = wframe{t: t, i: 1}
+		s.wstack[*sp] = wframe{t: t, i: 1}
 		*sp++
 	default:
 		writeFlat(t)
@@ -346,49 +344,45 @@ func writeChars(t uint32) bool {
 	return t == nilTerm
 }
 
-// fbuf holds a format string while it is written; one scheduler at a time
-// formats until M3 gives each its own.
-var fbuf [256]byte
-
 // format writes a format string with its arguments as io:format does for
 // ~w, ~p, ~s, ~c, ~B, ~b, ~n and ~~; a directive it does not know is written
 // as it is. It reports whether the format and the arguments were well formed.
-func format(fmtT, args uint32) bool {
+func format(s *sched, fmtT, args uint32) bool {
 	if !isList(fmtT) && !isBinary(fmtT) && !isAtom(fmtT) {
 		return false
 	}
 	n := 0
 	t := fmtT
 	if isBinary(t) {
-		for k := uint32(0); k < binaryLen(t) && n < len(fbuf); k++ {
-			fbuf[n] = binaryByte(t, k)
+		for k := uint32(0); k < binaryLen(t) && n < len(s.fbuf); k++ {
+			s.fbuf[n] = binaryByte(t, k)
 			n++
 		}
 	} else if isAtom(t) {
-		s := atomName(t)
-		for k := 0; k < len(s) && n < len(fbuf); k++ {
-			fbuf[n] = s[k]
+		name := atomName(t)
+		for k := 0; k < len(name) && n < len(s.fbuf); k++ {
+			s.fbuf[n] = name[k]
 			n++
 		}
 	} else {
-		for isCons(t) && n < len(fbuf) {
+		for isCons(t) && n < len(s.fbuf) {
 			i := consIdx(t)
 			if !isSmall(arena[i]) {
 				return false
 			}
-			fbuf[n] = byte(smallVal(arena[i]))
+			s.fbuf[n] = byte(smallVal(arena[i]))
 			n++
 			t = arena[i+1]
 		}
 	}
 	for k := 0; k < n; k++ {
-		c := fbuf[k]
+		c := s.fbuf[k]
 		if c != '~' || k+1 >= n {
 			out(c)
 			continue
 		}
 		k++
-		d := fbuf[k]
+		d := s.fbuf[k]
 		switch d {
 		case 'n':
 			out('\n')
@@ -403,9 +397,9 @@ func format(fmtT, args uint32) bool {
 			args = arena[i+1]
 			switch d {
 			case 'w':
-				writeTerm(a, false)
+				writeTerm(s, a, false)
 			case 'p':
-				writeTerm(a, true)
+				writeTerm(s, a, true)
 			case 's':
 				if !writeChars(a) {
 					return false

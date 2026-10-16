@@ -8,11 +8,6 @@
 
 const cmpDepth = 64
 
-var (
-	cmpStackA [cmpDepth]uint32
-	cmpStackB [cmpDepth]uint32
-)
-
 // order ranks a term's kind in the order of terms.
 func order(t uint32) uint32 {
 	switch t & 3 {
@@ -45,19 +40,19 @@ func order(t uint32) uint32 {
 }
 
 // eqExact reports whether two terms are the same, =:=.
-func eqExact(a, b uint32) bool {
+func eqExact(s *sched, a, b uint32) bool {
 	if a == b {
 		return true
 	}
 	if a&3 != tagBoxed && a&3 != tagList || a&3 != b&3 {
 		return false
 	}
-	return cmp(a, b) == 0 && (!isNumber(a) || isFloat(a) == isFloat(b))
+	return cmp(s, a, b) == 0 && (!isNumber(a) || isFloat(a) == isFloat(b))
 }
 
 // cmp compares two terms in the order of terms, numbers by value whatever
 // their kind as == does: negative, zero or positive.
-func cmp(a, b uint32) int {
+func cmp(s *sched, a, b uint32) int {
 	sp := 0
 	for {
 		if a != b {
@@ -85,8 +80,8 @@ func cmp(a, b uint32) int {
 					if sp == cmpDepth {
 						panic("vm: terms nested too deeply to compare")
 					}
-					cmpStackA[sp] = tupleElem(a, i)
-					cmpStackB[sp] = tupleElem(b, i)
+					s.cmpA[sp] = tupleElem(a, i)
+					s.cmpB[sp] = tupleElem(b, i)
 					sp++
 				}
 			case 9:
@@ -95,8 +90,8 @@ func cmp(a, b uint32) int {
 				if sp == cmpDepth {
 					panic("vm: terms nested too deeply to compare")
 				}
-				cmpStackA[sp] = arena[ia+1]
-				cmpStackB[sp] = arena[ib+1]
+				s.cmpA[sp] = arena[ia+1]
+				s.cmpB[sp] = arena[ib+1]
 				sp++
 				a, b = arena[ia], arena[ib]
 				continue
@@ -111,7 +106,7 @@ func cmp(a, b uint32) int {
 			return 0
 		}
 		sp--
-		a, b = cmpStackA[sp], cmpStackB[sp]
+		a, b = s.cmpA[sp], s.cmpB[sp]
 	}
 }
 

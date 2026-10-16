@@ -11,39 +11,42 @@ seven of them. It is the second program of size in OctoGo, after
 
 ## Status
 
-Begun on 2026-10-16, and at milestone M2 of the plan in `ASSESSMENT.md`:
-Erlang processes, spawned, sending and receiving, on one scheduler cog,
+Begun on 2026-10-16, and at milestone M3 of the plan in `ASSESSMENT.md`:
+Erlang processes, spawned, sending and receiving, on seven scheduler cogs,
 running modules compiled by `erlc`.
 
 - `cmd/obeam`: the host tool, Go. `obeam pack` turns `.beam` files into the
   image the board runs, every operand resolved and every literal laid out as
   the board's own terms, and refuses, by module, function and line, what the
   VM cannot run yet. `obeam dis` and `obeam stats` list and count a module.
-- `vm/`: the VM, in OctoGo: about 3,000 lines for the terms, a buddy arena,
-  processes with mailboxes and a run queue, the interpreter, a copying
-  collector per process, 85 BIFs, `io:format` and the exception reports. It
-  is Go once given a package clause, and the tests run it so, against `erl`:
-  nine modules of the corpus, from `fac` to a ring of a hundred processes and
-  a server with timeouts, print the same bytes under both.
+- `vm/`: the VM, in OctoGo: about 3,300 lines for the terms, a buddy arena,
+  processes with mailboxes and a run queue, seven schedulers each a cog, the
+  interpreter, a copying collector per process, 85 BIFs, `io:format` and the
+  exception reports. It is Go once given a package clause, and the tests run
+  it so, on seven goroutines, against `erl`: nine modules of the corpus, from
+  `fac` to a ring of a hundred processes and a server with timeouts, print
+  the same bytes under both.
 - `main.ogo`, `image/`: the board program and its image, `demo`, which runs
-  the nine. Build it with `ogo build`, run it with `make run`. On a P2-EC it
-  prints what `erl` prints, line for line, and then:
+  the nine and then `cogs`, seven workers that report which scheduler ran
+  them. Build it with `ogo build`, run it with `make run`. On a P2-EC it
+  prints what `erl` prints, line for line, then the workers' schedulers, and
+  then:
 
   ```
-  351393 instructions in 4552 ms, 77195 a second
+  912532 instructions in 4949 ms, 184387 a second, 604 collections
   ```
 
   which is the checked build at 160 MHz, a second of it the demo's own
-  waiting. DESIGN.md section 8 says what that is made of, and what the four
-  modules of M1 ran at: 142,730 a second checked, 242,386 unchecked at
-  200 MHz.
+  waiting. DESIGN.md section 8 has the figures of each milestone.
 - `erl/`: the corpus, twelve small Erlang modules from `fac` to a process
   ring and a concurrent prime sieve, compiled with OTP 27 and committed;
   `erl/stats.txt` is the opcode and call histogram over them.
 - `DESIGN.md`: how it is made, and what each milestone measured.
 
-Not yet: more than one scheduler cog (M3), exceptions caught, floats,
-links, bit syntax, maps, bignums (M4 and later).
+Not yet: exceptions caught, floats, links, bit syntax, maps, bignums (M4 and
+later). A process's stack is bounded by its largest heap block, 8,192 longs,
+so a recursion 20,000 deep that Erlang takes ends here in `system_limit`;
+write it as a tail call.
 
 ```sh
 ogo build                                    # the board binary; ogo run loads it (make run takes the shared board lock)

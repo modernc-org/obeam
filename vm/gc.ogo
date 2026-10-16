@@ -4,20 +4,11 @@
 
 // The collector: Cheney's, per process, into a fresh block.
 
-var (
-	gcTo    uint32 // the new block's allocation pointer while a collection runs
-	gcFrom  uint32 // the old block
-	gcFromE uint32 // and its end
-	gcNew   uint32 // the new block
-	gcNewE  uint32 // and its end
-	gcCount uint32 // collections since Load
-)
-
 // gc collects the running process so that heapNeed longs fit on its heap and
 // stackNeed on its stack, the first live X registers and the BIF arguments
 // being roots beside the stack. It reports whether the room could be had.
-func gc(live, heapNeed, stackNeed uint32) bool {
-	p := cur
+func gc(s *sched, live, heapNeed, stackNeed uint32) bool {
+	p := s.cur
 	end := p.blockEnd()
 	used := p.htop - p.block + end - p.stop
 	for b := p.pending; b != noBlock; b = arena[b] {
@@ -34,36 +25,36 @@ func gc(live, heapNeed, stackNeed uint32) bool {
 	if nb == noBlock {
 		return false
 	}
-	gcCount++
-	gcFrom, gcFromE = p.block, end
-	gcNew, gcNewE = nb, nb+1<<order
-	gcTo = nb
+	s.gcs++
+	s.gcFrom, s.gcFromE = p.block, end
+	s.gcNew, s.gcNewE = nb, nb+1<<order
+	s.gcTo = nb
 
 	// The stack goes to the end of the new block as it is, then its terms
 	// are moved; a word ending in 111 there is a continuation.
 	ssize := end - p.stop
-	nstop := gcNewE - ssize
+	nstop := s.gcNewE - ssize
 	for i := uint32(0); i < ssize; i++ {
 		arena[nstop+i] = arena[p.stop+i]
 	}
-	for i := nstop; i < gcNewE; i++ {
+	for i := nstop; i < s.gcNewE; i++ {
 		if w := arena[i]; w&7 != 7 {
-			arena[i] = evac(w)
+			arena[i] = evac(s, w)
 		}
 	}
 	for i := uint32(0); i < live; i++ {
-		x[i] = evac(x[i])
+		s.x[i] = evac(s, s.x[i])
 	}
-	for i := uint32(0); i < nbargs; i++ {
-		bargs[i] = evac(bargs[i])
+	for i := uint32(0); i < s.nbargs; i++ {
+		s.bargs[i] = evac(s, s.bargs[i])
 	}
 
 	// Then what the moved terms reach, word by word: a header says what
 	// follows it, anything else is a term.
-	for scan := nb; scan < gcTo; {
+	for scan := nb; scan < s.gcTo; {
 		w := arena[scan]
 		if w&7 != 7 {
-			arena[scan] = evac(w)
+			arena[scan] = evac(s, w)
 			scan++
 			continue
 		}
@@ -84,39 +75,39 @@ func gc(live, heapNeed, stackNeed uint32) bool {
 	p.forceGC = false
 	p.block = nb
 	p.order = order
-	p.htop = gcTo
+	p.htop = s.gcTo
 	p.stop = nstop
 	return p.htop+heapNeed <= p.stop-stackNeed
 }
 
 // inFrom reports whether an arena index is in the old block or in a fragment
 // of a message taken out of the mailbox.
-func inFrom(i uint32) bool {
-	return i >= gcFrom && i < gcFromE || cur.pending != noBlock && inPending(i)
+func inFrom(s *sched, i uint32) bool {
+	return i >= s.gcFrom && i < s.gcFromE || s.cur.pending != noBlock && inPending(s, i)
 }
 
 // evac returns the term moved to the new block, moving what it points to if
 // that is in the old block and has not moved yet.
-func evac(t uint32) uint32 {
+func evac(s *sched, t uint32) uint32 {
 	switch t & 3 {
 	case tagList:
 		i := consIdx(t)
-		if !inFrom(i) {
+		if !inFrom(s, i) {
 			return t
 		}
 		if arena[i] == moved {
 			return arena[i+1]
 		}
-		n := gcTo
+		n := s.gcTo
 		arena[n] = arena[i]
 		arena[n+1] = arena[i+1]
-		gcTo += 2
+		s.gcTo += 2
 		arena[i] = moved
 		arena[i+1] = mkCons(n)
 		return mkCons(n)
 	case tagBoxed:
 		i := boxIdx(t)
-		if !inFrom(i) {
+		if !inFrom(s, i) {
 			return t
 		}
 		h := arena[i]
@@ -124,11 +115,11 @@ func evac(t uint32) uint32 {
 			return h // moved: the header's place holds the new pointer
 		}
 		size := hdrSize(h) + 1
-		n := gcTo
+		n := s.gcTo
 		for k := uint32(0); k < size; k++ {
 			arena[n+k] = arena[i+k]
 		}
-		gcTo += size
+		s.gcTo += size
 		arena[i] = mkBoxed(n)
 		return mkBoxed(n)
 	}

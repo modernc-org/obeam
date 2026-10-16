@@ -7,55 +7,48 @@
 // shape {Tag, Value} is not built as a term, nothing being there to catch it;
 // the report writes the two.
 
-// What a failing BIF failed with, for the handler to raise or to skip to the
-// fail label.
-var (
-	bifClass  uint32 // an atom index
-	bifReason uint32 // a term
-	bifTag    uint32 // an atom index when the reason is {Tag, bifReason}, else 0xffffffff
-	bifJump   uint32 // where a BIF that answers jumpValue has the process go on
-	bifLive   uint32 // and how many X registers it set
-)
-
 const noTag = 0xffffffff
 
 // failWith fails a BIF with a class and a reason.
-func failWith(class, reason uint32) uint32 {
-	bifClass = class
-	bifReason = reason
-	bifTag = noTag
+func failWith(s *sched, class, reason uint32) uint32 {
+	s.bifClass = class
+	s.bifReason = reason
+	s.bifTag = noTag
 	return nonValue
 }
 
-func failAtom(reason uint32) uint32 { return failWith(atomError, mkAtom(reason)) }
-func badarg() uint32                { return failAtom(atomBadarg) }
-func badarith() uint32              { return failAtom(atomBadarith) }
+func failAtom(s *sched, reason uint32) uint32 { return failWith(s, atomError, mkAtom(reason)) }
+func badarg(s *sched) uint32                  { return failAtom(s, atomBadarg) }
+func badarith(s *sched) uint32                { return failAtom(s, atomBadarith) }
 
 // raise ends the running process with an exception of a class, an atom
 // index, and a reason; raiseAtom with an atom reason, raiseTagged with a
 // reason {Tag, V}.
-func raise(class, reason uint32) {
-	bifTag = noTag
-	report(class, reason)
-	cur.exit(procFailed)
+func raise(s *sched, class, reason uint32) {
+	s.bifTag = noTag
+	report(s, class, reason)
+	s.cur.exit(procFailed)
+	s.left = leftFail
 }
 
-func raiseAtom(class, reason uint32) { raise(mkAtom(class), mkAtom(reason)) }
+func raiseAtom(s *sched, class, reason uint32) { raise(s, mkAtom(class), mkAtom(reason)) }
 
-func raiseTagged(class, tag, v uint32) {
-	bifTag = tag
-	report(mkAtom(class), v)
-	cur.exit(procFailed)
+func raiseTagged(s *sched, class, tag, v uint32) {
+	s.bifTag = tag
+	report(s, mkAtom(class), v)
+	s.cur.exit(procFailed)
+	s.left = leftFail
 }
 
 // report writes what the shell would: the class, the reason explained, and
-// the function and line the process was in.
-func report(class, reason uint32) {
+// the function and line the process was in, under the output's lock.
+func report(s *sched, class, reason uint32) {
+	lock(lockOut)
 	outString("** exception ")
 	outString(atomName(class))
 	outString(": ")
-	explain(reason)
-	m, f, a, ok := funcAt(cur.pc)
+	explain(s, reason)
+	m, f, a, ok := funcAt(s.cur.pc)
 	if ok {
 		outString("\n     in function  ")
 		writeAtom(m)
@@ -63,7 +56,7 @@ func report(class, reason uint32) {
 		writeAtom(f)
 		out('/')
 		writeInt(int64(a))
-		if file, line, ok := lineAt(cur.pc); ok {
+		if file, line, ok := lineAt(s.cur.pc); ok {
 			outString(" (")
 			outString(file)
 			outString(", line ")
@@ -72,13 +65,14 @@ func report(class, reason uint32) {
 		}
 	}
 	out('\n')
+	unlock(lockOut)
 }
 
 // explain writes a reason as the shell explains the ones it knows; bifTag
 // says whether it is {Tag, reason}.
-func explain(reason uint32) {
-	if bifTag != noTag {
-		switch bifTag {
+func explain(s *sched, reason uint32) {
+	if s.bifTag != noTag {
+		switch s.bifTag {
 		case atomBadmatch:
 			outString("no match of right hand side value ")
 		case atomCaseClause:
@@ -91,13 +85,13 @@ func explain(reason uint32) {
 			outString("bad arity ")
 		default:
 			out('{')
-			writeAtom(mkAtom(bifTag))
+			writeAtom(mkAtom(s.bifTag))
 			out(',')
-			writeTerm(reason, false)
+			writeTerm(s, reason, false)
 			out('}')
 			return
 		}
-		writeTerm(reason, false)
+		writeTerm(s, reason, false)
 		return
 	}
 	if isAtom(reason) {
@@ -122,7 +116,7 @@ func explain(reason uint32) {
 			return
 		}
 	}
-	writeTerm(reason, false)
+	writeTerm(s, reason, false)
 }
 
 // funcAt finds the function a code offset is in: its module and function

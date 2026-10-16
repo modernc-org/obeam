@@ -11,6 +11,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
+	"sync"
 	"testing"
 	"time"
 
@@ -47,21 +49,41 @@ func TestErl(t *testing.T) {
 	}
 }
 
+// The host's hooks: the output into a buffer, the clock, the locks as
+// mutexes with TryLock, and a pause that lets another goroutine run.
 var (
 	testOut   []byte
 	testStart = time.Now()
+	testMus   [16]sync.Mutex
+	testLocks int
 )
 
-func testWrite(b byte) { testOut = append(testOut, b) }
+func testWrite(b byte)       { testOut = append(testOut, b) }
+func testMillis() uint32     { return uint32(time.Since(testStart).Milliseconds()) }
+func testIdle()              { runtime.Gosched() }
+func testTryLock(l int) bool { return testMus[l].TryLock() }
+func testUnlock(l int)       { testMus[l].Unlock() }
 
-func testMillis() uint32 { return uint32(time.Since(testStart).Milliseconds()) }
+func testNewLock() int {
+	l := testLocks
+	testLocks++
+	return l
+}
 
-// runImage loads an image, runs its entry and returns what it printed.
+// The schedulers the tests run on: as many as the board has.
+const testSchedulers = 7
+
+// runImage loads an image, runs its entry on testSchedulers schedulers, and
+// returns what it printed.
 func runImage(img *pack.Image) []byte {
-	Load(img.Code, img.Literals, img.Atoms, img.Funcs, img.Funs, img.Lines, img.Files)
 	Out = testWrite
 	Millis = testMillis
+	Idle = testIdle
+	NewLock = testNewLock
+	TryLock = testTryLock
+	Unlock = testUnlock
+	Load(img.Code, img.Literals, img.Atoms, img.Funcs, img.Funs, img.Lines, img.Files)
 	testOut = testOut[:0]
-	Run(img.Entry)
+	Run(img.Entry, testSchedulers)
 	return append([]byte(nil), testOut...)
 }

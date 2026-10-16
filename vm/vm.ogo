@@ -3,12 +3,13 @@
 // license that can be found in the LICENSE file.
 
 // Package vm is the BEAM: the arena its terms live in, the processes, the
-// interpreter, the collector and the BIFs. It imports nothing of the board's;
-// what the board gives it, the serial line and the pins, comes in through the
-// hooks of hooks.ogo, so that the package is Go once given a package clause,
-// and is tested on the host as it is run on the board. DESIGN.md says how it
-// is laid out; tags.ogo, opcodes.ogo, atoms.ogo and biftab.ogo are generated
-// from the packer's tables by obeam gen and not edited by hand.
+// schedulers, the interpreter, the collector and the BIFs. It imports nothing
+// of the board's; what the board gives it, the serial line, the locks and the
+// pins, comes in through the hooks of hooks.ogo, so that the package is Go
+// once given a package clause, and is tested on the host as it is run on the
+// board. DESIGN.md says how it is laid out; tags.ogo, opcodes.ogo, atoms.ogo
+// and biftab.ogo are generated from the packer's tables by obeam gen and not
+// edited by hand.
 
 // The image, as Load was given it.
 var (
@@ -21,12 +22,11 @@ var (
 	litEnd uint32 // the literal heap is arena[0:litEnd]
 )
 
-// Steps counts the instructions interpreted since Load.
-var Steps uint32
+var entryProc *Proc
 
 // Load gives the VM an image and starts it afresh: the literals go to the
 // start of the arena, the rest of the arena to the allocator, and the process
-// table is emptied.
+// table is emptied. The hooks are set before it.
 func Load(c, literals []uint32, a []string, fc, fn, ln []uint32, fl []string) {
 	code = c
 	atoms = a
@@ -38,33 +38,116 @@ func Load(c, literals []uint32, a []string, fc, fn, ln []uint32, fl []string) {
 		arena[i] = literals[i]
 	}
 	litEnd = uint32(len(literals))
+	makeLocks()
 	arenaInit((litEnd + minBlock - 1) &^ (minBlock - 1))
 	procsInit()
-	refCount = 0
-	Steps = 0
+	entryProc = nil
 }
 
-// Run starts a process at a function of no arguments at the code offset
-// entry and schedules it and whatever it spawns until it ends, and reports
-// whether it ended normally rather than with an exception. The others are
-// left where they are, as halt leaves them.
-func Run(entry uint32) bool {
+// Start starts a process at a function of no arguments at the code offset
+// entry, and n schedulers, each a goroutine, so a cog, which run it and what
+// it spawns until it ends. It reports whether the process could be made.
+func Start(entry uint32, n int) bool {
 	p := spawn(entry, 0, 0)
 	if p == nil {
 		return false
 	}
+	entryProc = p
 	enqueue(p)
-	for p.state != procExited && p.state != procFailed {
+	running = uint32(n)
+	for i := 0; i < n; i++ {
+		go schedule(i)
+	}
+	return true
+}
+
+// Finished reports whether the entry process has ended, after which the
+// schedulers stop.
+func Finished() bool {
+	lock(lockRun)
+	f := stopping
+	unlock(lockRun)
+	return f
+}
+
+// Running answers how many schedulers have not stopped yet.
+func Running() int {
+	lock(lockRun)
+	r := running
+	unlock(lockRun)
+	return int(r)
+}
+
+// Succeeded reports whether the entry process ended normally rather than with
+// an exception.
+func Succeeded() bool {
+	lock(lockRun)
+	d := entryDone
+	unlock(lockRun)
+	return d == procExited
+}
+
+// Steps counts the instructions the schedulers have interpreted since Load,
+// and Collections the collections.
+func Steps() uint32 {
+	n := uint32(0)
+	for i := range scheds {
+		n += scheds[i].steps
+	}
+	return n
+}
+
+func Collections() uint32 {
+	n := uint32(0)
+	for i := range scheds {
+		n += scheds[i].gcs
+	}
+	return n
+}
+
+// Run starts the entry on n schedulers and waits for it to end, idling as
+// the Idle hook says; it reports whether it ended normally.
+func Run(entry uint32, n int) bool {
+	if !Start(entry, n) {
+		return false
+	}
+	for !Finished() {
+		if Idle != nil {
+			Idle()
+		}
+	}
+	for Running() > 0 {
+		if Idle != nil {
+			Idle()
+		}
+	}
+	return Succeeded()
+}
+
+// schedule is a scheduler: it takes processes off the run queue and runs
+// each for its turn, until the entry process has ended.
+func schedule(id int) {
+	s := &scheds[id]
+	for {
 		wakeExpired()
-		q := dequeue()
-		if q == nil {
-			if !idle() {
-				outString("** every process waits, and none for a time\n")
-				return false
+		p, stop := dequeue()
+		if stop {
+			break
+		}
+		if p == nil {
+			if Idle != nil {
+				Idle()
 			}
 			continue
 		}
-		run(q)
+		ended := run(s, p)
+		if ended && p == entryProc {
+			lock(lockRun)
+			stopping = true
+			unlock(lockRun)
+		}
 	}
-	return p.state == procExited
+	lock(lockRun)
+	running--
+	unlock(lockRun)
 }

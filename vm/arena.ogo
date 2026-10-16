@@ -101,13 +101,15 @@ func orderFor(n uint32) uint32 {
 }
 
 // allocBlock takes a block of an order, splitting a larger one if it must. It
-// returns noBlock when there is none.
+// returns noBlock when there is none. The pool's lock is taken for it.
 func allocBlock(order uint32) uint32 {
+	lock(lockPool)
 	o := order
 	for o <= maxOrder && freeHead[o-minOrder] == noBlock {
 		o++
 	}
 	if o > maxOrder {
+		unlock(lockPool)
 		return noBlock
 	}
 	i := freeHead[o-minOrder]
@@ -116,12 +118,14 @@ func allocBlock(order uint32) uint32 {
 		o--
 		pushFree(i+1<<o, o)
 	}
+	unlock(lockPool)
 	return i
 }
 
 // freeBlock gives a block back, joining it with its buddy while the buddy is
-// free and of the same order.
+// free and of the same order, under the pool's lock.
 func freeBlock(i, order uint32) {
+	lock(lockPool)
 	for order < maxOrder {
 		buddy := i ^ 1<<order
 		if buddy < arenaLow || buddy+1<<order > arenaLongs || !freeBit(buddy) || arena[buddy+1] != order {
@@ -134,4 +138,5 @@ func freeBlock(i, order uint32) {
 		order++
 	}
 	pushFree(i, order)
+	unlock(lockPool)
 }

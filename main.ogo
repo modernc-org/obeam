@@ -3,10 +3,13 @@
 // license that can be found in the LICENSE file.
 
 // Command obeam is a BEAM on a Propeller 2: it runs the image package image
-// holds, which obeam pack made of modules Erlang's compiler compiled, and
-// prints what they print on the serial line the program was loaded through.
+// holds, which obeam pack made of modules Erlang's compiler compiled, on
+// seven scheduler cogs, and prints what they print on the serial line the
+// program was loaded through.
 //
-// This is milestone M1: one process on one cog, run to its end.
+// This cog is the eighth: it starts the schedulers, drives the pins for them,
+// since a pin driven by several cogs is the OR of what they drive, and prints
+// the figures when the entry process has ended.
 
 import (
 	"p2"
@@ -14,6 +17,8 @@ import (
 	"modernc.org/obeam/image"
 	"modernc.org/obeam/vm"
 )
+
+const schedulers = 7
 
 // out writes a byte of the VM's output to the serial line, a newline as the
 // terminal wants it.
@@ -24,21 +29,104 @@ func out(b byte) {
 	p2.WriteByte(b)
 }
 
-func millis() uint32 { return p2.GetMs() }
+func millis() uint32     { return p2.GetMs() }
+func newLock() int       { return p2.NewLock() }
+func tryLock(l int) bool { return p2.TryLock(l) }
+func release(l int)      { p2.Unlock(l) }
+func idle()              { p2.WaitUs(20) }
+func getCt() uint32      { return p2.GetCt() }
+func clockFreq() uint32  { return p2.ClockFreq() }
+func rnd() uint32        { return p2.Rnd() }
 
-func pinHigh(pin int)         { p2.PinHigh(pin) }
-func pinLow(pin int)          { p2.PinLow(pin) }
-func pinToggle(pin int)       { p2.PinToggle(pin) }
-func pinFloat(pin int)        { p2.PinFloat(pin) }
-func pinIn(pin int) int       { return p2.PinIn(pin) }
-func pinWrite(pin int, v int) { p2.PinWrite(pin, v) }
-func getCt() uint32           { return p2.GetCt() }
-func clockFreq() uint32       { return p2.ClockFreq() }
-func rnd() uint32             { return p2.Rnd() }
+// The pins. A scheduler cog posts what it wants done to a ring, under a lock,
+// and this cog does it, so that every pin is driven by one cog. A read waits
+// for its answer with the lock held, which keeps the answer its own.
+const (
+	pinHighOp = iota
+	pinLowOp
+	pinToggleOp
+	pinFloatOp
+	pinWriteOp
+	pinInOp
+)
+
+type pinCmd struct {
+	op, pin, v int
+}
+
+const ringSize = 64
+
+var (
+	ring               [ringSize]pinCmd
+	ringHead, ringTail int // the head is this cog's, the tail the posters', under pinLock
+	pinLock            int
+	inSeq, inDone      uint32 // a read's number, and the number of the last read answered
+	inVal              int
+)
+
+// post puts a command on the ring, waiting for room if it must.
+func post(op, pin, v int) {
+	for !p2.TryLock(pinLock) {
+	}
+	for (ringTail+1)%ringSize == ringHead {
+	}
+	ring[ringTail] = pinCmd{op, pin, v}
+	ringTail = (ringTail + 1) % ringSize
+	p2.Unlock(pinLock)
+}
+
+func pinHigh(pin int)         { post(pinHighOp, pin, 0) }
+func pinLow(pin int)          { post(pinLowOp, pin, 0) }
+func pinToggle(pin int)       { post(pinToggleOp, pin, 0) }
+func pinFloat(pin int)        { post(pinFloatOp, pin, 0) }
+func pinWrite(pin int, v int) { post(pinWriteOp, pin, v) }
+
+func pinIn(pin int) int {
+	for !p2.TryLock(pinLock) {
+	}
+	for (ringTail+1)%ringSize == ringHead {
+	}
+	seq := inSeq + 1
+	inSeq = seq
+	ring[ringTail] = pinCmd{pinInOp, pin, 0}
+	ringTail = (ringTail + 1) % ringSize
+	for inDone != seq {
+	}
+	v := inVal
+	p2.Unlock(pinLock)
+	return v
+}
+
+// servePins does what the ring holds.
+func servePins() {
+	for ringHead != ringTail {
+		c := ring[ringHead]
+		switch c.op {
+		case pinHighOp:
+			p2.PinHigh(c.pin)
+		case pinLowOp:
+			p2.PinLow(c.pin)
+		case pinToggleOp:
+			p2.PinToggle(c.pin)
+		case pinFloatOp:
+			p2.PinFloat(c.pin)
+		case pinWriteOp:
+			p2.PinWrite(c.pin, c.v)
+		case pinInOp:
+			inVal = p2.PinIn(c.pin)
+			inDone = inSeq
+		}
+		ringHead = (ringHead + 1) % ringSize
+	}
+}
 
 func main() {
 	vm.Out = out
 	vm.Millis = millis
+	vm.NewLock = newLock
+	vm.TryLock = tryLock
+	vm.Unlock = release
+	vm.Idle = idle
 	vm.PinHigh = pinHigh
 	vm.PinLow = pinLow
 	vm.PinToggle = pinToggle
@@ -48,17 +136,28 @@ func main() {
 	vm.GetCt = getCt
 	vm.ClockFreq = clockFreq
 	vm.Rnd = rnd
+	pinLock = p2.NewLock()
 
 	vm.Load(image.Code[:], image.Literals[:], image.Atoms[:], image.Funcs[:], image.Funs[:], image.Lines[:], image.Files[:])
-	printf("obeam: %s, %d longs of code\r\n\r\n", image.EntryName, len(image.Code))
+	printf("obeam: %s, %d longs of code, %d schedulers\r\n\r\n", image.EntryName, len(image.Code), schedulers)
 	t := p2.GetMs()
-	ok := vm.Run(image.Entry)
-	t = p2.GetMs() - t
-	printf("\r\n%d instructions in %d ms", vm.Steps, t)
-	if t > 0 {
-		printf(", %d a second", uint64(vm.Steps)*1000/uint64(t))
+	if !vm.Start(image.Entry, schedulers) {
+		printf("no room for the first process\r\n")
+		return
 	}
-	if !ok {
+	for !vm.Finished() {
+		servePins()
+	}
+	for vm.Running() > 0 {
+		servePins()
+	}
+	t = p2.GetMs() - t
+	printf("\r\n%d instructions in %d ms", vm.Steps(), t)
+	if t > 0 {
+		printf(", %d a second", uint64(vm.Steps())*1000/uint64(t))
+	}
+	printf(", %d collections", vm.Collections())
+	if !vm.Succeeded() {
 		printf("; the process failed")
 	}
 	printf("\r\n")

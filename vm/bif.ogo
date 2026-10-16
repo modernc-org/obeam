@@ -7,7 +7,7 @@
 // ensure first and reads its arguments again after, a collection having
 // perhaps moved them. biftab.ogo, generated, numbers them.
 
-type bif func(n uint32) uint32
+type bif func(s *sched, n uint32) uint32
 
 type bifEntry struct {
 	f     bif
@@ -17,240 +17,240 @@ type bifEntry struct {
 // Arithmetic. A small result stays small; one that does not fit is a 64-bit
 // integer on the heap, and one that does not fit that is system_limit.
 
-func bifAdd(n uint32) uint32 {
-	a, b := bargs[0], bargs[1]
+func bifAdd(s *sched, n uint32) uint32 {
+	a, b := s.bargs[0], s.bargs[1]
 	if isSmall(a) && isSmall(b) {
-		s := a + b
-		if (a^s)&(b^s)>>31 == 0 {
-			return s
+		sum := a + b
+		if (a^sum)&(b^sum)>>31 == 0 {
+			return sum
 		}
 	}
 	if !isInteger(a) || !isInteger(b) {
-		return badarith()
+		return badarith(s)
 	}
 	va, vb := intVal(a), intVal(b)
 	r := va + vb
 	if (va^r)&(vb^r) < 0 {
-		return failAtom(atomSystemLimit)
+		return failAtom(s, atomSystemLimit)
 	}
-	return intResult(r)
+	return intResult(s, r)
 }
 
-func bifSub(n uint32) uint32 {
-	a, b := bargs[0], bargs[1]
+func bifSub(s *sched, n uint32) uint32 {
+	a, b := s.bargs[0], s.bargs[1]
 	if isSmall(a) && isSmall(b) {
-		s := a - b
-		if (a^b)&(a^s)>>31 == 0 {
-			return s
+		d := a - b
+		if (a^b)&(a^d)>>31 == 0 {
+			return d
 		}
 	}
 	if !isInteger(a) || !isInteger(b) {
-		return badarith()
+		return badarith(s)
 	}
 	va, vb := intVal(a), intVal(b)
 	r := va - vb
 	if (va^vb)&(va^r) < 0 {
-		return failAtom(atomSystemLimit)
+		return failAtom(s, atomSystemLimit)
 	}
-	return intResult(r)
+	return intResult(s, r)
 }
 
-func bifMul(n uint32) uint32 {
-	a, b := bargs[0], bargs[1]
+func bifMul(s *sched, n uint32) uint32 {
+	a, b := s.bargs[0], s.bargs[1]
 	if !isInteger(a) || !isInteger(b) {
-		return badarith()
+		return badarith(s)
 	}
 	va, vb := intVal(a), intVal(b)
 	r := va * vb
 	if va != 0 && (r/va != vb || va == -1 && vb == -1<<63) {
-		return failAtom(atomSystemLimit)
+		return failAtom(s, atomSystemLimit)
 	}
-	return intResult(r)
+	return intResult(s, r)
 }
 
-func bifDiv(n uint32) uint32 {
-	a, b := bargs[0], bargs[1]
+func bifDiv(s *sched, n uint32) uint32 {
+	a, b := s.bargs[0], s.bargs[1]
 	if !isInteger(a) || !isInteger(b) {
-		return badarith()
+		return badarith(s)
 	}
 	va, vb := intVal(a), intVal(b)
 	if vb == 0 {
-		return badarith()
+		return badarith(s)
 	}
 	if va == -1<<63 && vb == -1 {
-		return failAtom(atomSystemLimit)
+		return failAtom(s, atomSystemLimit)
 	}
-	return intResult(va / vb)
+	return intResult(s, va/vb)
 }
 
-func bifRem(n uint32) uint32 {
-	a, b := bargs[0], bargs[1]
+func bifRem(s *sched, n uint32) uint32 {
+	a, b := s.bargs[0], s.bargs[1]
 	if !isInteger(a) || !isInteger(b) {
-		return badarith()
+		return badarith(s)
 	}
 	va, vb := intVal(a), intVal(b)
 	if vb == 0 {
-		return badarith()
+		return badarith(s)
 	}
 	if vb == -1 {
 		return mkSmall(0)
 	}
-	return intResult(va % vb)
+	return intResult(s, va%vb)
 }
 
-func bifNeg(n uint32) uint32 {
-	a := bargs[0]
+func bifNeg(s *sched, n uint32) uint32 {
+	a := s.bargs[0]
 	if !isInteger(a) {
-		return badarith()
+		return badarith(s)
 	}
 	v := intVal(a)
 	if v == -1<<63 {
-		return failAtom(atomSystemLimit)
+		return failAtom(s, atomSystemLimit)
 	}
-	return intResult(-v)
+	return intResult(s, -v)
 }
 
-func bifPlus(n uint32) uint32 {
-	if !isNumber(bargs[0]) {
-		return badarith()
+func bifPlus(s *sched, n uint32) uint32 {
+	if !isNumber(s.bargs[0]) {
+		return badarith(s)
 	}
-	return bargs[0]
+	return s.bargs[0]
 }
 
-func bifAbs(n uint32) uint32 {
-	a := bargs[0]
+func bifAbs(s *sched, n uint32) uint32 {
+	a := s.bargs[0]
 	if !isInteger(a) {
-		return badarith()
+		return badarith(s)
 	}
 	v := intVal(a)
 	if v >= 0 {
 		return a
 	}
 	if v == -1<<63 {
-		return failAtom(atomSystemLimit)
+		return failAtom(s, atomSystemLimit)
 	}
-	return intResult(-v)
+	return intResult(s, -v)
 }
 
-func bifBand(n uint32) uint32 { return bitwise(0) }
-func bifBor(n uint32) uint32  { return bitwise(1) }
-func bifBxor(n uint32) uint32 { return bitwise(2) }
+func bifBand(s *sched, n uint32) uint32 { return bitwise(s, 0) }
+func bifBor(s *sched, n uint32) uint32  { return bitwise(s, 1) }
+func bifBxor(s *sched, n uint32) uint32 { return bitwise(s, 2) }
 
-func bitwise(op int) uint32 {
-	a, b := bargs[0], bargs[1]
+func bitwise(s *sched, op int) uint32 {
+	a, b := s.bargs[0], s.bargs[1]
 	if !isInteger(a) || !isInteger(b) {
-		return badarith()
+		return badarith(s)
 	}
 	va, vb := intVal(a), intVal(b)
 	switch op {
 	case 0:
-		return intResult(va & vb)
+		return intResult(s, va&vb)
 	case 1:
-		return intResult(va | vb)
+		return intResult(s, va|vb)
 	}
-	return intResult(va ^ vb)
+	return intResult(s, va^vb)
 }
 
-func bifBnot(n uint32) uint32 {
-	if !isInteger(bargs[0]) {
-		return badarith()
+func bifBnot(s *sched, n uint32) uint32 {
+	if !isInteger(s.bargs[0]) {
+		return badarith(s)
 	}
-	return intResult(^intVal(bargs[0]))
+	return intResult(s, ^intVal(s.bargs[0]))
 }
 
-func bifBsl(n uint32) uint32 {
-	a, b := bargs[0], bargs[1]
+func bifBsl(s *sched, n uint32) uint32 {
+	a, b := s.bargs[0], s.bargs[1]
 	if !isInteger(a) || !isSmall(b) {
-		return badarith()
+		return badarith(s)
 	}
-	v, s := intVal(a), smallVal(b)
-	if s < 0 {
-		return shiftRight(v, -s)
+	v, sh := intVal(a), smallVal(b)
+	if sh < 0 {
+		return shiftRight(s, v, -sh)
 	}
 	if v == 0 {
 		return mkSmall(0)
 	}
-	if s >= 63 {
-		return failAtom(atomSystemLimit)
+	if sh >= 63 {
+		return failAtom(s, atomSystemLimit)
 	}
-	r := v << uint(s)
-	if r>>uint(s) != v {
-		return failAtom(atomSystemLimit)
+	r := v << uint(sh)
+	if r>>uint(sh) != v {
+		return failAtom(s, atomSystemLimit)
 	}
-	return intResult(r)
+	return intResult(s, r)
 }
 
-func bifBsr(n uint32) uint32 {
-	a, b := bargs[0], bargs[1]
+func bifBsr(s *sched, n uint32) uint32 {
+	a, b := s.bargs[0], s.bargs[1]
 	if !isInteger(a) || !isSmall(b) {
-		return badarith()
+		return badarith(s)
 	}
-	v, s := intVal(a), smallVal(b)
-	if s < 0 {
-		bargs[1] = mkSmall(-s)
-		return bifBsl(2)
+	v, sh := intVal(a), smallVal(b)
+	if sh < 0 {
+		s.bargs[1] = mkSmall(-sh)
+		return bifBsl(s, 2)
 	}
-	return shiftRight(v, s)
+	return shiftRight(s, v, sh)
 }
 
-func shiftRight(v int64, s int32) uint32 {
-	if s >= 63 {
+func shiftRight(s *sched, v int64, sh int32) uint32 {
+	if sh >= 63 {
 		if v < 0 {
 			return mkSmall(-1)
 		}
 		return mkSmall(0)
 	}
-	return intResult(v >> uint(s))
+	return intResult(s, v>>uint(sh))
 }
 
 // intResult makes an integer's term, on the heap where it is not small.
-func intResult(v int64) uint32 {
+func intResult(s *sched, v int64) uint32 {
 	if fitsSmall(v) {
 		return mkSmall(int32(v))
 	}
-	if !ensure(3, curLive) {
+	if !ensure(s, 3, s.curLive) {
 		return nonValue
 	}
-	return mkInt(v)
+	return mkInt(s, v)
 }
 
 // Comparison and boolean operators.
 
-func bifEq(n uint32) uint32      { return boolTerm(cmp(bargs[0], bargs[1]) == 0) }
-func bifNe(n uint32) uint32      { return boolTerm(cmp(bargs[0], bargs[1]) != 0) }
-func bifEqExact(n uint32) uint32 { return boolTerm(eqExact(bargs[0], bargs[1])) }
-func bifNeExact(n uint32) uint32 { return boolTerm(!eqExact(bargs[0], bargs[1])) }
-func bifLt(n uint32) uint32      { return boolTerm(cmp(bargs[0], bargs[1]) < 0) }
-func bifGt(n uint32) uint32      { return boolTerm(cmp(bargs[0], bargs[1]) > 0) }
-func bifLe(n uint32) uint32      { return boolTerm(cmp(bargs[0], bargs[1]) <= 0) }
-func bifGe(n uint32) uint32      { return boolTerm(cmp(bargs[0], bargs[1]) >= 0) }
+func bifEq(s *sched, n uint32) uint32      { return boolTerm(cmp(s, s.bargs[0], s.bargs[1]) == 0) }
+func bifNe(s *sched, n uint32) uint32      { return boolTerm(cmp(s, s.bargs[0], s.bargs[1]) != 0) }
+func bifEqExact(s *sched, n uint32) uint32 { return boolTerm(eqExact(s, s.bargs[0], s.bargs[1])) }
+func bifNeExact(s *sched, n uint32) uint32 { return boolTerm(!eqExact(s, s.bargs[0], s.bargs[1])) }
+func bifLt(s *sched, n uint32) uint32      { return boolTerm(cmp(s, s.bargs[0], s.bargs[1]) < 0) }
+func bifGt(s *sched, n uint32) uint32      { return boolTerm(cmp(s, s.bargs[0], s.bargs[1]) > 0) }
+func bifLe(s *sched, n uint32) uint32      { return boolTerm(cmp(s, s.bargs[0], s.bargs[1]) <= 0) }
+func bifGe(s *sched, n uint32) uint32      { return boolTerm(cmp(s, s.bargs[0], s.bargs[1]) >= 0) }
 
-func bifNot(n uint32) uint32 {
-	if !isBool(bargs[0]) {
-		return badarg()
+func bifNot(s *sched, n uint32) uint32 {
+	if !isBool(s.bargs[0]) {
+		return badarg(s)
 	}
-	return boolTerm(bargs[0] == falseTerm)
+	return boolTerm(s.bargs[0] == falseTerm)
 }
 
-func bifAnd(n uint32) uint32 {
-	if !isBool(bargs[0]) || !isBool(bargs[1]) {
-		return badarg()
+func bifAnd(s *sched, n uint32) uint32 {
+	if !isBool(s.bargs[0]) || !isBool(s.bargs[1]) {
+		return badarg(s)
 	}
-	return boolTerm(bargs[0] == trueTerm && bargs[1] == trueTerm)
+	return boolTerm(s.bargs[0] == trueTerm && s.bargs[1] == trueTerm)
 }
 
-func bifOr(n uint32) uint32 {
-	if !isBool(bargs[0]) || !isBool(bargs[1]) {
-		return badarg()
+func bifOr(s *sched, n uint32) uint32 {
+	if !isBool(s.bargs[0]) || !isBool(s.bargs[1]) {
+		return badarg(s)
 	}
-	return boolTerm(bargs[0] == trueTerm || bargs[1] == trueTerm)
+	return boolTerm(s.bargs[0] == trueTerm || s.bargs[1] == trueTerm)
 }
 
-func bifXor(n uint32) uint32 {
-	if !isBool(bargs[0]) || !isBool(bargs[1]) {
-		return badarg()
+func bifXor(s *sched, n uint32) uint32 {
+	if !isBool(s.bargs[0]) || !isBool(s.bargs[1]) {
+		return badarg(s)
 	}
-	return boolTerm(bargs[0] != bargs[1])
+	return boolTerm(s.bargs[0] != s.bargs[1])
 }
 
 // Lists and tuples.
@@ -268,100 +268,100 @@ func listLen(t uint32) int32 {
 	return n
 }
 
-func bifLength(n uint32) uint32 {
-	l := listLen(bargs[0])
+func bifLength(s *sched, n uint32) uint32 {
+	l := listLen(s.bargs[0])
 	if l < 0 {
-		return badarg()
+		return badarg(s)
 	}
 	return mkSmall(l)
 }
 
-func bifHd(n uint32) uint32 {
-	if !isCons(bargs[0]) {
-		return badarg()
+func bifHd(s *sched, n uint32) uint32 {
+	if !isCons(s.bargs[0]) {
+		return badarg(s)
 	}
-	return arena[consIdx(bargs[0])]
+	return arena[consIdx(s.bargs[0])]
 }
 
-func bifTl(n uint32) uint32 {
-	if !isCons(bargs[0]) {
-		return badarg()
+func bifTl(s *sched, n uint32) uint32 {
+	if !isCons(s.bargs[0]) {
+		return badarg(s)
 	}
-	return arena[consIdx(bargs[0])+1]
+	return arena[consIdx(s.bargs[0])+1]
 }
 
-func bifElement(n uint32) uint32 {
-	i, t := bargs[0], bargs[1]
+func bifElement(s *sched, n uint32) uint32 {
+	i, t := s.bargs[0], s.bargs[1]
 	if !isSmall(i) || !isTuple(t) || smallVal(i) < 1 || uint32(smallVal(i)) > tupleArity(t) {
-		return badarg()
+		return badarg(s)
 	}
 	return tupleElem(t, uint32(smallVal(i)))
 }
 
-func bifSetelement(n uint32) uint32 {
-	i, t := bargs[0], bargs[1]
+func bifSetelement(s *sched, n uint32) uint32 {
+	i, t := s.bargs[0], s.bargs[1]
 	if !isSmall(i) || !isTuple(t) || smallVal(i) < 1 || uint32(smallVal(i)) > tupleArity(t) {
-		return badarg()
+		return badarg(s)
 	}
 	a := tupleArity(t)
-	if !ensure(a+1, curLive) {
+	if !ensure(s, a+1, s.curLive) {
 		return nonValue
 	}
-	i, t = bargs[0], bargs[1]
-	s := boxIdx(t)
-	d := cur.htop
+	i, t = s.bargs[0], s.bargs[1]
+	from := boxIdx(t)
+	d := s.cur.htop
 	for k := uint32(0); k <= a; k++ {
-		arena[d+k] = arena[s+k]
+		arena[d+k] = arena[from+k]
 	}
-	arena[d+uint32(smallVal(i))] = bargs[2]
-	cur.htop += a + 1
+	arena[d+uint32(smallVal(i))] = s.bargs[2]
+	s.cur.htop += a + 1
 	return mkBoxed(d)
 }
 
-func bifTupleSize(n uint32) uint32 {
-	if !isTuple(bargs[0]) {
-		return badarg()
+func bifTupleSize(s *sched, n uint32) uint32 {
+	if !isTuple(s.bargs[0]) {
+		return badarg(s)
 	}
-	return mkSmall(int32(tupleArity(bargs[0])))
+	return mkSmall(int32(tupleArity(s.bargs[0])))
 }
 
 // Type tests, as functions.
 
-func bifIsAtom(n uint32) uint32      { return boolTerm(isAtom(bargs[0])) }
-func bifIsInteger(n uint32) uint32   { return boolTerm(isInteger(bargs[0])) }
-func bifIsNumber(n uint32) uint32    { return boolTerm(isNumber(bargs[0])) }
-func bifIsFloat(n uint32) uint32     { return boolTerm(isFloat(bargs[0])) }
-func bifIsList(n uint32) uint32      { return boolTerm(isList(bargs[0])) }
-func bifIsTuple(n uint32) uint32     { return boolTerm(isTuple(bargs[0])) }
-func bifIsBoolean(n uint32) uint32   { return boolTerm(isBool(bargs[0])) }
-func bifIsFunction1(n uint32) uint32 { return boolTerm(isFun(bargs[0])) }
-func bifIsPid(n uint32) uint32       { return boolTerm(isPid(bargs[0])) }
-func bifIsReference(n uint32) uint32 { return boolTerm(isRef(bargs[0])) }
-func bifIsBinary(n uint32) uint32    { return boolTerm(isBinary(bargs[0])) }
+func bifIsAtom(s *sched, n uint32) uint32      { return boolTerm(isAtom(s.bargs[0])) }
+func bifIsInteger(s *sched, n uint32) uint32   { return boolTerm(isInteger(s.bargs[0])) }
+func bifIsNumber(s *sched, n uint32) uint32    { return boolTerm(isNumber(s.bargs[0])) }
+func bifIsFloat(s *sched, n uint32) uint32     { return boolTerm(isFloat(s.bargs[0])) }
+func bifIsList(s *sched, n uint32) uint32      { return boolTerm(isList(s.bargs[0])) }
+func bifIsTuple(s *sched, n uint32) uint32     { return boolTerm(isTuple(s.bargs[0])) }
+func bifIsBoolean(s *sched, n uint32) uint32   { return boolTerm(isBool(s.bargs[0])) }
+func bifIsFunction1(s *sched, n uint32) uint32 { return boolTerm(isFun(s.bargs[0])) }
+func bifIsPid(s *sched, n uint32) uint32       { return boolTerm(isPid(s.bargs[0])) }
+func bifIsReference(s *sched, n uint32) uint32 { return boolTerm(isRef(s.bargs[0])) }
+func bifIsBinary(s *sched, n uint32) uint32    { return boolTerm(isBinary(s.bargs[0])) }
 
-func bifIsFunction2(n uint32) uint32 {
-	f, a := bargs[0], bargs[1]
+func bifIsFunction2(s *sched, n uint32) uint32 {
+	f, a := s.bargs[0], s.bargs[1]
 	if !isSmall(a) || smallVal(a) < 0 {
-		return badarg()
+		return badarg(s)
 	}
 	return boolTerm(isFun(f) && funArity(f) == uint32(smallVal(a)))
 }
 
-func bifIsRecord3(n uint32) uint32 {
-	t, tag, size := bargs[0], bargs[1], bargs[2]
+func bifIsRecord3(s *sched, n uint32) uint32 {
+	t, tag, size := s.bargs[0], s.bargs[1], s.bargs[2]
 	if !isAtom(tag) || !isSmall(size) || smallVal(size) < 1 {
-		return badarg()
+		return badarg(s)
 	}
 	return boolTerm(isTuple(t) && tupleArity(t) == uint32(smallVal(size)) && tupleElem(t, 1) == tag)
 }
 
 // Conversions.
 
-func bifIntegerToList(n uint32) uint32 {
-	if !isInteger(bargs[0]) {
-		return badarg()
+func bifIntegerToList(s *sched, n uint32) uint32 {
+	if !isInteger(s.bargs[0]) {
+		return badarg(s)
 	}
-	v := intVal(bargs[0])
+	v := intVal(s.bargs[0])
 	var buf [20]byte
 	i := len(buf)
 	neg := v < 0
@@ -381,27 +381,27 @@ func bifIntegerToList(n uint32) uint32 {
 		i--
 		buf[i] = '-'
 	}
-	return bytesToList(buf[i:])
+	return bytesToList(s, buf[i:])
 }
 
 // bytesToList makes a list of the bytes, on the heap.
-func bytesToList(b []byte) uint32 {
-	if !ensure(2*uint32(len(b)), curLive) {
+func bytesToList(s *sched, b []byte) uint32 {
+	if !ensure(s, 2*uint32(len(b)), s.curLive) {
 		return nonValue
 	}
 	t := uint32(nilTerm)
 	for k := len(b) - 1; k >= 0; k-- {
-		i := cur.htop
+		i := s.cur.htop
 		arena[i] = mkSmall(int32(b[k]))
 		arena[i+1] = t
-		cur.htop += 2
+		s.cur.htop += 2
 		t = mkCons(i)
 	}
 	return t
 }
 
-func bifListToInteger(n uint32) uint32 {
-	t := bargs[0]
+func bifListToInteger(s *sched, n uint32) uint32 {
+	t := s.bargs[0]
 	neg := false
 	if isCons(t) {
 		c := arena[consIdx(t)]
@@ -411,76 +411,76 @@ func bifListToInteger(n uint32) uint32 {
 		}
 	}
 	if !isCons(t) {
-		return badarg()
+		return badarg(s)
 	}
 	v := int64(0)
 	for isCons(t) {
 		c := arena[consIdx(t)]
 		if !isSmall(c) || smallVal(c) < '0' || smallVal(c) > '9' {
-			return badarg()
+			return badarg(s)
 		}
 		if v > (1<<63-1)/10 {
-			return failAtom(atomSystemLimit)
+			return failAtom(s, atomSystemLimit)
 		}
 		v = v*10 + int64(smallVal(c)-'0')
 		t = arena[consIdx(t)+1]
 	}
 	if t != nilTerm {
-		return badarg()
+		return badarg(s)
 	}
 	if neg {
 		v = -v
 	}
-	return intResult(v)
+	return intResult(s, v)
 }
 
-func bifAtomToList(n uint32) uint32 {
-	if !isAtom(bargs[0]) {
-		return badarg()
+func bifAtomToList(s *sched, n uint32) uint32 {
+	if !isAtom(s.bargs[0]) {
+		return badarg(s)
 	}
-	s := atomName(bargs[0])
-	if !ensure(2*uint32(len(s)), curLive) {
+	name := atomName(s.bargs[0])
+	if !ensure(s, 2*uint32(len(name)), s.curLive) {
 		return nonValue
 	}
 	t := uint32(nilTerm)
-	for k := len(s) - 1; k >= 0; k-- {
-		i := cur.htop
-		arena[i] = mkSmall(int32(s[k]))
+	for k := len(name) - 1; k >= 0; k-- {
+		i := s.cur.htop
+		arena[i] = mkSmall(int32(name[k]))
 		arena[i+1] = t
-		cur.htop += 2
+		s.cur.htop += 2
 		t = mkCons(i)
 	}
 	return t
 }
 
 // bifAppend is ++: the first list copied, the second its tail.
-func bifAppend(n uint32) uint32 {
-	l := listLen(bargs[0])
+func bifAppend(s *sched, n uint32) uint32 {
+	l := listLen(s.bargs[0])
 	if l < 0 {
-		return badarg()
+		return badarg(s)
 	}
 	if l == 0 {
-		return bargs[1]
+		return s.bargs[1]
 	}
-	if !ensure(2*uint32(l), curLive) {
+	if !ensure(s, 2*uint32(l), s.curLive) {
 		return nonValue
 	}
-	return appendList(bargs[0], bargs[1])
+	return appendList(s, s.bargs[0], s.bargs[1])
 }
 
 // appendList copies a proper list onto the heap, giving it a tail; the room
 // has been made.
-func appendList(from, tail uint32) uint32 {
-	first := cur.htop
+func appendList(s *sched, from, tail uint32) uint32 {
+	first := s.cur.htop
 	prev := uint32(0)
 	for isCons(from) {
-		i := cur.htop
+		i := s.cur.htop
 		arena[i] = arena[consIdx(from)]
 		if prev != 0 {
 			arena[prev+1] = mkCons(i)
 		}
 		prev = i
-		cur.htop += 2
+		s.cur.htop += 2
 		from = arena[consIdx(from)+1]
 	}
 	arena[prev+1] = tail
@@ -490,20 +490,20 @@ func appendList(from, tail uint32) uint32 {
 // bifSubtract is --: every element of the second list takes the first
 // element of the first that it equals. The second list is 256 elements at
 // most.
-func bifSubtract(n uint32) uint32 {
-	l := listLen(bargs[0])
-	m := listLen(bargs[1])
+func bifSubtract(s *sched, n uint32) uint32 {
+	l := listLen(s.bargs[0])
+	m := listLen(s.bargs[1])
 	if l < 0 || m < 0 {
-		return badarg()
+		return badarg(s)
 	}
 	if m > 256 {
-		return failAtom(atomSystemLimit)
+		return failAtom(s, atomSystemLimit)
 	}
-	if !ensure(2*uint32(l), curLive) {
+	if !ensure(s, 2*uint32(l), s.curLive) {
 		return nonValue
 	}
 	var taken [8]uint32 // a bit per element of the second list
-	a, b := bargs[0], bargs[1]
+	a, b := s.bargs[0], s.bargs[1]
 	first := uint32(0)
 	prev := uint32(0)
 	for isCons(a) {
@@ -512,7 +512,7 @@ func bifSubtract(n uint32) uint32 {
 		k := uint32(0)
 		found := false
 		for t := b; isCons(t); t = arena[consIdx(t)+1] {
-			if taken[k/32]>>(k%32)&1 == 0 && eqExact(e, arena[consIdx(t)]) {
+			if taken[k/32]>>(k%32)&1 == 0 && eqExact(s, e, arena[consIdx(t)]) {
 				taken[k/32] |= 1 << (k % 32)
 				found = true
 				break
@@ -522,7 +522,7 @@ func bifSubtract(n uint32) uint32 {
 		if found {
 			continue
 		}
-		i := cur.htop
+		i := s.cur.htop
 		arena[i] = e
 		arena[i+1] = nilTerm
 		if prev != 0 {
@@ -531,7 +531,7 @@ func bifSubtract(n uint32) uint32 {
 			first = i
 		}
 		prev = i
-		cur.htop += 2
+		s.cur.htop += 2
 	}
 	if prev == 0 {
 		return nilTerm
@@ -539,37 +539,41 @@ func bifSubtract(n uint32) uint32 {
 	return mkCons(first)
 }
 
-func bifMin(n uint32) uint32 {
-	if cmp(bargs[0], bargs[1]) <= 0 {
-		return bargs[0]
+func bifMin(s *sched, n uint32) uint32 {
+	if cmp(s, s.bargs[0], s.bargs[1]) <= 0 {
+		return s.bargs[0]
 	}
-	return bargs[1]
+	return s.bargs[1]
 }
 
-func bifMax(n uint32) uint32 {
-	if cmp(bargs[0], bargs[1]) >= 0 {
-		return bargs[0]
+func bifMax(s *sched, n uint32) uint32 {
+	if cmp(s, s.bargs[0], s.bargs[1]) >= 0 {
+		return s.bargs[0]
 	}
-	return bargs[1]
+	return s.bargs[1]
 }
 
 // Processes, exceptions, time.
 
-func bifSelf(n uint32) uint32 { return cur.pid() }
+func bifSelf(s *sched, n uint32) uint32 { return s.cur.pid() }
 
-func bifMakeRef(n uint32) uint32 {
-	refCount++
-	return mkRef(refCount)
+// bifMakeRef makes a reference: the scheduler's number and its count, so
+// that no two schedulers make the same.
+func bifMakeRef(s *sched, n uint32) uint32 {
+	s.refs++
+	return mkRef(s.id<<24 | s.refs&0xffffff)
 }
 
-func bifError1(n uint32) uint32 { return failWith(atomError, bargs[0]) }
-func bifError2(n uint32) uint32 { return failWith(atomError, bargs[0]) }
-func bifExit1(n uint32) uint32  { return failWith(atomExit, bargs[0]) }
-func bifThrow(n uint32) uint32  { return failWith(atomThrow, bargs[0]) }
+func bifError1(s *sched, n uint32) uint32 { return failWith(s, atomError, s.bargs[0]) }
+func bifError2(s *sched, n uint32) uint32 { return failWith(s, atomError, s.bargs[0]) }
+func bifExit1(s *sched, n uint32) uint32  { return failWith(s, atomExit, s.bargs[0]) }
+func bifThrow(s *sched, n uint32) uint32  { return failWith(s, atomThrow, s.bargs[0]) }
 
-func bifDisplay(n uint32) uint32 {
-	writeTerm(bargs[0], false)
+func bifDisplay(s *sched, n uint32) uint32 {
+	lock(lockOut)
+	writeTerm(s, s.bargs[0], false)
 	out('\n')
+	unlock(lockOut)
 	return trueTerm
 }
 
@@ -580,127 +584,140 @@ func millis() int64 {
 	return int64(Millis())
 }
 
-func bifMonotonicTime0(n uint32) uint32 { return intResult(millis() * 1000000) }
+func bifMonotonicTime0(s *sched, n uint32) uint32 { return intResult(s, millis()*1000000) }
 
-func bifMonotonicTime1(n uint32) uint32 {
+func bifMonotonicTime1(s *sched, n uint32) uint32 {
 	ms := millis()
-	switch bargs[0] {
+	switch s.bargs[0] {
 	case mkAtom(atomMillisecond):
-		return intResult(ms)
+		return intResult(s, ms)
 	case mkAtom(atomMicrosecond):
-		return intResult(ms * 1000)
+		return intResult(s, ms*1000)
 	case mkAtom(atomNanosecond), mkAtom(atomNative):
-		return intResult(ms * 1000000)
+		return intResult(s, ms*1000000)
 	case mkAtom(atomSecond):
-		return intResult(ms / 1000)
+		return intResult(s, ms/1000)
 	}
-	if isSmall(bargs[0]) && smallVal(bargs[0]) > 0 {
-		return intResult(ms * int64(smallVal(bargs[0])) / 1000)
+	if isSmall(s.bargs[0]) && smallVal(s.bargs[0]) > 0 {
+		return intResult(s, ms*int64(smallVal(s.bargs[0]))/1000)
 	}
-	return badarg()
+	return badarg(s)
 }
 
 // The lists module's BIFs.
 
-func bifListsReverse1(n uint32) uint32 {
-	bargs[1] = nilTerm
-	return bifListsReverse2(2)
+func bifListsReverse1(s *sched, n uint32) uint32 {
+	s.bargs[1] = nilTerm
+	return bifListsReverse2(s, 2)
 }
 
-func bifListsReverse2(n uint32) uint32 {
-	l := listLen(bargs[0])
+func bifListsReverse2(s *sched, n uint32) uint32 {
+	l := listLen(s.bargs[0])
 	if l < 0 {
-		return badarg()
+		return badarg(s)
 	}
-	if !ensure(2*uint32(l), curLive) {
+	if !ensure(s, 2*uint32(l), s.curLive) {
 		return nonValue
 	}
-	from, t := bargs[0], bargs[1]
+	from, t := s.bargs[0], s.bargs[1]
 	for isCons(from) {
-		i := cur.htop
+		i := s.cur.htop
 		arena[i] = arena[consIdx(from)]
 		arena[i+1] = t
-		cur.htop += 2
+		s.cur.htop += 2
 		t = mkCons(i)
 		from = arena[consIdx(from)+1]
 	}
 	return t
 }
 
-func bifListsMember(n uint32) uint32 {
-	e, t := bargs[0], bargs[1]
+func bifListsMember(s *sched, n uint32) uint32 {
+	e, t := s.bargs[0], s.bargs[1]
 	for isCons(t) {
-		if eqExact(e, arena[consIdx(t)]) {
+		if eqExact(s, e, arena[consIdx(t)]) {
 			return trueTerm
 		}
 		t = arena[consIdx(t)+1]
 	}
 	if t != nilTerm {
-		return badarg()
+		return badarg(s)
 	}
 	return falseTerm
 }
 
-func bifListsKeyfind(n uint32) uint32 {
-	key, pos, t := bargs[0], bargs[1], bargs[2]
+func bifListsKeyfind(s *sched, n uint32) uint32 {
+	key, pos, t := s.bargs[0], s.bargs[1], s.bargs[2]
 	if !isSmall(pos) || smallVal(pos) < 1 {
-		return badarg()
+		return badarg(s)
 	}
 	k := uint32(smallVal(pos))
 	for isCons(t) {
 		e := arena[consIdx(t)]
-		if isTuple(e) && tupleArity(e) >= k && cmp(tupleElem(e, k), key) == 0 {
+		if isTuple(e) && tupleArity(e) >= k && cmp(s, tupleElem(e, k), key) == 0 {
 			return e
 		}
 		t = arena[consIdx(t)+1]
 	}
 	if t != nilTerm {
-		return badarg()
+		return badarg(s)
 	}
 	return falseTerm
 }
 
 // The io module's BIFs.
 
-func bifIoFormat1(n uint32) uint32 {
-	if !format(bargs[0], nilTerm) {
-		return badarg()
+// The io BIFs write under the output's lock, so that a line is one process's.
+
+func bifIoFormat1(s *sched, n uint32) uint32 {
+	lock(lockOut)
+	ok := format(s, s.bargs[0], nilTerm)
+	unlock(lockOut)
+	if !ok {
+		return badarg(s)
 	}
 	return okTerm
 }
 
-func bifIoFormat2(n uint32) uint32 {
-	if !format(bargs[0], bargs[1]) {
-		return badarg()
+func bifIoFormat2(s *sched, n uint32) uint32 {
+	lock(lockOut)
+	ok := format(s, s.bargs[0], s.bargs[1])
+	unlock(lockOut)
+	if !ok {
+		return badarg(s)
 	}
 	return okTerm
 }
 
-func bifIoPutChars(n uint32) uint32 {
-	if !writeChars(bargs[0]) {
-		return badarg()
+func bifIoPutChars(s *sched, n uint32) uint32 {
+	lock(lockOut)
+	ok := writeChars(s.bargs[0])
+	unlock(lockOut)
+	if !ok {
+		return badarg(s)
 	}
 	return okTerm
 }
 
-func bifIoNl(n uint32) uint32 {
+func bifIoNl(s *sched, n uint32) uint32 {
+	lock(lockOut)
 	out('\n')
+	unlock(lockOut)
 	return okTerm
 }
 
 // The p2 module's BIFs, through the hooks; a hook that is nil does nothing.
 
-func pinArg() (int, bool) {
-	if !isSmall(bargs[0]) || smallVal(bargs[0]) < 0 || smallVal(bargs[0]) > 63 {
+func pinArg(s *sched) (int, bool) {
+	if !isSmall(s.bargs[0]) || smallVal(s.bargs[0]) < 0 || smallVal(s.bargs[0]) > 63 {
 		return 0, false
 	}
-	return int(smallVal(bargs[0])), true
+	return int(smallVal(s.bargs[0])), true
 }
 
-func bifP2PinHigh(n uint32) uint32 {
-	pin, ok := pinArg()
+func bifP2PinHigh(s *sched, n uint32) uint32 {
+	pin, ok := pinArg(s)
 	if !ok {
-		return badarg()
+		return badarg(s)
 	}
 	if PinHigh != nil {
 		PinHigh(pin)
@@ -708,10 +725,10 @@ func bifP2PinHigh(n uint32) uint32 {
 	return okTerm
 }
 
-func bifP2PinLow(n uint32) uint32 {
-	pin, ok := pinArg()
+func bifP2PinLow(s *sched, n uint32) uint32 {
+	pin, ok := pinArg(s)
 	if !ok {
-		return badarg()
+		return badarg(s)
 	}
 	if PinLow != nil {
 		PinLow(pin)
@@ -719,10 +736,10 @@ func bifP2PinLow(n uint32) uint32 {
 	return okTerm
 }
 
-func bifP2PinToggle(n uint32) uint32 {
-	pin, ok := pinArg()
+func bifP2PinToggle(s *sched, n uint32) uint32 {
+	pin, ok := pinArg(s)
 	if !ok {
-		return badarg()
+		return badarg(s)
 	}
 	if PinToggle != nil {
 		PinToggle(pin)
@@ -730,10 +747,10 @@ func bifP2PinToggle(n uint32) uint32 {
 	return okTerm
 }
 
-func bifP2PinFloat(n uint32) uint32 {
-	pin, ok := pinArg()
+func bifP2PinFloat(s *sched, n uint32) uint32 {
+	pin, ok := pinArg(s)
 	if !ok {
-		return badarg()
+		return badarg(s)
 	}
 	if PinFloat != nil {
 		PinFloat(pin)
@@ -741,10 +758,10 @@ func bifP2PinFloat(n uint32) uint32 {
 	return okTerm
 }
 
-func bifP2PinIn(n uint32) uint32 {
-	pin, ok := pinArg()
+func bifP2PinIn(s *sched, n uint32) uint32 {
+	pin, ok := pinArg(s)
 	if !ok {
-		return badarg()
+		return badarg(s)
 	}
 	if PinIn == nil {
 		return mkSmall(0)
@@ -752,43 +769,42 @@ func bifP2PinIn(n uint32) uint32 {
 	return mkSmall(int32(PinIn(pin)))
 }
 
-func bifP2PinWrite(n uint32) uint32 {
-	pin, ok := pinArg()
-	if !ok || !isSmall(bargs[1]) {
-		return badarg()
+func bifP2PinWrite(s *sched, n uint32) uint32 {
+	pin, ok := pinArg(s)
+	if !ok || !isSmall(s.bargs[1]) {
+		return badarg(s)
 	}
 	if PinWrite != nil {
-		PinWrite(pin, int(smallVal(bargs[1])))
+		PinWrite(pin, int(smallVal(s.bargs[1])))
 	}
 	return okTerm
 }
 
-func bifP2Cog(n uint32) uint32 {
-	if Cog == nil {
-		return mkSmall(0)
-	}
-	return mkSmall(int32(Cog()))
+// bifP2Cog answers which scheduler the process runs on at the moment, 0 to
+// 6; the cog's own number OctoGo does not tell.
+func bifP2Cog(s *sched, n uint32) uint32 {
+	return mkSmall(int32(s.id))
 }
 
-func bifP2GetCt(n uint32) uint32 {
+func bifP2GetCt(s *sched, n uint32) uint32 {
 	if GetCt == nil {
 		return mkSmall(0)
 	}
-	return intResult(int64(GetCt()))
+	return intResult(s, int64(GetCt()))
 }
 
-func bifP2ClockFreq(n uint32) uint32 {
+func bifP2ClockFreq(s *sched, n uint32) uint32 {
 	if ClockFreq == nil {
 		return mkSmall(0)
 	}
-	return intResult(int64(ClockFreq()))
+	return intResult(s, int64(ClockFreq()))
 }
 
-func bifP2Rnd(n uint32) uint32 {
+func bifP2Rnd(s *sched, n uint32) uint32 {
 	if Rnd == nil {
 		return mkSmall(4)
 	}
-	return intResult(int64(Rnd()))
+	return intResult(s, int64(Rnd()))
 }
 
 // Processes: spawn, send, apply.
@@ -806,13 +822,13 @@ func findFunction(m, f, arity uint32) (uint32, bool) {
 
 // listToArgs puts a list's elements in bargs and answers how many, or -1
 // for what is no list of at most maxArity.
-func listToX(l uint32) int32 {
+func listToX(s *sched, l uint32) int32 {
 	n := int32(0)
 	for isCons(l) {
 		if n == maxArity {
 			return -1
 		}
-		x[n] = arena[consIdx(l)]
+		s.x[n] = arena[consIdx(l)]
 		n++
 		l = arena[consIdx(l)+1]
 	}
@@ -824,21 +840,21 @@ func listToX(l uint32) int32 {
 
 // spawnAt makes a process to run the code at entry with the n arguments in
 // x0 and up, copied to it, and queues it.
-func spawnAt(entry, n uint32) uint32 {
+func spawnAt(s *sched, entry, n uint32) uint32 {
 	longs := uint32(0)
 	for i := uint32(0); i < n; i++ {
-		s := termSize(x[i])
-		if s < 0 {
-			return failAtom(atomSystemLimit)
+		size := termSize(s, s.x[i])
+		if size < 0 {
+			return failAtom(s, atomSystemLimit)
 		}
-		longs += uint32(s)
+		longs += uint32(size)
 	}
 	p := spawn(entry, n, longs)
 	if p == nil {
-		return failAtom(atomSystemLimit)
+		return failAtom(s, atomSystemLimit)
 	}
 	for i := uint32(0); i < n; i++ {
-		root, end := copyTerm(x[i], p.htop)
+		root, end := copyTerm(s, s.x[i], p.htop)
 		p.xsave[i] = root
 		p.htop = end
 	}
@@ -848,57 +864,57 @@ func spawnAt(entry, n uint32) uint32 {
 
 // bifSpawn1 spawns a fun of no arguments: its environment is what the new
 // process begins with.
-func bifSpawn1(n uint32) uint32 {
-	f := bargs[0]
+func bifSpawn1(s *sched, n uint32) uint32 {
+	f := s.bargs[0]
 	if !isFun(f) || funArity(f) != 0 || funKind(f) == funBif {
-		return badarg()
+		return badarg(s)
 	}
 	free := funFree(f)
 	i := boxIdx(f) + 1 + funHeadLongs
 	for k := uint32(0); k < free; k++ {
-		x[k] = arena[i+k]
+		s.x[k] = arena[i+k]
 	}
-	return spawnAt(funCode(f), free)
+	return spawnAt(s, funCode(f), free)
 }
 
 // bifSpawn3 spawns a function of the image by name, with a list of arguments.
-func bifSpawn3(n uint32) uint32 {
-	m, f, args := bargs[0], bargs[1], bargs[2]
+func bifSpawn3(s *sched, n uint32) uint32 {
+	m, f, args := s.bargs[0], s.bargs[1], s.bargs[2]
 	if !isAtom(m) || !isAtom(f) {
-		return badarg()
+		return badarg(s)
 	}
-	na := listToX(args)
+	na := listToX(s, args)
 	if na < 0 {
-		return badarg()
+		return badarg(s)
 	}
 	entry, ok := findFunction(m, f, uint32(na))
 	if !ok {
-		return failAtom(atomUndef)
+		return failAtom(s, atomUndef)
 	}
-	return spawnAt(entry, uint32(na))
+	return spawnAt(s, entry, uint32(na))
 }
 
-func bifSend(n uint32) uint32 {
-	if !sendMsg(bargs[0], bargs[1]) {
+func bifSend(s *sched, n uint32) uint32 {
+	if !sendMsg(s, s.bargs[0], s.bargs[1]) {
 		return nonValue
 	}
-	return bargs[1]
+	return s.bargs[1]
 }
 
 // bifApply3 calls a function of the image by name with a list of arguments:
 // the arguments go to x0 and up and the handler jumps. A BIF is called here.
-func bifApply3(n uint32) uint32 {
-	m, f, args := bargs[0], bargs[1], bargs[2]
+func bifApply3(s *sched, n uint32) uint32 {
+	m, f, args := s.bargs[0], s.bargs[1], s.bargs[2]
 	if !isAtom(m) || !isAtom(f) {
-		return badarg()
+		return badarg(s)
 	}
-	na := listToX(args)
+	na := listToX(s, args)
 	if na < 0 {
-		return badarg()
+		return badarg(s)
 	}
 	if entry, ok := findFunction(m, f, uint32(na)); ok {
-		bifJump = entry
-		bifLive = uint32(na)
+		s.bifJump = entry
+		s.bifLive = uint32(na)
 		return jumpValue
 	}
 	for i := range bifs {
@@ -910,49 +926,54 @@ func bifApply3(n uint32) uint32 {
 			continue
 		}
 		for k := int32(0); k < na; k++ {
-			bargs[k] = x[k]
+			s.bargs[k] = s.x[k]
 		}
-		nbargs = uint32(na)
-		return bifs[i].f(uint32(na))
+		s.nbargs = uint32(na)
+		return bifs[i].f(s, uint32(na))
 	}
-	return failAtom(atomUndef)
+	return failAtom(s, atomUndef)
 }
 
 // bifApply2 calls a fun with a list of arguments.
-func bifApply2(n uint32) uint32 {
-	f, args := bargs[0], bargs[1]
+func bifApply2(s *sched, n uint32) uint32 {
+	f, args := s.bargs[0], s.bargs[1]
 	if !isFun(f) {
-		return failWith(atomError, f)
+		return failWith(s, atomError, f)
 	}
-	na := listToX(args)
+	na := listToX(s, args)
 	if na < 0 {
-		return badarg()
+		return badarg(s)
 	}
 	if funArity(f) != uint32(na) {
-		return failWith(atomError, f)
+		return failWith(s, atomError, f)
 	}
 	if funKind(f) == funBif {
 		for k := int32(0); k < na; k++ {
-			bargs[k] = x[k]
+			s.bargs[k] = s.x[k]
 		}
-		nbargs = uint32(na)
-		return bifs[funCode(f)].f(uint32(na))
+		s.nbargs = uint32(na)
+		return bifs[funCode(f)].f(s, uint32(na))
 	}
 	free := funFree(f)
 	i := boxIdx(f) + 1 + funHeadLongs
 	for k := uint32(0); k < free; k++ {
-		x[uint32(na)+k] = arena[i+k]
+		s.x[uint32(na)+k] = arena[i+k]
 	}
-	bifJump = funCode(f)
-	bifLive = uint32(na) + free
+	s.bifJump = funCode(f)
+	s.bifLive = uint32(na) + free
 	return jumpValue
 }
 
-func bifIsProcessAlive(n uint32) uint32 {
-	if !isPid(bargs[0]) {
-		return badarg()
+func bifIsProcessAlive(s *sched, n uint32) uint32 {
+	pid := s.bargs[0]
+	if !isPid(pid) {
+		return badarg(s)
 	}
-	return boolTerm(procAt(bargs[0]) != nil)
+	p := procOf(pid)
+	lock(stripe(p))
+	alive := p.alive(pid)
+	unlock(stripe(p))
+	return boolTerm(alive)
 }
 
 // A bifName is a BIF's module and function, as indexes of well-known atoms.
