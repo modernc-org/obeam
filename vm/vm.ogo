@@ -1,0 +1,57 @@
+// Copyright 2026 The obeam Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file.
+
+// Package vm is the BEAM: the arena its terms live in, the processes, the
+// interpreter, the collector and the BIFs. It imports nothing of the board's;
+// what the board gives it, the serial line and the pins, comes in through the
+// hooks of hooks.ogo, so that the package is Go once given a package clause,
+// and is tested on the host as it is run on the board. DESIGN.md says how it
+// is laid out; tags.ogo, opcodes.ogo, atoms.ogo and biftab.ogo are generated
+// from the packer's tables by obeam gen and not edited by hand.
+
+// The image, as Load was given it.
+var (
+	code   []uint32 // the instruction stream
+	atoms  []string // by index
+	funcs  []uint32 // quads by code offset: offset, module, function, arity with bit 8 for an export
+	funs   []uint32 // triples by index: code offset, arity, free variables
+	lines  []uint32 // triples by code offset: offset, file, line
+	files  []string
+	litEnd uint32 // the literal heap is arena[0:litEnd]
+)
+
+// Steps counts the instructions interpreted since Load.
+var Steps uint32
+
+// Load gives the VM an image and starts it afresh: the literals go to the
+// start of the arena, the rest of the arena to the allocator, and the process
+// table is emptied.
+func Load(c, literals []uint32, a []string, fc, fn, ln []uint32, fl []string) {
+	code = c
+	atoms = a
+	funcs = fc
+	funs = fn
+	lines = ln
+	files = fl
+	for i := range literals {
+		arena[i] = literals[i]
+	}
+	litEnd = uint32(len(literals))
+	arenaInit((litEnd + minBlock - 1) &^ (minBlock - 1))
+	procsInit()
+	refCount = 0
+	Steps = 0
+}
+
+// Run starts a process at a function of no arguments at the code offset
+// entry, runs it to its end, and reports whether it ended normally rather
+// than with an exception.
+func Run(entry uint32) bool {
+	p := spawn(entry)
+	if p == nil {
+		return false
+	}
+	run(p)
+	return p.state == procExited
+}

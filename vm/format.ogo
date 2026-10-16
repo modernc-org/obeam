@@ -1,0 +1,441 @@
+// Copyright 2026 The obeam Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file.
+
+// Writing terms and io:format, to the output hook, byte by byte and with no
+// recursion: a compound term's parts wait on a stack of their own.
+
+const writeDepth = 64
+
+// A wframe is a compound term being written: a list, with what is left of it
+// in t, or a tuple, with its next element in i, counted from 1.
+type wframe struct {
+	t     uint32
+	i     uint32
+	list  bool
+	first bool // of a list: nothing written after the bracket yet
+	tail  bool // of a list: an improper tail has been written, the bracket is owed
+}
+
+var wstack [writeDepth]wframe
+
+// writeTerm writes a term as ~w does, or as ~p does when pretty is set: a
+// list of printable characters as a string.
+func writeTerm(t uint32, pretty bool) {
+	sp := 0
+	wpush(&sp, t, pretty)
+	for sp > 0 {
+		f := &wstack[sp-1]
+		if !f.list {
+			if f.i > tupleArity(f.t) {
+				out('}')
+				sp--
+				continue
+			}
+			if f.i > 1 {
+				out(',')
+			}
+			e := tupleElem(f.t, f.i)
+			f.i++
+			wpush(&sp, e, pretty)
+			continue
+		}
+		if f.tail || f.t == nilTerm {
+			out(']')
+			sp--
+			continue
+		}
+		if !isCons(f.t) {
+			out('|')
+			f.tail = true
+			wpush(&sp, f.t, pretty)
+			continue
+		}
+		if !f.first {
+			out(',')
+		}
+		f.first = false
+		i := consIdx(f.t)
+		f.t = arena[i+1]
+		wpush(&sp, arena[i], pretty)
+	}
+}
+
+// wpush writes a term that has no parts, or opens a compound one and puts it
+// on the stack.
+func wpush(sp *int, t uint32, pretty bool) {
+	switch {
+	case isCons(t):
+		if pretty && isString(t) {
+			writeString(t)
+			return
+		}
+		if *sp == writeDepth {
+			panic("vm: a term nested too deeply to write")
+		}
+		out('[')
+		wstack[*sp] = wframe{t: t, list: true, first: true}
+		*sp++
+	case isTuple(t):
+		if *sp == writeDepth {
+			panic("vm: a term nested too deeply to write")
+		}
+		out('{')
+		wstack[*sp] = wframe{t: t, i: 1}
+		*sp++
+	default:
+		writeFlat(t)
+	}
+}
+
+// writeFlat writes a term that has no parts.
+func writeFlat(t uint32) {
+	switch {
+	case isSmall(t) || isInt64(t):
+		writeInt(intVal(t))
+	case isAtom(t):
+		writeAtom(t)
+	case t == nilTerm:
+		outString("[]")
+	case isPid(t):
+		out('<')
+		out('0')
+		out('.')
+		writeInt(int64(pidIdx(t)))
+		out('.')
+		writeInt(int64(t >> (5 + pidIndexBits)))
+		out('>')
+	case isRef(t):
+		outString("#Ref<0.")
+		writeInt(int64(t >> 5))
+		out('>')
+	case isFun(t):
+		outString("#Fun<")
+		writeInt(int64(funCode(t)))
+		out('.')
+		writeInt(int64(funArity(t)))
+		out('>')
+	case isBinary(t):
+		writeBinary(t)
+	case isFloat(t):
+		writeFloat(floatVal(t))
+	default:
+		outString("#Term<")
+		writeInt(int64(t))
+		out('>')
+	}
+}
+
+func writeInt(v int64) {
+	var buf [20]byte
+	i := len(buf)
+	neg := v < 0
+	if neg {
+		v = -v
+	}
+	for {
+		i--
+		buf[i] = byte('0' + v%10)
+		v /= 10
+		if v == 0 {
+			break
+		}
+	}
+	if neg {
+		out('-')
+	}
+	for ; i < len(buf); i++ {
+		out(buf[i])
+	}
+}
+
+// writeAtom writes an atom, quoted where Erlang quotes it.
+func writeAtom(t uint32) {
+	s := atomName(t)
+	if !atomNeedsQuotes(s) {
+		outString(s)
+		return
+	}
+	out('\'')
+	for i := 0; i < len(s); i++ {
+		writeChar(s[i], '\'')
+	}
+	out('\'')
+}
+
+func atomNeedsQuotes(s string) bool {
+	if len(s) == 0 || isReserved(s) {
+		return true
+	}
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		switch {
+		case c >= 'a' && c <= 'z':
+		case i > 0 && (c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '_' || c == '@'):
+		default:
+			return true
+		}
+	}
+	return false
+}
+
+var reserved = [29]string{
+	"after", "and", "andalso", "band", "begin", "bnot", "bor", "bsl", "bsr", "bxor",
+	"case", "catch", "cond", "div", "else", "end", "fun", "if", "let", "maybe",
+	"not", "of", "or", "orelse", "receive", "rem", "try", "when", "xor",
+}
+
+func isReserved(s string) bool {
+	for i := range reserved {
+		if reserved[i] == s {
+			return true
+		}
+	}
+	return false
+}
+
+// writeChar writes a character inside quotes, escaped as Erlang escapes it.
+func writeChar(c byte, quote byte) {
+	switch c {
+	case quote, '\\':
+		out('\\')
+		out(c)
+	case '\n':
+		outString(`\n`)
+	case '\t':
+		outString(`\t`)
+	case '\r':
+		outString(`\r`)
+	case '\b':
+		outString(`\b`)
+	case '\f':
+		outString(`\f`)
+	case '\v':
+		outString(`\v`)
+	case 27:
+		outString(`\e`)
+	default:
+		if c < 32 || c == 127 {
+			out('\\')
+			out('0' + c>>6)
+			out('0' + c>>3&7)
+			out('0' + c&7)
+			return
+		}
+		out(c)
+	}
+}
+
+func printable(c uint32) bool {
+	switch c {
+	case '\n', '\t', '\r', '\b', '\f', '\v', 27:
+		return true
+	}
+	return c >= 32 && c <= 126 || c >= 160 && c <= 255
+}
+
+// isString reports whether a list is one ~p prints as a string: not empty,
+// every element a printable character.
+func isString(t uint32) bool {
+	if t == nilTerm {
+		return false
+	}
+	for isCons(t) {
+		i := consIdx(t)
+		h := arena[i]
+		if !isSmall(h) || smallVal(h) < 0 || !printable(uint32(smallVal(h))) {
+			return false
+		}
+		t = arena[i+1]
+	}
+	return t == nilTerm
+}
+
+func writeString(t uint32) {
+	out('"')
+	for isCons(t) {
+		i := consIdx(t)
+		writeChar(byte(smallVal(arena[i])), '"')
+		t = arena[i+1]
+	}
+	out('"')
+}
+
+func writeBinary(t uint32) {
+	outString("<<")
+	n := binaryLen(t)
+	text := n > 0
+	for k := uint32(0); k < n && text; k++ {
+		text = printable(uint32(binaryByte(t, k)))
+	}
+	if text {
+		out('"')
+		for k := uint32(0); k < n; k++ {
+			writeChar(binaryByte(t, k), '"')
+		}
+		out('"')
+	} else {
+		for k := uint32(0); k < n; k++ {
+			if k > 0 {
+				out(',')
+			}
+			writeInt(int64(binaryByte(t, k)))
+		}
+	}
+	outString(">>")
+}
+
+// floatVal returns a boxed float's value.
+func floatVal(t uint32) float32 {
+	return floatFromBits(arena[boxIdx(t)+1])
+}
+
+// writeFloat writes a float with six decimals; the shortest digits that read
+// back the same are for later.
+func writeFloat(f float32) {
+	if f < 0 {
+		out('-')
+		f = -f
+	}
+	whole := int64(f)
+	writeInt(whole)
+	out('.')
+	frac := int64((f - float32(whole)) * 1000000)
+	d := int64(100000)
+	for d > 0 {
+		out(byte('0' + frac/d%10))
+		d /= 10
+	}
+}
+
+// writeChars writes a list of characters, a binary or an atom, and reports
+// whether it was one; a list within the list, which io would take, is not
+// taken, so that nothing here recurses.
+func writeChars(t uint32) bool {
+	if isBinary(t) {
+		n := binaryLen(t)
+		for k := uint32(0); k < n; k++ {
+			out(binaryByte(t, k))
+		}
+		return true
+	}
+	if isAtom(t) {
+		outString(atomName(t))
+		return true
+	}
+	for isCons(t) {
+		i := consIdx(t)
+		h := arena[i]
+		if !isSmall(h) {
+			return false
+		}
+		out(byte(smallVal(h)))
+		t = arena[i+1]
+	}
+	return t == nilTerm
+}
+
+// fbuf holds a format string while it is written; one scheduler at a time
+// formats until M3 gives each its own.
+var fbuf [256]byte
+
+// format writes a format string with its arguments as io:format does for
+// ~w, ~p, ~s, ~c, ~B, ~b, ~n and ~~; a directive it does not know is written
+// as it is. It reports whether the format and the arguments were well formed.
+func format(fmtT, args uint32) bool {
+	if !isList(fmtT) && !isBinary(fmtT) && !isAtom(fmtT) {
+		return false
+	}
+	n := 0
+	t := fmtT
+	if isBinary(t) {
+		for k := uint32(0); k < binaryLen(t) && n < len(fbuf); k++ {
+			fbuf[n] = binaryByte(t, k)
+			n++
+		}
+	} else if isAtom(t) {
+		s := atomName(t)
+		for k := 0; k < len(s) && n < len(fbuf); k++ {
+			fbuf[n] = s[k]
+			n++
+		}
+	} else {
+		for isCons(t) && n < len(fbuf) {
+			i := consIdx(t)
+			if !isSmall(arena[i]) {
+				return false
+			}
+			fbuf[n] = byte(smallVal(arena[i]))
+			n++
+			t = arena[i+1]
+		}
+	}
+	for k := 0; k < n; k++ {
+		c := fbuf[k]
+		if c != '~' || k+1 >= n {
+			out(c)
+			continue
+		}
+		k++
+		d := fbuf[k]
+		switch d {
+		case 'n':
+			out('\n')
+		case '~':
+			out('~')
+		case 'w', 'p', 's', 'c', 'B', 'b':
+			if !isCons(args) {
+				return false
+			}
+			i := consIdx(args)
+			a := arena[i]
+			args = arena[i+1]
+			switch d {
+			case 'w':
+				writeTerm(a, false)
+			case 'p':
+				writeTerm(a, true)
+			case 's':
+				if !writeChars(a) {
+					return false
+				}
+			case 'c':
+				if !isSmall(a) {
+					return false
+				}
+				out(byte(smallVal(a)))
+			default:
+				if !isInteger(a) {
+					return false
+				}
+				writeInt(intVal(a))
+			}
+		default:
+			out('~')
+			out(d)
+		}
+	}
+	return args == nilTerm
+}
+
+// floatFromBits makes a float of its IEEE bits, with no unsafe: the mantissa
+// scaled by the exponent, a bit at a time.
+func floatFromBits(u uint32) float32 {
+	if u&0x7fffffff == 0 {
+		return 0
+	}
+	e := int32(u>>23&0xff) - 127 - 23
+	f := float32(int32(u&0x7fffff) | 0x800000)
+	for e > 0 {
+		f *= 2
+		e--
+	}
+	for e < 0 {
+		f /= 2
+		e++
+	}
+	if u>>31 != 0 {
+		f = -f
+	}
+	return f
+}

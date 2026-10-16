@@ -1,0 +1,33 @@
+// Copyright 2026 The obeam Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file.
+
+// What the board gives the VM and the host leaves nil: where output goes, the
+// time, and the pins the p2 module's BIFs drive. A BIF whose hook is nil does
+// nothing and answers ok or 0.
+var (
+	Out       func(b byte)
+	Millis    func() uint32
+	PinHigh   func(pin int)
+	PinLow    func(pin int)
+	PinToggle func(pin int)
+	PinFloat  func(pin int)
+	PinIn     func(pin int) int
+	PinWrite  func(pin int, v int)
+	Cog       func() int
+	GetCt     func() uint32
+	ClockFreq func() uint32
+	Rnd       func() uint32
+)
+
+func out(b byte) {
+	if Out != nil {
+		Out(b)
+	}
+}
+
+func outString(s string) {
+	for i := 0; i < len(s); i++ {
+		out(s[i])
+	}
+}

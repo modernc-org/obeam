@@ -7,8 +7,10 @@ why the project exists and in what order it is built; README.md what there is
 and how to run it.
 
 **Status: proposed at the end of milestone M0 and decided with the user on
-2026-10-16; section 7 records the decisions.** Nothing below runs yet. What
-M0 measured is in section 6 and in `erl/stats.txt`.
+2026-10-16; section 7 records the decisions. M1, one process on one cog, was
+built the same evening: sections 3 and 4 say where what is built differs from
+what was proposed.** What M0 measured is in section 6 and in `erl/stats.txt`;
+what M1 measured is in section 8.
 
 ## 1. The pieces
 
@@ -121,6 +123,21 @@ sites take up to eight of them. The VM takes six: the run queue, the block
 pool, and four stripes of mailboxes. Every other shared variable is written by
 one cog only, as p2-11's are.
 
+**As built in M1** (`vm/`, one scheduler, which is `main`'s cog): a frame is
+the continuation, a word ending in `111` with the code offset above, and the
+y registers above it, `allocate` zeroing them so that the collector never
+reads a word that is not a term; `trim` moves the continuation up. The arena
+is 49,152 longs, its free blocks holding their list links and their order in
+their first three longs beside a bitmap of where free blocks begin, so that a
+freed block finds its buddy in a few reads. A BIF takes its arguments from a
+small array of the scheduler's, `bargs`, which is a root of the collection
+with the live X registers; one that allocates asks `ensure` for the room and
+reads its arguments again after, a collection having perhaps moved them; and
+one that fails says so by its result, the handler going to the fail label or
+raising. The comparison of terms and the writing of terms keep the parts
+still to do on stacks of their own, sixty-four deep. Reductions are counted
+at every call and not yet acted on; that is M2's scheduler.
+
 **What the interpreter cannot do** in OctoGo: recurse in a goroutine without a
 `--gostack` bound, so term comparison and message copying are written with an
 explicit stack in the process's heap block, and the collector is Cheney's,
@@ -139,18 +156,27 @@ Little-endian longs, in sections, every section long-aligned:
 2. **Atoms**: the names, for printing and `atom_to_list`, numbered as the
    board's atom terms number them. The packer merges every module's atom
    table into one.
-3. **Code**: one stream for all modules, fixed-width: an opcode byte, then
-   one long per operand, a list operand as a count and its elements. The
-   layout is XBYTE's, so that a PASM core can read the same stream later. The
-   operands are resolved: a register is its number, an atom or a small
-   integer the term itself, a label the absolute offset of its code, a
-   literal the term that points into the literal heap, an import either a BIF
-   number or the code offset of a function in the image, which the packer
-   tells apart by emitting a different opcode. A source operand that may be a
-   register or a term carries the register as a marker word ending in `111`,
-   which no term ends in, so that a handler tests three bits to know; the
-   packer may later specialise the common shapes instead, as the BEAM's
-   loader does.
+3. **Code**: one stream for all modules, fixed-width: one long for the
+   opcode, in its low byte, then one long per operand, a list operand as a
+   count and its elements. (The proposal had an opcode byte; a long is what
+   an interpreter in OctoGo indexes, and a PASM core reads a long as cheaply.)
+   The operands are resolved: a count or an arity is the number itself; a
+   label is the absolute offset of its code, 0 for none; an atom, a small
+   integer or a character is the term itself; an integer past 30 bits and
+   every other literal is the term that points into the literal heap; and a
+   register is a marker word ending in `0111` for x and `1111` for y with
+   its number above, which no term ends in, so that a handler reading a
+   source operand tests three bits to know, and one writing a destination
+   tests one; the packer may later specialise the common shapes instead, as
+   the BEAM's loader does. What the packer rewrites: `call_ext` and its kin
+   to `call`, `call_last` and `call_only` when the import is a function of
+   the image, and to `call_bif`, the VM's own instruction, followed by the
+   `deallocate` and `return` the kin stood for, when it is a BIF; the import
+   operand of `bif0`, `bif1`, `bif2` and the `gc_bif`s to the BIF's number;
+   `make_fun3`'s index to the image's fun table; `func_info` kept, with its
+   atoms, as where a call lands when no clause matched; `label` and `line`
+   to nothing. `Code[0]` is `halt`, so that no code is at offset 0 and a
+   continuation of 0 ends a process.
 4. **Literals**: a read-only heap in the board's term format, placed at the
    start of the arena, so that every pointer in it is an absolute index and
    nothing moves. In the generated `image.ogo` it is the arena's initializer.
@@ -159,13 +185,17 @@ Little-endian longs, in sections, every section long-aligned:
 6. **Funs**: what `make_fun3` indexes: code offset, arity, number of free
    variables.
 
-The packer keeps only what the entry point, the exports named on the command
-line and every `spawn/3` and `apply/3` target it can see reach. It drops the
-`line` instructions from the stream and keeps their locations in a seventh
-section, a table of code offset to file and line that is searched only when
-a crash is printed, so that the board says what Erlang says, `exception
-error: badarith in function fib:fib/1 (fib.erl, line 9)`, at no cost to a
-program that does not crash; `-lines=none` leaves the table out of a tight
+The packer keeps the entry, every export but `module_info`, and what they
+reach through local calls, funs and calls into the modules of the image (the
+proposal had it keep only what the entry and the `spawn` targets reach, which
+would need the packer to read the module and function out of the registers a
+`spawn/3` is given; every export is simpler and is the module's public face
+anyway). It drops the `line` instructions from the stream and keeps their
+locations in a seventh section, a table of code offset to file and line that
+is searched only when a crash is printed, so that the board says what Erlang
+says, `** exception error: an error occurred when evaluating an arithmetic
+expression` and `in function fib:fib/1 (fib.erl, line 9)`, at no cost to a
+program that does not crash; `-lines=false` leaves the table out of a tight
 image. It refuses, by name and place: an opcode the VM does
 not implement, an external call to a function neither a BIF nor in the image,
 a literal the board cannot hold, and the bit syntax, maps and bignums until
@@ -251,3 +281,38 @@ There is no `wait_ms`: an Erlang process waits with `receive after`, which
 lets its scheduler run others; and no `get_ms`: the time is
 `erlang:monotonic_time(millisecond)`. The serial line is `io`'s. The LUT,
 the locks and the baud rate are the VM's own and out of reach.
+
+## 8. What M1 built and measured
+
+Built on 2026-10-16, the evening of the decision: `cmd/obeam pack` and
+`internal/pack`, which write `image/image.ogo` (and the same image in memory
+for the tests); `vm/`, about 2,300 lines of OctoGo, Go once given a package
+clause: terms, the arena, processes, the interpreter with 58 instructions,
+the collector, 79 BIFs, comparison, `io:format` and the exception reports;
+`main.ogo`, the board program; `scripts/twin.sh`, after p2-11's, which runs
+`vm/` under Go with `GOARCH=386`; and `vm/host_test.go`, under the build tag
+`twin`, which packs `fac`, `fib`, `lst` and `tuples`, runs them, and holds
+their output to what `erl` prints for the same module, byte for byte. All
+four agree. `ogo build ./vm` checked the package on its first build; the
+Go twin found nothing the checker had not.
+
+On the board, a P2-EC, the image of `demo` (1,177 longs of code, 136 of
+literals, 63 atoms, 25 functions) printing what `erl` prints for the four
+modules, line for line; the binary 322,048 bytes checked and 295,948
+unchecked, 196,608 of them the arena:
+
+| Build | 176,700 instructions in | Instructions a second |
+| --- | --- | --- |
+| checked, 160 MHz | 1,238 ms | 142,730 |
+| `--unchecked`, 160 MHz | 910 ms | 194,175 |
+| `--unchecked --clock 200MHz` | 729 ms | 242,386 |
+
+That is about 1,100 clocks an instruction checked and 820 unchecked, two to
+three times the 300 to 600 ASSESSMENT.md expected of an interpreter in
+OctoGo, and with nothing yet measured as to where they go: every handler is
+a call through a function value (40 to 155 clocks, section 3), the X
+registers and the frame are in hub RAM (25 to 37 clocks a read), and a
+checked build tests every index. Where the time goes is M5's question, with
+p2-11's `prof/` as the method; the figures here are the baseline it starts
+from. For the demos they are enough: the four modules together run in just
+over a second.

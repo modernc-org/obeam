@@ -1,0 +1,792 @@
+// Copyright 2026 The obeam Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file.
+
+// The BIFs. Each takes its arguments from bargs, as many as n says, and
+// answers its result, or nonValue after failWith; one that allocates asks
+// ensure first and reads its arguments again after, a collection having
+// perhaps moved them. biftab.ogo, generated, numbers them.
+
+type bif func(n uint32) uint32
+
+type bifEntry struct {
+	f     bif
+	arity uint8
+}
+
+// Arithmetic. A small result stays small; one that does not fit is a 64-bit
+// integer on the heap, and one that does not fit that is system_limit.
+
+func bifAdd(n uint32) uint32 {
+	a, b := bargs[0], bargs[1]
+	if isSmall(a) && isSmall(b) {
+		s := a + b
+		if (a^s)&(b^s)>>31 == 0 {
+			return s
+		}
+	}
+	if !isInteger(a) || !isInteger(b) {
+		return badarith()
+	}
+	va, vb := intVal(a), intVal(b)
+	r := va + vb
+	if (va^r)&(vb^r) < 0 {
+		return failAtom(atomSystemLimit)
+	}
+	return intResult(r)
+}
+
+func bifSub(n uint32) uint32 {
+	a, b := bargs[0], bargs[1]
+	if isSmall(a) && isSmall(b) {
+		s := a - b
+		if (a^b)&(a^s)>>31 == 0 {
+			return s
+		}
+	}
+	if !isInteger(a) || !isInteger(b) {
+		return badarith()
+	}
+	va, vb := intVal(a), intVal(b)
+	r := va - vb
+	if (va^vb)&(va^r) < 0 {
+		return failAtom(atomSystemLimit)
+	}
+	return intResult(r)
+}
+
+func bifMul(n uint32) uint32 {
+	a, b := bargs[0], bargs[1]
+	if !isInteger(a) || !isInteger(b) {
+		return badarith()
+	}
+	va, vb := intVal(a), intVal(b)
+	r := va * vb
+	if va != 0 && (r/va != vb || va == -1 && vb == -1<<63) {
+		return failAtom(atomSystemLimit)
+	}
+	return intResult(r)
+}
+
+func bifDiv(n uint32) uint32 {
+	a, b := bargs[0], bargs[1]
+	if !isInteger(a) || !isInteger(b) {
+		return badarith()
+	}
+	va, vb := intVal(a), intVal(b)
+	if vb == 0 {
+		return badarith()
+	}
+	if va == -1<<63 && vb == -1 {
+		return failAtom(atomSystemLimit)
+	}
+	return intResult(va / vb)
+}
+
+func bifRem(n uint32) uint32 {
+	a, b := bargs[0], bargs[1]
+	if !isInteger(a) || !isInteger(b) {
+		return badarith()
+	}
+	va, vb := intVal(a), intVal(b)
+	if vb == 0 {
+		return badarith()
+	}
+	if vb == -1 {
+		return mkSmall(0)
+	}
+	return intResult(va % vb)
+}
+
+func bifNeg(n uint32) uint32 {
+	a := bargs[0]
+	if !isInteger(a) {
+		return badarith()
+	}
+	v := intVal(a)
+	if v == -1<<63 {
+		return failAtom(atomSystemLimit)
+	}
+	return intResult(-v)
+}
+
+func bifPlus(n uint32) uint32 {
+	if !isNumber(bargs[0]) {
+		return badarith()
+	}
+	return bargs[0]
+}
+
+func bifAbs(n uint32) uint32 {
+	a := bargs[0]
+	if !isInteger(a) {
+		return badarith()
+	}
+	v := intVal(a)
+	if v >= 0 {
+		return a
+	}
+	if v == -1<<63 {
+		return failAtom(atomSystemLimit)
+	}
+	return intResult(-v)
+}
+
+func bifBand(n uint32) uint32 { return bitwise(0) }
+func bifBor(n uint32) uint32  { return bitwise(1) }
+func bifBxor(n uint32) uint32 { return bitwise(2) }
+
+func bitwise(op int) uint32 {
+	a, b := bargs[0], bargs[1]
+	if !isInteger(a) || !isInteger(b) {
+		return badarith()
+	}
+	va, vb := intVal(a), intVal(b)
+	switch op {
+	case 0:
+		return intResult(va & vb)
+	case 1:
+		return intResult(va | vb)
+	}
+	return intResult(va ^ vb)
+}
+
+func bifBnot(n uint32) uint32 {
+	if !isInteger(bargs[0]) {
+		return badarith()
+	}
+	return intResult(^intVal(bargs[0]))
+}
+
+func bifBsl(n uint32) uint32 {
+	a, b := bargs[0], bargs[1]
+	if !isInteger(a) || !isSmall(b) {
+		return badarith()
+	}
+	v, s := intVal(a), smallVal(b)
+	if s < 0 {
+		return shiftRight(v, -s)
+	}
+	if v == 0 {
+		return mkSmall(0)
+	}
+	if s >= 63 {
+		return failAtom(atomSystemLimit)
+	}
+	r := v << uint(s)
+	if r>>uint(s) != v {
+		return failAtom(atomSystemLimit)
+	}
+	return intResult(r)
+}
+
+func bifBsr(n uint32) uint32 {
+	a, b := bargs[0], bargs[1]
+	if !isInteger(a) || !isSmall(b) {
+		return badarith()
+	}
+	v, s := intVal(a), smallVal(b)
+	if s < 0 {
+		bargs[1] = mkSmall(-s)
+		return bifBsl(2)
+	}
+	return shiftRight(v, s)
+}
+
+func shiftRight(v int64, s int32) uint32 {
+	if s >= 63 {
+		if v < 0 {
+			return mkSmall(-1)
+		}
+		return mkSmall(0)
+	}
+	return intResult(v >> uint(s))
+}
+
+// intResult makes an integer's term, on the heap where it is not small.
+func intResult(v int64) uint32 {
+	if fitsSmall(v) {
+		return mkSmall(int32(v))
+	}
+	if !ensure(3, curLive) {
+		return nonValue
+	}
+	return mkInt(v)
+}
+
+// Comparison and boolean operators.
+
+func bifEq(n uint32) uint32      { return boolTerm(cmp(bargs[0], bargs[1]) == 0) }
+func bifNe(n uint32) uint32      { return boolTerm(cmp(bargs[0], bargs[1]) != 0) }
+func bifEqExact(n uint32) uint32 { return boolTerm(eqExact(bargs[0], bargs[1])) }
+func bifNeExact(n uint32) uint32 { return boolTerm(!eqExact(bargs[0], bargs[1])) }
+func bifLt(n uint32) uint32      { return boolTerm(cmp(bargs[0], bargs[1]) < 0) }
+func bifGt(n uint32) uint32      { return boolTerm(cmp(bargs[0], bargs[1]) > 0) }
+func bifLe(n uint32) uint32      { return boolTerm(cmp(bargs[0], bargs[1]) <= 0) }
+func bifGe(n uint32) uint32      { return boolTerm(cmp(bargs[0], bargs[1]) >= 0) }
+
+func bifNot(n uint32) uint32 {
+	if !isBool(bargs[0]) {
+		return badarg()
+	}
+	return boolTerm(bargs[0] == falseTerm)
+}
+
+func bifAnd(n uint32) uint32 {
+	if !isBool(bargs[0]) || !isBool(bargs[1]) {
+		return badarg()
+	}
+	return boolTerm(bargs[0] == trueTerm && bargs[1] == trueTerm)
+}
+
+func bifOr(n uint32) uint32 {
+	if !isBool(bargs[0]) || !isBool(bargs[1]) {
+		return badarg()
+	}
+	return boolTerm(bargs[0] == trueTerm || bargs[1] == trueTerm)
+}
+
+func bifXor(n uint32) uint32 {
+	if !isBool(bargs[0]) || !isBool(bargs[1]) {
+		return badarg()
+	}
+	return boolTerm(bargs[0] != bargs[1])
+}
+
+// Lists and tuples.
+
+// listLen returns a list's length, or -1 for what is no proper list.
+func listLen(t uint32) int32 {
+	n := int32(0)
+	for isCons(t) {
+		n++
+		t = arena[consIdx(t)+1]
+	}
+	if t != nilTerm {
+		return -1
+	}
+	return n
+}
+
+func bifLength(n uint32) uint32 {
+	l := listLen(bargs[0])
+	if l < 0 {
+		return badarg()
+	}
+	return mkSmall(l)
+}
+
+func bifHd(n uint32) uint32 {
+	if !isCons(bargs[0]) {
+		return badarg()
+	}
+	return arena[consIdx(bargs[0])]
+}
+
+func bifTl(n uint32) uint32 {
+	if !isCons(bargs[0]) {
+		return badarg()
+	}
+	return arena[consIdx(bargs[0])+1]
+}
+
+func bifElement(n uint32) uint32 {
+	i, t := bargs[0], bargs[1]
+	if !isSmall(i) || !isTuple(t) || smallVal(i) < 1 || uint32(smallVal(i)) > tupleArity(t) {
+		return badarg()
+	}
+	return tupleElem(t, uint32(smallVal(i)))
+}
+
+func bifSetelement(n uint32) uint32 {
+	i, t := bargs[0], bargs[1]
+	if !isSmall(i) || !isTuple(t) || smallVal(i) < 1 || uint32(smallVal(i)) > tupleArity(t) {
+		return badarg()
+	}
+	a := tupleArity(t)
+	if !ensure(a+1, curLive) {
+		return nonValue
+	}
+	i, t = bargs[0], bargs[1]
+	s := boxIdx(t)
+	d := cur.htop
+	for k := uint32(0); k <= a; k++ {
+		arena[d+k] = arena[s+k]
+	}
+	arena[d+uint32(smallVal(i))] = bargs[2]
+	cur.htop += a + 1
+	return mkBoxed(d)
+}
+
+func bifTupleSize(n uint32) uint32 {
+	if !isTuple(bargs[0]) {
+		return badarg()
+	}
+	return mkSmall(int32(tupleArity(bargs[0])))
+}
+
+// Type tests, as functions.
+
+func bifIsAtom(n uint32) uint32      { return boolTerm(isAtom(bargs[0])) }
+func bifIsInteger(n uint32) uint32   { return boolTerm(isInteger(bargs[0])) }
+func bifIsNumber(n uint32) uint32    { return boolTerm(isNumber(bargs[0])) }
+func bifIsFloat(n uint32) uint32     { return boolTerm(isFloat(bargs[0])) }
+func bifIsList(n uint32) uint32      { return boolTerm(isList(bargs[0])) }
+func bifIsTuple(n uint32) uint32     { return boolTerm(isTuple(bargs[0])) }
+func bifIsBoolean(n uint32) uint32   { return boolTerm(isBool(bargs[0])) }
+func bifIsFunction1(n uint32) uint32 { return boolTerm(isFun(bargs[0])) }
+func bifIsPid(n uint32) uint32       { return boolTerm(isPid(bargs[0])) }
+func bifIsReference(n uint32) uint32 { return boolTerm(isRef(bargs[0])) }
+func bifIsBinary(n uint32) uint32    { return boolTerm(isBinary(bargs[0])) }
+
+func bifIsFunction2(n uint32) uint32 {
+	f, a := bargs[0], bargs[1]
+	if !isSmall(a) || smallVal(a) < 0 {
+		return badarg()
+	}
+	return boolTerm(isFun(f) && funArity(f) == uint32(smallVal(a)))
+}
+
+func bifIsRecord3(n uint32) uint32 {
+	t, tag, size := bargs[0], bargs[1], bargs[2]
+	if !isAtom(tag) || !isSmall(size) || smallVal(size) < 1 {
+		return badarg()
+	}
+	return boolTerm(isTuple(t) && tupleArity(t) == uint32(smallVal(size)) && tupleElem(t, 1) == tag)
+}
+
+// Conversions.
+
+func bifIntegerToList(n uint32) uint32 {
+	if !isInteger(bargs[0]) {
+		return badarg()
+	}
+	v := intVal(bargs[0])
+	var buf [20]byte
+	i := len(buf)
+	neg := v < 0
+	for {
+		i--
+		d := v % 10
+		if d < 0 {
+			d = -d
+		}
+		buf[i] = byte('0' + d)
+		v /= 10
+		if v == 0 {
+			break
+		}
+	}
+	if neg {
+		i--
+		buf[i] = '-'
+	}
+	return bytesToList(buf[i:])
+}
+
+// bytesToList makes a list of the bytes, on the heap.
+func bytesToList(b []byte) uint32 {
+	if !ensure(2*uint32(len(b)), curLive) {
+		return nonValue
+	}
+	t := uint32(nilTerm)
+	for k := len(b) - 1; k >= 0; k-- {
+		i := cur.htop
+		arena[i] = mkSmall(int32(b[k]))
+		arena[i+1] = t
+		cur.htop += 2
+		t = mkCons(i)
+	}
+	return t
+}
+
+func bifListToInteger(n uint32) uint32 {
+	t := bargs[0]
+	neg := false
+	if isCons(t) {
+		c := arena[consIdx(t)]
+		if c == mkSmall('-') || c == mkSmall('+') {
+			neg = c == mkSmall('-')
+			t = arena[consIdx(t)+1]
+		}
+	}
+	if !isCons(t) {
+		return badarg()
+	}
+	v := int64(0)
+	for isCons(t) {
+		c := arena[consIdx(t)]
+		if !isSmall(c) || smallVal(c) < '0' || smallVal(c) > '9' {
+			return badarg()
+		}
+		if v > (1<<63-1)/10 {
+			return failAtom(atomSystemLimit)
+		}
+		v = v*10 + int64(smallVal(c)-'0')
+		t = arena[consIdx(t)+1]
+	}
+	if t != nilTerm {
+		return badarg()
+	}
+	if neg {
+		v = -v
+	}
+	return intResult(v)
+}
+
+func bifAtomToList(n uint32) uint32 {
+	if !isAtom(bargs[0]) {
+		return badarg()
+	}
+	s := atomName(bargs[0])
+	if !ensure(2*uint32(len(s)), curLive) {
+		return nonValue
+	}
+	t := uint32(nilTerm)
+	for k := len(s) - 1; k >= 0; k-- {
+		i := cur.htop
+		arena[i] = mkSmall(int32(s[k]))
+		arena[i+1] = t
+		cur.htop += 2
+		t = mkCons(i)
+	}
+	return t
+}
+
+// bifAppend is ++: the first list copied, the second its tail.
+func bifAppend(n uint32) uint32 {
+	l := listLen(bargs[0])
+	if l < 0 {
+		return badarg()
+	}
+	if l == 0 {
+		return bargs[1]
+	}
+	if !ensure(2*uint32(l), curLive) {
+		return nonValue
+	}
+	return appendList(bargs[0], bargs[1])
+}
+
+// appendList copies a proper list onto the heap, giving it a tail; the room
+// has been made.
+func appendList(from, tail uint32) uint32 {
+	first := cur.htop
+	prev := uint32(0)
+	for isCons(from) {
+		i := cur.htop
+		arena[i] = arena[consIdx(from)]
+		if prev != 0 {
+			arena[prev+1] = mkCons(i)
+		}
+		prev = i
+		cur.htop += 2
+		from = arena[consIdx(from)+1]
+	}
+	arena[prev+1] = tail
+	return mkCons(first)
+}
+
+// bifSubtract is --: every element of the second list takes the first
+// element of the first that it equals. The second list is 256 elements at
+// most.
+func bifSubtract(n uint32) uint32 {
+	l := listLen(bargs[0])
+	m := listLen(bargs[1])
+	if l < 0 || m < 0 {
+		return badarg()
+	}
+	if m > 256 {
+		return failAtom(atomSystemLimit)
+	}
+	if !ensure(2*uint32(l), curLive) {
+		return nonValue
+	}
+	var taken [8]uint32 // a bit per element of the second list
+	a, b := bargs[0], bargs[1]
+	first := uint32(0)
+	prev := uint32(0)
+	for isCons(a) {
+		e := arena[consIdx(a)]
+		a = arena[consIdx(a)+1]
+		k := uint32(0)
+		found := false
+		for t := b; isCons(t); t = arena[consIdx(t)+1] {
+			if taken[k/32]>>(k%32)&1 == 0 && eqExact(e, arena[consIdx(t)]) {
+				taken[k/32] |= 1 << (k % 32)
+				found = true
+				break
+			}
+			k++
+		}
+		if found {
+			continue
+		}
+		i := cur.htop
+		arena[i] = e
+		arena[i+1] = nilTerm
+		if prev != 0 {
+			arena[prev+1] = mkCons(i)
+		} else {
+			first = i
+		}
+		prev = i
+		cur.htop += 2
+	}
+	if prev == 0 {
+		return nilTerm
+	}
+	return mkCons(first)
+}
+
+func bifMin(n uint32) uint32 {
+	if cmp(bargs[0], bargs[1]) <= 0 {
+		return bargs[0]
+	}
+	return bargs[1]
+}
+
+func bifMax(n uint32) uint32 {
+	if cmp(bargs[0], bargs[1]) >= 0 {
+		return bargs[0]
+	}
+	return bargs[1]
+}
+
+// Processes, exceptions, time.
+
+func bifSelf(n uint32) uint32 { return cur.pid() }
+
+func bifMakeRef(n uint32) uint32 {
+	refCount++
+	return mkRef(refCount)
+}
+
+func bifError1(n uint32) uint32 { return failWith(atomError, bargs[0]) }
+func bifError2(n uint32) uint32 { return failWith(atomError, bargs[0]) }
+func bifExit1(n uint32) uint32  { return failWith(atomExit, bargs[0]) }
+func bifThrow(n uint32) uint32  { return failWith(atomThrow, bargs[0]) }
+
+func bifDisplay(n uint32) uint32 {
+	writeTerm(bargs[0], false)
+	out('\n')
+	return trueTerm
+}
+
+func millis() int64 {
+	if Millis == nil {
+		return 0
+	}
+	return int64(Millis())
+}
+
+func bifMonotonicTime0(n uint32) uint32 { return intResult(millis() * 1000000) }
+
+func bifMonotonicTime1(n uint32) uint32 {
+	ms := millis()
+	switch bargs[0] {
+	case mkAtom(atomMillisecond):
+		return intResult(ms)
+	case mkAtom(atomMicrosecond):
+		return intResult(ms * 1000)
+	case mkAtom(atomNanosecond), mkAtom(atomNative):
+		return intResult(ms * 1000000)
+	case mkAtom(atomSecond):
+		return intResult(ms / 1000)
+	}
+	if isSmall(bargs[0]) && smallVal(bargs[0]) > 0 {
+		return intResult(ms * int64(smallVal(bargs[0])) / 1000)
+	}
+	return badarg()
+}
+
+// The lists module's BIFs.
+
+func bifListsReverse1(n uint32) uint32 {
+	bargs[1] = nilTerm
+	return bifListsReverse2(2)
+}
+
+func bifListsReverse2(n uint32) uint32 {
+	l := listLen(bargs[0])
+	if l < 0 {
+		return badarg()
+	}
+	if !ensure(2*uint32(l), curLive) {
+		return nonValue
+	}
+	from, t := bargs[0], bargs[1]
+	for isCons(from) {
+		i := cur.htop
+		arena[i] = arena[consIdx(from)]
+		arena[i+1] = t
+		cur.htop += 2
+		t = mkCons(i)
+		from = arena[consIdx(from)+1]
+	}
+	return t
+}
+
+func bifListsMember(n uint32) uint32 {
+	e, t := bargs[0], bargs[1]
+	for isCons(t) {
+		if eqExact(e, arena[consIdx(t)]) {
+			return trueTerm
+		}
+		t = arena[consIdx(t)+1]
+	}
+	if t != nilTerm {
+		return badarg()
+	}
+	return falseTerm
+}
+
+func bifListsKeyfind(n uint32) uint32 {
+	key, pos, t := bargs[0], bargs[1], bargs[2]
+	if !isSmall(pos) || smallVal(pos) < 1 {
+		return badarg()
+	}
+	k := uint32(smallVal(pos))
+	for isCons(t) {
+		e := arena[consIdx(t)]
+		if isTuple(e) && tupleArity(e) >= k && cmp(tupleElem(e, k), key) == 0 {
+			return e
+		}
+		t = arena[consIdx(t)+1]
+	}
+	if t != nilTerm {
+		return badarg()
+	}
+	return falseTerm
+}
+
+// The io module's BIFs.
+
+func bifIoFormat1(n uint32) uint32 {
+	if !format(bargs[0], nilTerm) {
+		return badarg()
+	}
+	return okTerm
+}
+
+func bifIoFormat2(n uint32) uint32 {
+	if !format(bargs[0], bargs[1]) {
+		return badarg()
+	}
+	return okTerm
+}
+
+func bifIoPutChars(n uint32) uint32 {
+	if !writeChars(bargs[0]) {
+		return badarg()
+	}
+	return okTerm
+}
+
+func bifIoNl(n uint32) uint32 {
+	out('\n')
+	return okTerm
+}
+
+// The p2 module's BIFs, through the hooks; a hook that is nil does nothing.
+
+func pinArg() (int, bool) {
+	if !isSmall(bargs[0]) || smallVal(bargs[0]) < 0 || smallVal(bargs[0]) > 63 {
+		return 0, false
+	}
+	return int(smallVal(bargs[0])), true
+}
+
+func bifP2PinHigh(n uint32) uint32 {
+	pin, ok := pinArg()
+	if !ok {
+		return badarg()
+	}
+	if PinHigh != nil {
+		PinHigh(pin)
+	}
+	return okTerm
+}
+
+func bifP2PinLow(n uint32) uint32 {
+	pin, ok := pinArg()
+	if !ok {
+		return badarg()
+	}
+	if PinLow != nil {
+		PinLow(pin)
+	}
+	return okTerm
+}
+
+func bifP2PinToggle(n uint32) uint32 {
+	pin, ok := pinArg()
+	if !ok {
+		return badarg()
+	}
+	if PinToggle != nil {
+		PinToggle(pin)
+	}
+	return okTerm
+}
+
+func bifP2PinFloat(n uint32) uint32 {
+	pin, ok := pinArg()
+	if !ok {
+		return badarg()
+	}
+	if PinFloat != nil {
+		PinFloat(pin)
+	}
+	return okTerm
+}
+
+func bifP2PinIn(n uint32) uint32 {
+	pin, ok := pinArg()
+	if !ok {
+		return badarg()
+	}
+	if PinIn == nil {
+		return mkSmall(0)
+	}
+	return mkSmall(int32(PinIn(pin)))
+}
+
+func bifP2PinWrite(n uint32) uint32 {
+	pin, ok := pinArg()
+	if !ok || !isSmall(bargs[1]) {
+		return badarg()
+	}
+	if PinWrite != nil {
+		PinWrite(pin, int(smallVal(bargs[1])))
+	}
+	return okTerm
+}
+
+func bifP2Cog(n uint32) uint32 {
+	if Cog == nil {
+		return mkSmall(0)
+	}
+	return mkSmall(int32(Cog()))
+}
+
+func bifP2GetCt(n uint32) uint32 {
+	if GetCt == nil {
+		return mkSmall(0)
+	}
+	return intResult(int64(GetCt()))
+}
+
+func bifP2ClockFreq(n uint32) uint32 {
+	if ClockFreq == nil {
+		return mkSmall(0)
+	}
+	return intResult(int64(ClockFreq()))
+}
+
+func bifP2Rnd(n uint32) uint32 {
+	if Rnd == nil {
+		return mkSmall(4)
+	}
+	return intResult(int64(Rnd()))
+}

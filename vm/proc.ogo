@@ -1,0 +1,135 @@
+// Copyright 2026 The obeam Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file.
+
+// Processes: the table, a process's block with its heap growing up and its
+// stack down, and what a scheduler keeps of the one it runs.
+
+const (
+	maxProcs   = 1 << pidIndexBits
+	maxX       = 64 // X registers
+	initOrder  = 6  // a new process's block: 64 longs
+	reductions = 2000
+
+	procFree = iota
+	procRunnable
+	procRunning
+	procWaiting
+	procExited // ended normally
+	procFailed // ended by an exception
+)
+
+// A Proc is a process: its slot of the table.
+type Proc struct {
+	state uint8
+	gen   uint32 // of the slot, counted up when it is reused
+	block uint32 // the heap block's arena index
+	order uint32 // and its order
+	htop  uint32 // the heap's top: the next free long
+	stop  uint32 // the stack's top: its lowest used long; the stack is [stop, block end)
+	pc    uint32 // where it continues
+	cp    uint32 // the continuation: the code offset a return goes to, 0 for none
+	reds  int32
+}
+
+var (
+	procs    [maxProcs]Proc
+	cur      *Proc        // the process running on this scheduler
+	x        [maxX]uint32 // its X registers
+	bargs    [4]uint32    // a BIF's arguments
+	nbargs   uint32       // how many of them
+	curLive  int32        // how many X registers are live while a BIF runs, or -1 for a BIF that may not allocate
+	refCount uint32
+)
+
+func procsInit() {
+	for i := range procs {
+		procs[i].state = procFree
+	}
+}
+
+// spawn makes a process that begins at a code offset with its arguments in
+// x0 and up, and returns nil when the table or the arena is full.
+func spawn(entry uint32) *Proc {
+	for i := range procs {
+		p := &procs[i]
+		if p.state != procFree {
+			continue
+		}
+		b := allocBlock(initOrder)
+		if b == noBlock {
+			return nil
+		}
+		p.state = procRunnable
+		p.gen++
+		p.block = b
+		p.order = initOrder
+		p.htop = b
+		p.stop = b + 1<<initOrder
+		p.pc = entry
+		p.cp = 0
+		p.reds = reductions
+		return p
+	}
+	return nil
+}
+
+func (p *Proc) pid() uint32 { return mkPid(uint32(p.index()), p.gen) }
+
+func (p *Proc) index() int {
+	for i := range procs {
+		if &procs[i] == p {
+			return i
+		}
+	}
+	return -1
+}
+
+func (p *Proc) blockEnd() uint32 { return p.block + 1<<p.order }
+
+// exit ends a process and returns its block.
+func (p *Proc) exit(state uint8) {
+	p.state = state
+	freeBlock(p.block, p.order)
+}
+
+// yreg returns the arena index of y register i of the running process.
+func yreg(i uint32) uint32 { return cur.stop + 1 + i }
+
+// src returns the value of a source operand: a term as it is, or the register
+// a marker names.
+func src(v uint32) uint32 {
+	if v&7 != 7 {
+		return v
+	}
+	if v&8 == 0 {
+		return x[v>>4]
+	}
+	return arena[cur.stop+1+v>>4]
+}
+
+// store writes a value to the register a marker names.
+func store(d, v uint32) {
+	if d&8 == 0 {
+		x[d>>4] = v
+		return
+	}
+	arena[cur.stop+1+d>>4] = v
+}
+
+// ensure makes room for n longs on the running process's heap, collecting if
+// it must, with live X registers as roots. It reports whether there is room;
+// when there is not, the BIF fails with system_limit.
+func ensure(n uint32, live int32) bool {
+	if cur.htop+n <= cur.stop {
+		return true
+	}
+	if live < 0 {
+		panic("vm: a BIF allocated where none may")
+	}
+	if !gc(uint32(live), n, 0) {
+		failAtom(atomSystemLimit)
+		return false
+	}
+	return true
+}

@@ -1,0 +1,65 @@
+// Copyright 2026 The obeam Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file.
+
+// Command obeam is a BEAM on a Propeller 2: it runs the image package image
+// holds, which obeam pack made of modules Erlang's compiler compiled, and
+// prints what they print on the serial line the program was loaded through.
+//
+// This is milestone M1: one process on one cog, run to its end.
+
+import (
+	"p2"
+
+	"modernc.org/obeam/image"
+	"modernc.org/obeam/vm"
+)
+
+// out writes a byte of the VM's output to the serial line, a newline as the
+// terminal wants it.
+func out(b byte) {
+	if b == '\n' {
+		p2.WriteByte('\r')
+	}
+	p2.WriteByte(b)
+}
+
+func millis() uint32 { return p2.GetMs() }
+
+func pinHigh(pin int)         { p2.PinHigh(pin) }
+func pinLow(pin int)          { p2.PinLow(pin) }
+func pinToggle(pin int)       { p2.PinToggle(pin) }
+func pinFloat(pin int)        { p2.PinFloat(pin) }
+func pinIn(pin int) int       { return p2.PinIn(pin) }
+func pinWrite(pin int, v int) { p2.PinWrite(pin, v) }
+func getCt() uint32           { return p2.GetCt() }
+func clockFreq() uint32       { return p2.ClockFreq() }
+func rnd() uint32             { return p2.Rnd() }
+
+func main() {
+	vm.Out = out
+	vm.Millis = millis
+	vm.PinHigh = pinHigh
+	vm.PinLow = pinLow
+	vm.PinToggle = pinToggle
+	vm.PinFloat = pinFloat
+	vm.PinIn = pinIn
+	vm.PinWrite = pinWrite
+	vm.GetCt = getCt
+	vm.ClockFreq = clockFreq
+	vm.Rnd = rnd
+
+	vm.Load(image.Code[:], image.Literals[:], image.Atoms[:], image.Funcs[:], image.Funs[:], image.Lines[:], image.Files[:])
+	printf("obeam: %s, %d longs of code\r\n\r\n", image.EntryName, len(image.Code))
+	t := p2.GetMs()
+	ok := vm.Run(image.Entry)
+	t = p2.GetMs() - t
+	printf("\r\n%d instructions in %d ms", vm.Steps, t)
+	if t > 0 {
+		printf(", %d a second", uint64(vm.Steps)*1000/uint64(t))
+	}
+	if !ok {
+		printf("; the process failed")
+	}
+	printf("\r\n")
+}

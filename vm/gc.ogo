@@ -1,0 +1,126 @@
+// Copyright 2026 The obeam Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file.
+
+// The collector: Cheney's, per process, into a fresh block.
+
+var (
+	gcTo    uint32 // the new block's allocation pointer while a collection runs
+	gcFrom  uint32 // the old block
+	gcFromE uint32 // and its end
+	gcNew   uint32 // the new block
+	gcNewE  uint32 // and its end
+	gcCount uint32 // collections since Load
+)
+
+// gc collects the running process so that heapNeed longs fit on its heap and
+// stackNeed on its stack, the first live X registers and the BIF arguments
+// being roots beside the stack. It reports whether the room could be had.
+func gc(live, heapNeed, stackNeed uint32) bool {
+	p := cur
+	end := p.blockEnd()
+	used := p.htop - p.block + end - p.stop
+	order := orderFor(used + heapNeed + stackNeed)
+	if order == 0xff {
+		return false
+	}
+	if order < initOrder {
+		order = initOrder
+	}
+	nb := allocBlock(order)
+	if nb == noBlock {
+		return false
+	}
+	gcCount++
+	gcFrom, gcFromE = p.block, end
+	gcNew, gcNewE = nb, nb+1<<order
+	gcTo = nb
+
+	// The stack goes to the end of the new block as it is, then its terms
+	// are moved; a word ending in 111 there is a continuation.
+	ssize := end - p.stop
+	nstop := gcNewE - ssize
+	for i := uint32(0); i < ssize; i++ {
+		arena[nstop+i] = arena[p.stop+i]
+	}
+	for i := nstop; i < gcNewE; i++ {
+		if w := arena[i]; w&7 != 7 {
+			arena[i] = evac(w)
+		}
+	}
+	for i := uint32(0); i < live; i++ {
+		x[i] = evac(x[i])
+	}
+	for i := uint32(0); i < nbargs; i++ {
+		bargs[i] = evac(bargs[i])
+	}
+
+	// Then what the moved terms reach, word by word: a header says what
+	// follows it, anything else is a term.
+	for scan := nb; scan < gcTo; {
+		w := arena[scan]
+		if w&7 != 7 {
+			arena[scan] = evac(w)
+			scan++
+			continue
+		}
+		switch hdrKind(w) {
+		case hdrTuple:
+			scan++
+		case hdrFun:
+			scan += 1 + funHeadLongs
+		default:
+			scan += 1 + hdrSize(w)
+		}
+	}
+
+	freeBlock(p.block, p.order)
+	p.block = nb
+	p.order = order
+	p.htop = gcTo
+	p.stop = nstop
+	return p.htop+heapNeed <= p.stop-stackNeed
+}
+
+// inFrom reports whether an arena index is in the old block.
+func inFrom(i uint32) bool { return i >= gcFrom && i < gcFromE }
+
+// evac returns the term moved to the new block, moving what it points to if
+// that is in the old block and has not moved yet.
+func evac(t uint32) uint32 {
+	switch t & 3 {
+	case tagList:
+		i := consIdx(t)
+		if !inFrom(i) {
+			return t
+		}
+		if arena[i] == moved {
+			return arena[i+1]
+		}
+		n := gcTo
+		arena[n] = arena[i]
+		arena[n+1] = arena[i+1]
+		gcTo += 2
+		arena[i] = moved
+		arena[i+1] = mkCons(n)
+		return mkCons(n)
+	case tagBoxed:
+		i := boxIdx(t)
+		if !inFrom(i) {
+			return t
+		}
+		h := arena[i]
+		if h&7 != 7 {
+			return h // moved: the header's place holds the new pointer
+		}
+		size := hdrSize(h) + 1
+		n := gcTo
+		for k := uint32(0); k < size; k++ {
+			arena[n+k] = arena[i+k]
+		}
+		gcTo += size
+		arena[i] = mkBoxed(n)
+		return mkBoxed(n)
+	}
+	return t
+}

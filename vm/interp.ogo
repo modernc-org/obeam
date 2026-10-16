@@ -1,0 +1,527 @@
+// Copyright 2026 The obeam Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file.
+
+// The interpreter: a loop over the instruction stream, each instruction's
+// handler reading its operands from the longs after the opcode and answering
+// where to go on. A handler answers 0 to stop: the process has ended, or an
+// exception has.
+//
+// An operand is as the packer resolved it: a number where the instruction
+// wants a count, a label's code offset, an x or y register as a marker ending
+// in 0111 or 1111 with the number above, and otherwise a term; src reads the
+// one and the other.
+
+type handler func(pc uint32) uint32
+
+var handlers = [256]handler{
+	opHalt:             hHalt,
+	opFuncInfo:         hFuncInfo,
+	opCall:             hCall,
+	opCallLast:         hCallLast,
+	opCallOnly:         hCallOnly,
+	opCallBif:          hCallBif,
+	opBif0:             hBif0,
+	opBif1:             hBif1,
+	opBif2:             hBif2,
+	opGcBif1:           hGcBif1,
+	opGcBif2:           hGcBif2,
+	opGcBif3:           hGcBif3,
+	opAllocate:         hAllocate,
+	opAllocateHeap:     hAllocateHeap,
+	opDeallocate:       hDeallocate,
+	opInitYregs:        hInitYregs,
+	opTrim:             hTrim,
+	opSwap:             hSwap,
+	opTestHeap:         hTestHeap,
+	opReturn:           hReturn,
+	opMove:             hMove,
+	opJump:             hJump,
+	opSelectVal:        hSelectVal,
+	opSelectTupleArity: hSelectTupleArity,
+	opIsLt:             hIsLt,
+	opIsGe:             hIsGe,
+	opIsEq:             hIsEq,
+	opIsNe:             hIsNe,
+	opIsEqExact:        hIsEqExact,
+	opIsNeExact:        hIsNeExact,
+	opIsInteger:        hIsInteger,
+	opIsFloat:          hIsFloat,
+	opIsNumber:         hIsNumber,
+	opIsAtom:           hIsAtom,
+	opIsPid:            hIsPid,
+	opIsReference:      hIsReference,
+	opIsPort:           hIsPort,
+	opIsNil:            hIsNil,
+	opIsBinary:         hIsBinary,
+	opIsBitstr:         hIsBinary,
+	opIsList:           hIsList,
+	opIsNonemptyList:   hIsNonemptyList,
+	opIsTuple:          hIsTuple,
+	opTestArity:        hTestArity,
+	opIsTaggedTuple:    hIsTaggedTuple,
+	opIsBoolean:        hIsBoolean,
+	opIsFunction:       hIsFunction,
+	opIsFunction2:      hIsFunction2,
+	opIsMap:            hIsMap,
+	opGetList:          hGetList,
+	opGetHd:            hGetHd,
+	opGetTl:            hGetTl,
+	opPutList:          hPutList,
+	opPutTuple2:        hPutTuple2,
+	opGetTupleElement:  hGetTupleElement,
+	opSetTupleElement:  hSetTupleElement,
+	opUpdateRecord:     hUpdateRecord,
+	opMakeFun3:         hMakeFun3,
+	opCallFun:          hCallFun,
+	opCallFun2:         hCallFun2,
+	opBadmatch:         hBadmatch,
+	opCaseEnd:          hCaseEnd,
+	opIfEnd:            hIfEnd,
+	opBadrecord:        hBadrecord,
+}
+
+// run interprets a process from where it continues until it ends.
+func run(p *Proc) {
+	cur = p
+	p.state = procRunning
+	pc := p.pc
+	for pc != 0 {
+		h := handlers[code[pc]&0xff]
+		if h == nil {
+			panic("vm: an instruction the VM does not have")
+		}
+		p.pc = pc
+		pc = h(pc)
+		Steps++
+	}
+	if p.state == procRunning {
+		p.exit(procExited)
+	}
+}
+
+func hHalt(pc uint32) uint32 { return 0 }
+
+// hFuncInfo is where a call lands when no clause of the function matched.
+func hFuncInfo(pc uint32) uint32 {
+	raiseAtom(atomError, atomFunctionClause)
+	return 0
+}
+
+func hCall(pc uint32) uint32 {
+	cur.reds--
+	cur.cp = pc + 3
+	return code[pc+2]
+}
+
+func hCallLast(pc uint32) uint32 {
+	cur.reds--
+	n := code[pc+3]
+	cur.cp = arena[cur.stop] >> 3
+	cur.stop += n + 1
+	return code[pc+2]
+}
+
+func hCallOnly(pc uint32) uint32 {
+	cur.reds--
+	return code[pc+2]
+}
+
+func hReturn(pc uint32) uint32 {
+	return cur.cp
+}
+
+func hAllocate(pc uint32) uint32 {
+	n, live := code[pc+1], code[pc+2]
+	if cur.stop-(n+1) < cur.htop && !gc(live, 0, n+1) {
+		raiseAtom(atomError, atomSystemLimit)
+		return 0
+	}
+	return pushFrame(n, pc+3)
+}
+
+func hAllocateHeap(pc uint32) uint32 {
+	n, need, live := code[pc+1], code[pc+2], code[pc+3]
+	if cur.stop-(n+1) < cur.htop+need && !gc(live, need, n+1) {
+		raiseAtom(atomError, atomSystemLimit)
+		return 0
+	}
+	return pushFrame(n, pc+4)
+}
+
+// pushFrame makes a frame of n y registers, the continuation below them.
+func pushFrame(n, next uint32) uint32 {
+	cur.stop -= n + 1
+	arena[cur.stop] = cur.cp<<3 | 7
+	for i := uint32(1); i <= n; i++ {
+		arena[cur.stop+i] = 0
+	}
+	return next
+}
+
+func hDeallocate(pc uint32) uint32 {
+	n := code[pc+1]
+	cur.cp = arena[cur.stop] >> 3
+	cur.stop += n + 1
+	return pc + 2
+}
+
+func hInitYregs(pc uint32) uint32 {
+	n := code[pc+1]
+	for i := uint32(0); i < n; i++ {
+		store(code[pc+2+i], nilTerm)
+	}
+	return pc + 2 + n
+}
+
+func hTrim(pc uint32) uint32 {
+	n := code[pc+1]
+	cp := arena[cur.stop]
+	cur.stop += n
+	arena[cur.stop] = cp
+	return pc + 3
+}
+
+func hSwap(pc uint32) uint32 {
+	a, b := code[pc+1], code[pc+2]
+	va, vb := src(a), src(b)
+	store(a, vb)
+	store(b, va)
+	return pc + 3
+}
+
+func hTestHeap(pc uint32) uint32 {
+	need, live := code[pc+1], code[pc+2]
+	if cur.htop+need > cur.stop && !gc(live, need, 0) {
+		raiseAtom(atomError, atomSystemLimit)
+		return 0
+	}
+	return pc + 3
+}
+
+func hMove(pc uint32) uint32 {
+	store(code[pc+2], src(code[pc+1]))
+	return pc + 3
+}
+
+func hJump(pc uint32) uint32 { return code[pc+1] }
+
+func hSelectVal(pc uint32) uint32 {
+	v := src(code[pc+1])
+	n := code[pc+3]
+	for i := uint32(0); i < n; i += 2 {
+		if eqExact(v, code[pc+4+i]) {
+			return code[pc+5+i]
+		}
+	}
+	return code[pc+2]
+}
+
+func hSelectTupleArity(pc uint32) uint32 {
+	a := tupleArity(src(code[pc+1]))
+	n := code[pc+3]
+	for i := uint32(0); i < n; i += 2 {
+		if a == code[pc+4+i] {
+			return code[pc+5+i]
+		}
+	}
+	return code[pc+2]
+}
+
+// test answers where a test instruction of a fail label and two operands
+// goes: on past them if it held, to the label if not.
+func test(pc uint32, held bool, operands uint32) uint32 {
+	if held {
+		return pc + 2 + operands
+	}
+	return code[pc+1]
+}
+
+func hIsLt(pc uint32) uint32 {
+	return test(pc, cmp(src(code[pc+2]), src(code[pc+3])) < 0, 2)
+}
+
+func hIsGe(pc uint32) uint32 {
+	return test(pc, cmp(src(code[pc+2]), src(code[pc+3])) >= 0, 2)
+}
+
+func hIsEq(pc uint32) uint32 {
+	return test(pc, cmp(src(code[pc+2]), src(code[pc+3])) == 0, 2)
+}
+
+func hIsNe(pc uint32) uint32 {
+	return test(pc, cmp(src(code[pc+2]), src(code[pc+3])) != 0, 2)
+}
+
+func hIsEqExact(pc uint32) uint32 {
+	return test(pc, eqExact(src(code[pc+2]), src(code[pc+3])), 2)
+}
+
+func hIsNeExact(pc uint32) uint32 {
+	return test(pc, !eqExact(src(code[pc+2]), src(code[pc+3])), 2)
+}
+
+func hIsInteger(pc uint32) uint32   { return test(pc, isInteger(src(code[pc+2])), 1) }
+func hIsFloat(pc uint32) uint32     { return test(pc, isFloat(src(code[pc+2])), 1) }
+func hIsNumber(pc uint32) uint32    { return test(pc, isNumber(src(code[pc+2])), 1) }
+func hIsAtom(pc uint32) uint32      { return test(pc, isAtom(src(code[pc+2])), 1) }
+func hIsPid(pc uint32) uint32       { return test(pc, isPid(src(code[pc+2])), 1) }
+func hIsReference(pc uint32) uint32 { return test(pc, isRef(src(code[pc+2])), 1) }
+func hIsPort(pc uint32) uint32      { return test(pc, false, 1) }
+func hIsNil(pc uint32) uint32       { return test(pc, src(code[pc+2]) == nilTerm, 1) }
+func hIsBinary(pc uint32) uint32    { return test(pc, isBinary(src(code[pc+2])), 1) }
+func hIsList(pc uint32) uint32      { return test(pc, isList(src(code[pc+2])), 1) }
+func hIsNonemptyList(pc uint32) uint32 {
+	return test(pc, isCons(src(code[pc+2])), 1)
+}
+func hIsTuple(pc uint32) uint32   { return test(pc, isTuple(src(code[pc+2])), 1) }
+func hIsBoolean(pc uint32) uint32 { return test(pc, isBool(src(code[pc+2])), 1) }
+func hIsFunction(pc uint32) uint32 {
+	return test(pc, isFun(src(code[pc+2])), 1)
+}
+func hIsMap(pc uint32) uint32 { return test(pc, false, 1) }
+
+func hTestArity(pc uint32) uint32 {
+	t := src(code[pc+2])
+	return test(pc, isTuple(t) && tupleArity(t) == code[pc+3], 2)
+}
+
+func hIsTaggedTuple(pc uint32) uint32 {
+	t := src(code[pc+2])
+	return test(pc, isTuple(t) && tupleArity(t) == code[pc+3] && tupleElem(t, 1) == code[pc+4], 3)
+}
+
+func hIsFunction2(pc uint32) uint32 {
+	t := src(code[pc+2])
+	a := src(code[pc+3])
+	return test(pc, isFun(t) && isSmall(a) && funArity(t) == uint32(smallVal(a)), 2)
+}
+
+func hGetList(pc uint32) uint32 {
+	i := consIdx(src(code[pc+1]))
+	store(code[pc+2], arena[i])
+	store(code[pc+3], arena[i+1])
+	return pc + 4
+}
+
+func hGetHd(pc uint32) uint32 {
+	store(code[pc+2], arena[consIdx(src(code[pc+1]))])
+	return pc + 3
+}
+
+func hGetTl(pc uint32) uint32 {
+	store(code[pc+2], arena[consIdx(src(code[pc+1]))+1])
+	return pc + 3
+}
+
+func hPutList(pc uint32) uint32 {
+	i := cur.htop
+	arena[i] = src(code[pc+1])
+	arena[i+1] = src(code[pc+2])
+	cur.htop += 2
+	store(code[pc+3], mkCons(i))
+	return pc + 4
+}
+
+func hPutTuple2(pc uint32) uint32 {
+	n := code[pc+2]
+	i := cur.htop
+	arena[i] = mkHeader(hdrTuple, n)
+	for k := uint32(0); k < n; k++ {
+		arena[i+1+k] = src(code[pc+3+k])
+	}
+	cur.htop += n + 1
+	store(code[pc+1], mkBoxed(i))
+	return pc + 3 + n
+}
+
+func hGetTupleElement(pc uint32) uint32 {
+	store(code[pc+3], arena[boxIdx(src(code[pc+1]))+1+code[pc+2]])
+	return pc + 4
+}
+
+func hSetTupleElement(pc uint32) uint32 {
+	arena[boxIdx(src(code[pc+2]))+1+code[pc+3]] = src(code[pc+1])
+	return pc + 4
+}
+
+// hUpdateRecord copies a tuple with some elements replaced: the hint, the
+// size, the source, the destination, then pairs of an index from 1 and a
+// value.
+func hUpdateRecord(pc uint32) uint32 {
+	size := code[pc+2]
+	s := boxIdx(src(code[pc+3]))
+	i := cur.htop
+	for k := uint32(0); k <= size; k++ {
+		arena[i+k] = arena[s+k]
+	}
+	cur.htop += size + 1
+	n := code[pc+5]
+	for k := uint32(0); k < n; k += 2 {
+		arena[i+code[pc+6+k]] = src(code[pc+7+k])
+	}
+	store(code[pc+4], mkBoxed(i))
+	return pc + 6 + n
+}
+
+// hMakeFun3 makes a fun: the fun table's index, the destination, then the
+// environment's values.
+func hMakeFun3(pc uint32) uint32 {
+	f := 3 * code[pc+1]
+	n := code[pc+3]
+	i := cur.htop
+	arena[i] = mkHeader(hdrFun, funHeadLongs+n)
+	arena[i+1] = funs[f]
+	arena[i+2] = funs[f+1] - funs[f+2] | funs[f+2]<<16
+	for k := uint32(0); k < n; k++ {
+		arena[i+3+k] = src(code[pc+4+k])
+	}
+	cur.htop += 1 + funHeadLongs + n
+	store(code[pc+2], mkBoxed(i))
+	return pc + 4 + n
+}
+
+func hCallFun(pc uint32) uint32 {
+	arity := code[pc+1]
+	return callFun(arity, x[arity], pc+2)
+}
+
+func hCallFun2(pc uint32) uint32 {
+	return callFun(code[pc+2], src(code[pc+3]), pc+4)
+}
+
+// callFun calls a fun with its arguments in x0 and up, its environment put
+// after them.
+func callFun(arity, f, next uint32) uint32 {
+	if !isFun(f) {
+		raiseTagged(atomError, atomBadfun, f)
+		return 0
+	}
+	if funArity(f) != arity {
+		raiseTagged(atomError, atomBadarity, f)
+		return 0
+	}
+	n := funFree(f)
+	i := boxIdx(f) + 1 + funHeadLongs
+	for k := uint32(0); k < n; k++ {
+		x[arity+k] = arena[i+k]
+	}
+	cur.reds--
+	cur.cp = next
+	return funCode(f)
+}
+
+func hBadmatch(pc uint32) uint32 {
+	raiseTagged(atomError, atomBadmatch, src(code[pc+1]))
+	return 0
+}
+
+func hCaseEnd(pc uint32) uint32 {
+	raiseTagged(atomError, atomCaseClause, src(code[pc+1]))
+	return 0
+}
+
+func hIfEnd(pc uint32) uint32 {
+	raiseAtom(atomError, atomIfClause)
+	return 0
+}
+
+func hBadrecord(pc uint32) uint32 {
+	raiseTagged(atomError, atomBadrecord, src(code[pc+1]))
+	return 0
+}
+
+// The BIF instructions. bif0, bif1 and bif2 may not allocate; the gc_bifs
+// say how many X registers are live, and call_bif's are its arguments.
+
+func hCallBif(pc uint32) uint32 {
+	arity, b := code[pc+1], code[pc+2]
+	for i := uint32(0); i < arity; i++ {
+		bargs[i] = x[i]
+	}
+	nbargs = arity
+	curLive = int32(arity)
+	r := bifs[b].f(arity)
+	nbargs = 0
+	if r == nonValue {
+		raise(mkAtom(bifClass), bifReason)
+		return 0
+	}
+	x[0] = r
+	return pc + 3
+}
+
+func hBif0(pc uint32) uint32 {
+	nbargs = 0
+	curLive = -1
+	r := bifs[code[pc+1]].f(0)
+	if r == nonValue {
+		raise(mkAtom(bifClass), bifReason)
+		return 0
+	}
+	store(code[pc+2], r)
+	return pc + 3
+}
+
+func hBif1(pc uint32) uint32 {
+	bargs[0] = src(code[pc+3])
+	nbargs = 1
+	curLive = -1
+	r := bifs[code[pc+2]].f(1)
+	nbargs = 0
+	return bifDone(pc, r, code[pc+4], pc+5)
+}
+
+func hBif2(pc uint32) uint32 {
+	bargs[0] = src(code[pc+3])
+	bargs[1] = src(code[pc+4])
+	nbargs = 2
+	curLive = -1
+	r := bifs[code[pc+2]].f(2)
+	nbargs = 0
+	return bifDone(pc, r, code[pc+5], pc+6)
+}
+
+func hGcBif1(pc uint32) uint32 {
+	bargs[0] = src(code[pc+4])
+	nbargs = 1
+	curLive = int32(code[pc+2])
+	r := bifs[code[pc+3]].f(1)
+	nbargs = 0
+	return bifDone(pc, r, code[pc+5], pc+6)
+}
+
+func hGcBif2(pc uint32) uint32 {
+	bargs[0] = src(code[pc+4])
+	bargs[1] = src(code[pc+5])
+	nbargs = 2
+	curLive = int32(code[pc+2])
+	r := bifs[code[pc+3]].f(2)
+	nbargs = 0
+	return bifDone(pc, r, code[pc+6], pc+7)
+}
+
+func hGcBif3(pc uint32) uint32 {
+	bargs[0] = src(code[pc+4])
+	bargs[1] = src(code[pc+5])
+	bargs[2] = src(code[pc+6])
+	nbargs = 3
+	curLive = int32(code[pc+2])
+	r := bifs[code[pc+3]].f(3)
+	nbargs = 0
+	return bifDone(pc, r, code[pc+7], pc+8)
+}
+
+// bifDone stores a BIF's result, or goes to the fail label when it failed
+// and there is one, and raises what it failed with when there is none.
+func bifDone(pc, r, dst, next uint32) uint32 {
+	if r == nonValue {
+		if fail := code[pc+1]; fail != 0 {
+			return fail
+		}
+		raise(mkAtom(bifClass), bifReason)
+		return 0
+	}
+	store(dst, r)
+	return next
+}

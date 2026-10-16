@@ -1,0 +1,137 @@
+// Copyright 2026 The obeam Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file.
+
+// The arena and its allocator: buddy blocks of 8 to 8,192 longs by powers of
+// two. A free block holds its list links and its order in its first longs;
+// what an allocated block holds is its owner's affair, and the owner says the
+// order when it frees the block.
+
+const (
+	arenaLongs = 49152 // 192 KB, six blocks of the largest order
+	minOrder   = 3     // 8 longs
+	maxOrder   = 13    // 8,192 longs
+	orders     = maxOrder - minOrder + 1
+	minBlock   = 1 << minOrder
+	noBlock    = 0xffffffff
+)
+
+var (
+	arena     [arenaLongs]uint32
+	freeHead  [orders]uint32
+	freeMap   [arenaLongs / minBlock / 32]uint32 // a bit per smallest block: it begins a free block
+	arenaLow  uint32                             // where the allocator's part begins
+	freeLongs uint32                             // how many longs are free
+)
+
+func freeBit(i uint32) bool {
+	k := i / minBlock
+	return freeMap[k/32]>>(k%32)&1 != 0
+}
+
+func setFree(i uint32, free bool) {
+	k := i / minBlock
+	if free {
+		freeMap[k/32] |= 1 << (k % 32)
+	} else {
+		freeMap[k/32] &^= 1 << (k % 32)
+	}
+}
+
+// arenaInit gives the allocator the arena from low up, as aligned blocks.
+func arenaInit(low uint32) {
+	arenaLow = low
+	freeLongs = 0
+	for i := range freeHead {
+		freeHead[i] = noBlock
+	}
+	for i := range freeMap {
+		freeMap[i] = 0
+	}
+	for i := low; i < arenaLongs; {
+		order := uint32(maxOrder)
+		for i&(1<<order-1) != 0 || i+1<<order > arenaLongs {
+			order--
+		}
+		pushFree(i, order)
+		i += 1 << order
+	}
+}
+
+func pushFree(i, order uint32) {
+	o := order - minOrder
+	next := freeHead[o]
+	arena[i] = next
+	arena[i+1] = order
+	arena[i+2] = noBlock
+	if next != noBlock {
+		arena[next+2] = i
+	}
+	freeHead[o] = i
+	setFree(i, true)
+	freeLongs += 1 << order
+}
+
+func unlinkFree(i, order uint32) {
+	o := order - minOrder
+	next, prev := arena[i], arena[i+2]
+	if prev == noBlock {
+		freeHead[o] = next
+	} else {
+		arena[prev] = next
+	}
+	if next != noBlock {
+		arena[next+2] = prev
+	}
+	setFree(i, false)
+	freeLongs -= 1 << order
+}
+
+// orderFor returns the smallest order whose block holds n longs, or 0xff for
+// one past the largest.
+func orderFor(n uint32) uint32 {
+	order := uint32(minOrder)
+	for 1<<order < n {
+		order++
+		if order > maxOrder {
+			return 0xff
+		}
+	}
+	return order
+}
+
+// allocBlock takes a block of an order, splitting a larger one if it must. It
+// returns noBlock when there is none.
+func allocBlock(order uint32) uint32 {
+	o := order
+	for o <= maxOrder && freeHead[o-minOrder] == noBlock {
+		o++
+	}
+	if o > maxOrder {
+		return noBlock
+	}
+	i := freeHead[o-minOrder]
+	unlinkFree(i, o)
+	for o > order {
+		o--
+		pushFree(i+1<<o, o)
+	}
+	return i
+}
+
+// freeBlock gives a block back, joining it with its buddy while the buddy is
+// free and of the same order.
+func freeBlock(i, order uint32) {
+	for order < maxOrder {
+		buddy := i ^ 1<<order
+		if buddy < arenaLow || buddy+1<<order > arenaLongs || !freeBit(buddy) || arena[buddy+1] != order {
+			break
+		}
+		unlinkFree(buddy, order)
+		if buddy < i {
+			i = buddy
+		}
+		order++
+	}
+	pushFree(i, order)
+}

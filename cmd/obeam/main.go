@@ -9,17 +9,22 @@
 //	obeam dis FILE.beam...      list each module's code, as erlc -S would
 //	obeam stats FILE.beam...    count the opcodes and the external calls over the modules
 //	obeam chunks FILE.beam...   list each file's chunks
+//	obeam pack [-o image.ogo] [-entry m:f/a] [-lines=false] FILE.beam...
+//	                            pack the modules into an image for the board
+//	obeam gen [-vm DIR]         write the VM's copies of the opcodes, tags, atoms and BIFs
 //	obeam version
 package main
 
 import (
 	"bufio"
+	"flag"
 	"fmt"
 	"os"
 	"sort"
 	"strings"
 
 	"modernc.org/obeam/internal/beam"
+	"modernc.org/obeam/internal/pack"
 )
 
 const version = "0.0.0"
@@ -37,6 +42,10 @@ func main() {
 		err = stats(args)
 	case "chunks":
 		err = each(args, chunks)
+	case "pack":
+		err = packCmd(args)
+	case "gen":
+		err = genCmd(args)
 	case "version":
 		fmt.Printf("obeam %s, opcodes of Erlang/OTP %s\n", version, beam.GenopTag)
 	case "help", "-h", "--help":
@@ -59,6 +68,11 @@ The commands are:
 	dis FILE.beam...      list each module's code, as erlc -S would
 	stats FILE.beam...    count the opcodes and the external calls over the modules
 	chunks FILE.beam...   list each file's chunks
+	pack FILE.beam...     pack the modules into an image for the board:
+	                      -o image.ogo (the standard output by default),
+	                      -entry m:f/a (the first module's main/0), -lines=false
+	gen                   write the VM's copies of the opcodes, tags, atoms and
+	                      BIFs: -vm DIR (vm)
 	version               print the version and the opcode table's
 `)
 	os.Exit(2)
@@ -171,4 +185,42 @@ func stats(paths []string) error {
 		fmt.Fprintf(w, "%7d  %-26s %d\n", t.count, t.name, len(t.modules))
 	}
 	return nil
+}
+
+func packCmd(args []string) error {
+	fs := flag.NewFlagSet("pack", flag.ContinueOnError)
+	out := fs.String("o", "", "write the image here, as the OctoGo package image")
+	entry := fs.String("entry", "", "the entry function, module:function/arity")
+	lines := fs.Bool("lines", true, "keep the line table for crash messages")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	img, err := pack.Pack(fs.Args(), pack.Options{Entry: *entry, Lines: *lines})
+	if err != nil {
+		return err
+	}
+	w := os.Stdout
+	if *out != "" {
+		f, err := os.Create(*out)
+		if err != nil {
+			return err
+		}
+		defer f.Close()
+		w = f
+	}
+	if err := img.WriteOgo(w); err != nil {
+		return err
+	}
+	fmt.Fprintf(os.Stderr, "obeam pack: %s: %d longs of code, %d of literals, %d atoms, %d functions (%d dropped), %d funs, %d lines\n",
+		img.EntryMFA, len(img.Code), len(img.Literals), len(img.Atoms), len(img.Funcs)/4, img.Dropped, len(img.Funs)/3, len(img.Lines)/3)
+	return nil
+}
+
+func genCmd(args []string) error {
+	fs := flag.NewFlagSet("gen", flag.ContinueOnError)
+	dir := fs.String("vm", "vm", "the VM's package directory")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	return pack.GenVM(*dir)
 }

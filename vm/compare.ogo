@@ -1,0 +1,176 @@
+// Copyright 2026 The obeam Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file.
+
+// Comparing terms: exact equality, and Erlang's order of terms, number <
+// atom < reference < fun < port < pid < tuple < map < nil < list < binary,
+// with no recursion: the pairs still to compare wait on a stack of their own.
+
+const cmpDepth = 64
+
+var (
+	cmpStackA [cmpDepth]uint32
+	cmpStackB [cmpDepth]uint32
+)
+
+// order ranks a term's kind in the order of terms.
+func order(t uint32) uint32 {
+	switch t & 3 {
+	case tagSmall:
+		return 0
+	case tagList:
+		return 9
+	case tagBoxed:
+		switch hdrKind(arena[boxIdx(t)]) {
+		case hdrFloat, hdrInt64:
+			return 0
+		case hdrFun:
+			return 3
+		case hdrTuple:
+			return 6
+		case hdrBinary:
+			return 10
+		}
+		return 11
+	}
+	switch t & 0x1f {
+	case immAtom:
+		return 1
+	case immRef:
+		return 2
+	case immPid:
+		return 5
+	}
+	return 8 // []
+}
+
+// eqExact reports whether two terms are the same, =:=.
+func eqExact(a, b uint32) bool {
+	if a == b {
+		return true
+	}
+	if a&3 != tagBoxed && a&3 != tagList || a&3 != b&3 {
+		return false
+	}
+	return cmp(a, b) == 0 && (!isNumber(a) || isFloat(a) == isFloat(b))
+}
+
+// cmp compares two terms in the order of terms, numbers by value whatever
+// their kind as == does: negative, zero or positive.
+func cmp(a, b uint32) int {
+	sp := 0
+	for {
+		if a != b {
+			oa, ob := order(a), order(b)
+			if oa != ob {
+				return int(oa) - int(ob)
+			}
+			r := 0
+			switch oa {
+			case 0:
+				r = cmpNumbers(a, b)
+			case 1:
+				r = cmpAtoms(a, b)
+			case 2, 5:
+				r = cmpWords(a, b)
+			case 3:
+				r = cmpWords(funCode(a), funCode(b))
+			case 6:
+				na, nb := tupleArity(a), tupleArity(b)
+				if na != nb {
+					return int(na) - int(nb)
+				}
+				// The elements wait, the last deepest.
+				for i := na; i >= 1; i-- {
+					if sp == cmpDepth {
+						panic("vm: terms nested too deeply to compare")
+					}
+					cmpStackA[sp] = tupleElem(a, i)
+					cmpStackB[sp] = tupleElem(b, i)
+					sp++
+				}
+			case 9:
+				// Heads first; the tails take the place of the lists.
+				ia, ib := consIdx(a), consIdx(b)
+				if sp == cmpDepth {
+					panic("vm: terms nested too deeply to compare")
+				}
+				cmpStackA[sp] = arena[ia+1]
+				cmpStackB[sp] = arena[ib+1]
+				sp++
+				a, b = arena[ia], arena[ib]
+				continue
+			case 10:
+				r = cmpBinaries(a, b)
+			}
+			if r != 0 {
+				return r
+			}
+		}
+		if sp == 0 {
+			return 0
+		}
+		sp--
+		a, b = cmpStackA[sp], cmpStackB[sp]
+	}
+}
+
+func cmpWords(a, b uint32) int {
+	if a < b {
+		return -1
+	}
+	if a > b {
+		return 1
+	}
+	return 0
+}
+
+func cmpNumbers(a, b uint32) int {
+	if isFloat(a) || isFloat(b) {
+		fa, fb := numFloat(a), numFloat(b)
+		if fa < fb {
+			return -1
+		}
+		if fa > fb {
+			return 1
+		}
+		return 0
+	}
+	va, vb := intVal(a), intVal(b)
+	if va < vb {
+		return -1
+	}
+	if va > vb {
+		return 1
+	}
+	return 0
+}
+
+// numFloat returns a number as a float.
+func numFloat(t uint32) float32 {
+	if isFloat(t) {
+		return floatVal(t)
+	}
+	return float32(intVal(t))
+}
+
+func cmpAtoms(a, b uint32) int {
+	sa, sb := atomName(a), atomName(b)
+	for i := 0; i < len(sa) && i < len(sb); i++ {
+		if sa[i] != sb[i] {
+			return int(sa[i]) - int(sb[i])
+		}
+	}
+	return len(sa) - len(sb)
+}
+
+func cmpBinaries(a, b uint32) int {
+	na, nb := binaryLen(a), binaryLen(b)
+	for i := uint32(0); i < na && i < nb; i++ {
+		ca, cb := binaryByte(a, i), binaryByte(b, i)
+		if ca != cb {
+			return int(ca) - int(cb)
+		}
+	}
+	return int(na) - int(nb)
+}

@@ -1,0 +1,116 @@
+// Copyright 2026 The obeam Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file.
+
+// The terms, as DESIGN.md section 2 lays them out; the constants are
+// tags.ogo's.
+
+const (
+	trueTerm  = atomTrue<<5 | immAtom
+	falseTerm = atomFalse<<5 | immAtom
+	okTerm    = atomOk<<5 | immAtom
+)
+
+func isSmall(t uint32) bool   { return t&3 == tagSmall }
+func smallVal(t uint32) int32 { return int32(t) >> 2 }
+func mkSmall(v int32) uint32  { return uint32(v) << 2 }
+func fitsSmall(v int64) bool  { return v >= smallMin && v <= smallMax }
+func isAtom(t uint32) bool    { return t&0x1f == immAtom }
+func atomIdx(t uint32) uint32 { return t >> 5 }
+func mkAtom(i uint32) uint32  { return i<<5 | immAtom }
+func isCons(t uint32) bool    { return t&3 == tagList }
+func consIdx(t uint32) uint32 { return t >> 2 }
+func mkCons(i uint32) uint32  { return i<<2 | tagList }
+func isBoxed(t uint32) bool   { return t&3 == tagBoxed }
+func boxIdx(t uint32) uint32  { return t >> 2 }
+func mkBoxed(i uint32) uint32 { return i<<2 | tagBoxed }
+func isPid(t uint32) bool     { return t&0x1f == immPid }
+func pidIdx(t uint32) uint32  { return t >> 5 & (1<<pidIndexBits - 1) }
+func mkPid(i, gen uint32) uint32 {
+	return gen<<(5+pidIndexBits) | i<<5 | immPid
+}
+func isRef(t uint32) bool     { return t&0x1f == immRef }
+func mkRef(n uint32) uint32   { return n<<5 | immRef }
+func isHeader(w uint32) bool  { return w&7 == 7 }
+func hdrKind(h uint32) uint32 { return h >> 3 & 7 }
+func hdrSize(h uint32) uint32 { return h >> 6 }
+func mkHeader(kind, size uint32) uint32 {
+	return size<<6 | kind<<3 | 7
+}
+
+// boxKind returns the kind of a boxed term's header, or 0xff for a term that
+// is not boxed.
+func boxKind(t uint32) uint32 {
+	if !isBoxed(t) {
+		return 0xff
+	}
+	return hdrKind(arena[boxIdx(t)])
+}
+
+func isTuple(t uint32) bool   { return boxKind(t) == hdrTuple }
+func isFun(t uint32) bool     { return boxKind(t) == hdrFun }
+func isBinary(t uint32) bool  { return boxKind(t) == hdrBinary }
+func isFloat(t uint32) bool   { return boxKind(t) == hdrFloat }
+func isInt64(t uint32) bool   { return boxKind(t) == hdrInt64 }
+func isInteger(t uint32) bool { return isSmall(t) || isInt64(t) }
+func isNumber(t uint32) bool  { return isSmall(t) || isInt64(t) || isFloat(t) }
+func isList(t uint32) bool    { return isCons(t) || t == nilTerm }
+func isBool(t uint32) bool    { return t == trueTerm || t == falseTerm }
+
+func boolTerm(b bool) uint32 {
+	if b {
+		return trueTerm
+	}
+	return falseTerm
+}
+
+// tupleArity returns the arity of a tuple.
+func tupleArity(t uint32) uint32 { return hdrSize(arena[boxIdx(t)]) }
+
+// tupleElem returns element i, counted from 1, of a tuple.
+func tupleElem(t, i uint32) uint32 { return arena[boxIdx(t)+i] }
+
+// intVal returns the value of an integer, small or 64-bit.
+func intVal(t uint32) int64 {
+	if isSmall(t) {
+		return int64(smallVal(t))
+	}
+	i := boxIdx(t)
+	return int64(arena[i+1]) | int64(arena[i+2])<<32
+}
+
+// mkInt makes the term of an integer: small where it fits, boxed on the heap
+// otherwise; the caller has made room for three longs.
+func mkInt(v int64) uint32 {
+	if fitsSmall(v) {
+		return mkSmall(int32(v))
+	}
+	i := cur.htop
+	arena[i] = mkHeader(hdrInt64, 2)
+	arena[i+1] = uint32(v)
+	arena[i+2] = uint32(v >> 32)
+	cur.htop += 3
+	return mkBoxed(i)
+}
+
+// funArity returns the arity a fun is called with, and funFree how many free
+// variables it carries.
+func funArity(t uint32) uint32 { return arena[boxIdx(t)+2] & 0xffff }
+func funFree(t uint32) uint32  { return arena[boxIdx(t)+2] >> 16 }
+func funCode(t uint32) uint32  { return arena[boxIdx(t)+1] }
+
+// binaryLen returns the length of a binary in bytes, and binaryByte its byte
+// k.
+func binaryLen(t uint32) uint32 { return arena[boxIdx(t)+1] }
+func binaryByte(t, k uint32) byte {
+	return byte(arena[boxIdx(t)+2+k/4] >> (8 * (k % 4)))
+}
+
+// atomName returns an atom's name.
+func atomName(t uint32) string {
+	i := atomIdx(t)
+	if i >= uint32(len(atoms)) {
+		return "?"
+	}
+	return atoms[i]
+}
