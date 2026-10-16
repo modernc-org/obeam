@@ -1,0 +1,579 @@
+// Copyright 2026 The obeam Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file.
+
+// Floats: the board's 32-bit floats, boxed with one long of payload, the
+// float instructions over the scheduler's float registers, and the BIFs of
+// arithmetic, conversion and the math module. The float64 the code computes
+// in is 32 bits wide on the board and 64 on the host, so a value that is not
+// exact in 32 bits may differ in its last digits between the two; the corpus
+// keeps to values that are.
+
+import (
+	"math"
+	"unsafe"
+)
+
+const maxFR = 8 // float registers
+
+// floatBits returns a float's IEEE bits, and floatOf a float of its bits.
+func floatBits(f float32) uint32 {
+	return *(*uint32)(unsafe.Pointer(&f))
+}
+
+func floatOf(u uint32) float32 {
+	return *(*float32)(unsafe.Pointer(&u))
+}
+
+// mkFloat boxes a float on the heap; the caller has made room for two longs.
+func mkFloat(s *sched, f float32) uint32 {
+	i := s.cur.htop
+	arena[i] = mkHeader(hdrFloat, 1)
+	arena[i+1] = floatBits(f)
+	s.cur.htop += 2
+	return mkBoxed(i)
+}
+
+// floatResult boxes a float, making room, and fails with badarith for one
+// that is not a number.
+func floatResult(s *sched, f float64) uint32 {
+	if math.IsNaN(f) || math.IsInf(f, 0) {
+		return badarith(s)
+	}
+	if !ensure(s, 2, s.curLive) {
+		return nonValue
+	}
+	return mkFloat(s, float32(f))
+}
+
+// numVal returns a number as a float64.
+func numVal(t uint32) float64 {
+	if isFloat(t) {
+		return float64(floatVal(t))
+	}
+	return float64(intVal(t))
+}
+
+// The float instructions. A register operand is its number; fmove boxes or
+// unboxes as its operands say, fconv takes any number.
+
+func hFmove(s *sched, pc uint32) uint32 {
+	a, b := code[pc+1], code[pc+2]
+	if b&7 == 7 { // to a register: the source is a float register
+		if !ensure(s, 2, int32(maxX)) {
+			return raiseAtom(s, atomError, atomSystemLimit)
+		}
+		store(s, b, mkFloat(s, s.fr[a]))
+		return pc + 3
+	}
+	s.fr[b] = floatVal(src(s, a))
+	return pc + 3
+}
+
+func hFconv(s *sched, pc uint32) uint32 {
+	v := src(s, code[pc+1])
+	if !isNumber(v) {
+		return raiseAtom(s, atomError, atomBadarith)
+	}
+	s.fr[code[pc+2]] = float32(numVal(v))
+	return pc + 3
+}
+
+// farith does fadd, fsub, fmul and fdiv: Fail FR1 FR2 FRd; a result that is
+// no number is badarith.
+func farith(s *sched, pc uint32, op byte) uint32 {
+	a, b := float64(s.fr[code[pc+2]]), float64(s.fr[code[pc+3]])
+	var r float64
+	switch op {
+	case '+':
+		r = a + b
+	case '-':
+		r = a - b
+	case '*':
+		r = a * b
+	default:
+		if b == 0 {
+			return raiseAtom(s, atomError, atomBadarith)
+		}
+		r = a / b
+	}
+	f := float32(r)
+	if math.IsNaN(float64(f)) || math.IsInf(float64(f), 0) {
+		return raiseAtom(s, atomError, atomBadarith)
+	}
+	s.fr[code[pc+4]] = f
+	return pc + 5
+}
+
+func hFadd(s *sched, pc uint32) uint32 { return farith(s, pc, '+') }
+func hFsub(s *sched, pc uint32) uint32 { return farith(s, pc, '-') }
+func hFmul(s *sched, pc uint32) uint32 { return farith(s, pc, '*') }
+func hFdiv(s *sched, pc uint32) uint32 { return farith(s, pc, '/') }
+
+func hFnegate(s *sched, pc uint32) uint32 {
+	s.fr[code[pc+3]] = -s.fr[code[pc+2]]
+	return pc + 4
+}
+
+// The BIFs.
+
+// bifFdiv is /, which is a float however its arguments are.
+func bifFdiv(s *sched, n uint32) uint32 {
+	a, b := s.bargs[0], s.bargs[1]
+	if !isNumber(a) || !isNumber(b) {
+		return badarith(s)
+	}
+	d := numVal(b)
+	if d == 0 {
+		return badarith(s)
+	}
+	return floatResult(s, numVal(a)/d)
+}
+
+func bifFloat(s *sched, n uint32) uint32 {
+	a := s.bargs[0]
+	if !isNumber(a) {
+		return badarg(s)
+	}
+	if isFloat(a) {
+		return a
+	}
+	return floatResult(s, float64(intVal(a)))
+}
+
+// bifTrunc and bifRound: an integer is itself; a float past 63 bits is
+// system_limit, where Erlang has a bignum.
+func bifTrunc(s *sched, n uint32) uint32 {
+	a := s.bargs[0]
+	if !isNumber(a) {
+		return badarg(s)
+	}
+	if !isFloat(a) {
+		return a
+	}
+	return floatToInt(s, math.Trunc(float64(floatVal(a))))
+}
+
+func bifRound(s *sched, n uint32) uint32 {
+	a := s.bargs[0]
+	if !isNumber(a) {
+		return badarg(s)
+	}
+	if !isFloat(a) {
+		return a
+	}
+	return floatToInt(s, math.Round(float64(floatVal(a))))
+}
+
+func floatToInt(s *sched, f float64) uint32 {
+	if f >= 9223372036854775807 || f <= -9223372036854775808 {
+		return failAtom(s, atomSystemLimit)
+	}
+	return intResult(s, int64(f))
+}
+
+// The math module, over OctoGo's, which is 32-bit on the board.
+
+func mathArg(s *sched) (float64, bool) {
+	if !isNumber(s.bargs[0]) {
+		return 0, false
+	}
+	return numVal(s.bargs[0]), true
+}
+
+func bifMathSqrt(s *sched, n uint32) uint32 {
+	x, ok := mathArg(s)
+	if !ok || x < 0 {
+		return badarith(s)
+	}
+	return floatResult(s, math.Sqrt(x))
+}
+
+func bifMathPow(s *sched, n uint32) uint32 {
+	if !isNumber(s.bargs[0]) || !isNumber(s.bargs[1]) {
+		return badarith(s)
+	}
+	return floatResult(s, math.Pow(numVal(s.bargs[0]), numVal(s.bargs[1])))
+}
+
+func bifMathPi(s *sched, n uint32) uint32 { return floatResult(s, math.Pi) }
+
+// Writing floats as Erlang's ~w does: the fewest digits that read back as
+// the same float, in the shorter of the plain form, 123.45, and the exponent
+// form, 1.2345e2, the plain one on a tie. The digits are found in exact
+// integers: the board's float64 is 32 bits wide, and scaling a float by
+// tens in it loses what the digits are meant to keep.
+
+// natLen longs hold every integer the digit search meets: a 32-bit float's
+// value times a power of ten of the same size stays below 2^200.
+const natLen = 7
+
+// A nat is a natural number of natLen longs, the low one first.
+type nat struct {
+	w [natLen]uint32
+}
+
+func natSet(z *nat, v uint32) {
+	for i := range z.w {
+		z.w[i] = 0
+	}
+	z.w[0] = v
+}
+
+// natShl shifts z left by n bits.
+func natShl(z *nat, n uint32) {
+	for n >= 32 {
+		for i := natLen - 1; i > 0; i-- {
+			z.w[i] = z.w[i-1]
+		}
+		z.w[0] = 0
+		n -= 32
+	}
+	if n == 0 {
+		return
+	}
+	for i := natLen - 1; i > 0; i-- {
+		z.w[i] = z.w[i]<<n | z.w[i-1]>>(32-n)
+	}
+	z.w[0] <<= n
+}
+
+func natMul10(z *nat) {
+	carry := uint64(0)
+	for i := 0; i < natLen; i++ {
+		t := uint64(z.w[i])*10 + carry
+		z.w[i] = uint32(t)
+		carry = t >> 32
+	}
+}
+
+// natAdd sets z to x + y.
+func natAdd(z, x, y *nat) {
+	carry := uint64(0)
+	for i := 0; i < natLen; i++ {
+		t := uint64(x.w[i]) + uint64(y.w[i]) + carry
+		z.w[i] = uint32(t)
+		carry = t >> 32
+	}
+}
+
+// natSub subtracts x from z, which is not less than x.
+func natSub(z, x *nat) {
+	borrow := uint64(0)
+	for i := 0; i < natLen; i++ {
+		t := uint64(z.w[i]) - uint64(x.w[i]) - borrow
+		z.w[i] = uint32(t)
+		borrow = t >> 63
+	}
+}
+
+func natCmp(x, y *nat) int {
+	for i := natLen - 1; i >= 0; i-- {
+		if x.w[i] != y.w[i] {
+			if x.w[i] < y.w[i] {
+				return -1
+			}
+			return 1
+		}
+	}
+	return 0
+}
+
+// shortest finds the fewest decimal digits that read back as the positive
+// 32-bit float of the bits u, by the free-format algorithm of Steele and
+// White as Burger and Dybvig give it: d gets the digits, and it answers how
+// many and the decimal exponent of the first. The value lies between r - m-
+// and r + m+ over s, scaled so that its first digit comes out first; a
+// boundary counts as the float's when its mantissa is even, as rounding to
+// even reads it back.
+func shortest(s *sched, u uint32, d *[12]byte) (int, int) {
+	frac := u & 0x7fffff
+	ef := int32(u >> 23 & 0xff)
+	f := frac
+	e := int32(-149)
+	if ef != 0 {
+		f = frac | 0x800000
+		e = ef - 150
+	}
+	even := f&1 == 0
+	r, sc, mp, mm, t := &s.dr, &s.ds, &s.dmp, &s.dmm, &s.dt
+	pow2 := f == 0x800000 && ef > 1 // the gap below is half the gap above
+	if e >= 0 {
+		natSet(r, f)
+		natSet(mp, 1)
+		natSet(mm, 1)
+		natShl(mm, uint32(e))
+		if pow2 {
+			natShl(r, uint32(e)+2)
+			natSet(sc, 4)
+			natShl(mp, uint32(e)+1)
+		} else {
+			natShl(r, uint32(e)+1)
+			natSet(sc, 2)
+			natShl(mp, uint32(e))
+		}
+	} else {
+		natSet(r, f)
+		natSet(sc, 1)
+		natSet(mm, 1)
+		if pow2 {
+			natShl(r, 2)
+			natShl(sc, uint32(2-e))
+			natSet(mp, 2)
+		} else {
+			natShl(r, 1)
+			natShl(sc, uint32(1-e))
+			natSet(mp, 1)
+		}
+	}
+	k := 0
+	for {
+		natAdd(t, r, mp)
+		c := natCmp(t, sc)
+		if c < 0 || c == 0 && !even {
+			break
+		}
+		natMul10(sc)
+		k++
+	}
+	for {
+		natAdd(t, r, mp)
+		natMul10(t)
+		c := natCmp(t, sc)
+		if c > 0 || c == 0 && even {
+			break
+		}
+		natMul10(r)
+		natMul10(mp)
+		natMul10(mm)
+		k--
+	}
+	n := 0
+	for n < len(d) {
+		natMul10(r)
+		natMul10(mp)
+		natMul10(mm)
+		dig := byte(0)
+		for natCmp(r, sc) >= 0 {
+			natSub(r, sc)
+			dig++
+		}
+		c1 := natCmp(r, mm)
+		low := c1 < 0 || c1 == 0 && even
+		natAdd(t, r, mp)
+		c2 := natCmp(t, sc)
+		high := c2 > 0 || c2 == 0 && even
+		if !low && !high {
+			d[n] = '0' + dig
+			n++
+			continue
+		}
+		if low && high {
+			// The nearer of the two, and the even one on a tie, as Go's
+			// strconv and Erlang's own printing choose.
+			natAdd(t, r, r)
+			if c := natCmp(t, sc); c > 0 || c == 0 && dig&1 != 0 {
+				dig++
+			}
+		} else if high {
+			dig++
+		}
+		d[n] = '0' + dig
+		n++
+		break
+	}
+	return n, k - 1
+}
+
+func pow10(e int) float64 {
+	r := 1.0
+	for ; e > 0; e-- {
+		r *= 10
+	}
+	for ; e < 0; e++ {
+		r /= 10
+	}
+	return r
+}
+
+// writeFloat writes a float as ~w does.
+func writeFloat(s *sched, f float32) {
+	u := floatBits(f)
+	if u&0x7fffffff == 0 {
+		if u != 0 {
+			emit(s, '-')
+		}
+		emits(s, "0.0")
+		return
+	}
+	if u>>31 != 0 {
+		emit(s, '-')
+	}
+	var d [12]byte
+	n, e := shortest(s, u&0x7fffffff, &d)
+	// The plain form's length against the exponent form's.
+	plain := 0
+	if e >= 0 {
+		plain = e + 1
+		if n > e+1 {
+			plain += 1 + n - (e + 1)
+		} else {
+			plain += 2
+		}
+	} else {
+		plain = 2 + (-e - 1) + n
+	}
+	expo := 1 + 1 + 2 + n - 1
+	if n == 1 {
+		expo = 5
+	}
+	ex := e
+	if ex < 0 {
+		ex = -ex
+		expo++
+	}
+	for ex >= 10 {
+		expo++
+		ex /= 10
+	}
+	if plain <= expo {
+		if e >= 0 {
+			for k := 0; k <= e; k++ {
+				if k < n {
+					emit(s, d[k])
+				} else {
+					emit(s, '0')
+				}
+			}
+			emit(s, '.')
+			if n > e+1 {
+				for k := e + 1; k < n; k++ {
+					emit(s, d[k])
+				}
+			} else {
+				emit(s, '0')
+			}
+		} else {
+			emits(s, "0.")
+			for k := 0; k < -e-1; k++ {
+				emit(s, '0')
+			}
+			for k := 0; k < n; k++ {
+				emit(s, d[k])
+			}
+		}
+		return
+	}
+	emit(s, d[0])
+	emit(s, '.')
+	if n > 1 {
+		for k := 1; k < n; k++ {
+			emit(s, d[k])
+		}
+	} else {
+		emit(s, '0')
+	}
+	emit(s, 'e')
+	writeInt(s, int64(e))
+}
+
+// writeFixed writes a float with prec digits after the point, as ~f does.
+func writeFixed(s *sched, f float32, prec int) {
+	v := float64(f)
+	if v < 0 {
+		emit(s, '-')
+		v = -v
+	}
+	scale := pow10(prec)
+	whole := math.Floor(v)
+	frac := uint64((v-whole)*scale + 0.5)
+	if frac >= uint64(scale) {
+		frac -= uint64(scale)
+		whole++
+	}
+	writeInt(s, int64(whole))
+	if prec == 0 {
+		return
+	}
+	emit(s, '.')
+	var d [20]byte
+	for k := prec - 1; k >= 0; k-- {
+		d[k] = byte('0' + frac%10)
+		frac /= 10
+	}
+	for k := 0; k < prec; k++ {
+		emit(s, d[k])
+	}
+}
+
+// writeExp writes a float with prec significant digits in the exponent form,
+// as ~e does: 1.00000e+1.
+func writeExp(s *sched, f float32, prec int) {
+	v := float64(f)
+	if v < 0 {
+		emit(s, '-')
+		v = -v
+	}
+	e := 0
+	if v != 0 {
+		for v >= 10 {
+			v /= 10
+			e++
+		}
+		for v < 1 {
+			v *= 10
+			e--
+		}
+	}
+	scale := pow10(prec - 1)
+	m := uint64(v*scale + 0.5)
+	if m >= uint64(scale*10) {
+		m /= 10
+		e++
+	}
+	var d [12]byte
+	for k := prec - 1; k >= 0; k-- {
+		d[k] = byte('0' + m%10)
+		m /= 10
+	}
+	emit(s, d[0])
+	if prec > 1 {
+		emit(s, '.')
+		for k := 1; k < prec; k++ {
+			emit(s, d[k])
+		}
+	}
+	emit(s, 'e')
+	if e < 0 {
+		emit(s, '-')
+		e = -e
+	} else {
+		emit(s, '+')
+	}
+	writeInt(s, int64(e))
+}
+
+// writeGeneral writes as ~g does: ~f with prec significant digits when the
+// value is from 0.1 up to 10000, ~e otherwise.
+func writeGeneral(s *sched, f float32, prec int) {
+	v := float64(f)
+	if v < 0 {
+		v = -v
+	}
+	if v >= 0.1 && v < 10000 {
+		e := 0
+		for x := v; x >= 10; x /= 10 {
+			e++
+		}
+		for x := v; x < 1; x *= 10 {
+			e--
+		}
+		decimals := prec - 1 - e
+		if decimals < 0 {
+			decimals = 0
+		}
+		writeFixed(s, f, decimals)
+		return
+	}
+	writeExp(s, f, prec)
+}

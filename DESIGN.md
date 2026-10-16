@@ -8,10 +8,11 @@ and how to run it.
 
 **Status: proposed at the end of milestone M0 and decided with the user on
 2026-10-16; section 7 records the decisions. M1, one process on one cog, M2,
-processes and messages on that cog, and M3, seven scheduler cogs, were built
-the same evening and night: sections 3 and 4 say where what is built differs
-from what was proposed.** What M0 measured is in section 6 and in
-`erl/stats.txt`; what M1, M2 and M3 measured is in section 8.
+processes and messages on that cog, M3, seven scheduler cogs, and M4,
+exceptions caught, links and monitors, floats and the rest of io:format, were
+built the same evening and night: sections 3 and 4 say where what is built
+differs from what was proposed.** What M0 measured is in section 6 and in
+`erl/stats.txt`; what M1 to M4 measured is in section 8.
 
 ## 1. The pieces
 
@@ -147,7 +148,7 @@ list through the table. `send` copies the message into a fragment of the
 pool, sharing the literals and nothing else, and appends it to the receiver's
 mailbox; the receive instructions walk the mailbox from where the last
 receive stopped, `remove_message` moves the message's fragment to the
-process's pending list, and the next collection, which the sixteenth pending
+process's pending list, and the next collection, which the fourth pending
 fragment forces, treats the pending fragments as from-space, copies what is
 live out of them and frees them, so that a term read out of a message is
 never copied twice and never dangles. `wait_timeout` records a deadline in
@@ -186,6 +187,70 @@ drive no pin: `main.ogo` posts their pin BIFs to a ring under a lock of its
 own and does them on main's cog, which has nothing else to do, a read
 waiting for its answer. Go's race detector, run on the twin, found the
 three unsynchronized reads the first version had and finds none now.
+
+**As built in M4.** An exception unwinds the stack to the innermost catch
+tag, a word ending in `1111` with the handler's offset above it, in a y
+register of the frame that holds it, beside the continuations, which end in
+`0111`; the handler gets the class, the reason and the raw stacktrace in x1
+to x3, the non-value in x0, as BEAM's does. The raw stacktrace is {Class,
+[Offset, ...]}, the code offsets of the frames, eight at most, built into
+Erlang's list of {M, F, A, [{file, F}, {line, L}]} only by `build_stacktrace`
+and `catch`, and a return clears the continuation register, which a crash
+otherwise took for a frame. A process ends with an exit reason, {Reason,
+Stacktrace} of an error, which goes as the signal {'EXIT', Pid, Reason} to
+each of its links, eight at most, and as {'DOWN', Ref, process, Pid, Reason}
+to each monitor on it; a signal is a message fragment of a kind of its own,
+read by the receiver when its turn begins and when it receives: a message to
+a process that traps exits, dropped when the reason is normal, fatal
+otherwise, `kill` to `killed`. Erlang logs a crash of a spawned process and
+not an exit; the report here is printed for errors and throws, and for the
+entry process, which has the shell's part, for exits too. Registered names
+are a table of sixteen under the table's lock, and a send to an atom looks
+there. Floats are the board's 32-bit floats. `~w` writes
+the fewest digits that read back as the same float, in the shorter of the
+plain and the exponent form, the plain one on a tie, which is Erlang's rule
+(1000.0 is `1.0e3`, 65536.0 is `65536.0`). The digits are found by the
+free-format algorithm of Steele and White as Burger and Dybvig give it, in
+exact integers of 224 bits, a tie in the last digit going to the even one;
+`TestShortest` holds it to Go's `strconv` on a hundred thousand floats. A
+first version scaled the float by tens in OctoGo's `float64`, which is 32
+bits on the board: the twin agreed with `erl` and the board printed
+`0.0010000002` for `0.001`. A directive of `io:format` with a width is written into the
+scheduler's capture buffer first and padded from there; `~p` does not break a
+long term over lines as Erlang's does. A timed wait is one entry of the
+timer list, and the verdict on an entry and its removal are one step under
+the process's stripe: two walkers at once could otherwise remove a valid
+entry on a stale verdict, which the race detector did not see and a hang of
+one run in ten did. Of the same kind, found the same way: a process that
+ends is dead to a linker or a monitor from the locked step that takes the
+links and monitors it has, not from when its slot is freed, or a monitor set
+in between is never answered. What M4 left for later: loading an image from the SD
+card, which wants the VM's atom names as bytes rather than OctoGo strings,
+since a string cannot be made from bytes at run time; `~p`'s line breaking;
+`demonitor` with `flush`; `spawn_opt`; bignums.
+
+**The arena is 128 KB at the end of M4**, not the 192 KB section 7 decided
+on, and a process has four links and four monitors at most, not eight. M4's
+code did not fit beside 192 KB: the checked build was 551,088 bytes with a
+160 KB arena, over the hub by 26,800. Once the float digits were found in
+integers the checked build fell by 53 KB, and 128 KB fits: 464,452 bytes
+checked and 419,800 unchecked, with main's stack of 12 KB beside them.
+What gives more room back is a leaner VM, which is M5's question: the
+runtime checks of a checked build, a nil test at every field and a bounds
+test at every index, are a large part of the code, and the hot instructions
+in PASM would take their handlers out of it. With 128 KB, four blocks of
+8,192 longs are the largest allocations, and the ring of a hundred has its
+room. A forced collection after four pending messages, not sixteen, is what
+lets it: a hundred processes each holding fifteen fragments ran a 96 KB
+arena dry, which the twin's dump showed.
+
+**An image carries the fingerprint of the tables it was packed for**,
+`TableID`, a hash of the well-known atoms and of the BIFs in their order,
+which `obeam gen` writes into the VM and `obeam pack` into the image, and
+`main.ogo` refuses an image whose fingerprint is not the VM's. Without it a
+change to the BIF table and a forgotten `make image` made the board call
+BIFs by numbers that were no longer theirs: `io:format` answered `badarg`
+on the board while the twin, which packs in memory, passed.
 
 **What the interpreter cannot do** in OctoGo: recurse in a goroutine without a
 `--gostack` bound, so term comparison and message copying are written with an
@@ -304,7 +369,8 @@ what the alternative was:
   longs**, a process beginning with 64 of them, in an arena of 192 KB to begin
   with (section 3). Not a fixed 2 KB a process, which the ring of 100 would
   outgrow, and not 512 processes over 256 KB before the VM's own size is
-  known.
+  known. (The VM's size, once known, took the arena down to 128 KB in M4;
+  section 3 says why.)
 - **Line numbers ride on the board**, in a side table the packer writes and
   `-lines=none` leaves out (section 4), rather than on the host only: a crash
   prints the file and the line as Erlang does.
@@ -408,6 +474,24 @@ one process at a time, and only `cogs`' seven workers and the ring's and the
 sieve's processes have anything to run beside each other. The single
 scheduler's 117,774 a second is below M2's 128,000 by the locks, which it
 takes as the seven do.
+
+**M4**, the same night: `vm/except.ogo` rewritten for catching,
+`vm/link.ogo`, `vm/float.ogo`, `vm/format.ogo` rewritten for widths, and
+`vm/debug.ogo`, a dump of the process table that found the timer list's
+race. The corpus grew by `exc`, `links`, `flt` and `fmt`, thirteen modules
+the twin holds to `erl`, on seven goroutines, clean under the race detector
+in four rounds of all of them and twenty-five of the process-heavy ones. The
+BIFs are 105. On the board the demo runs all thirteen and then `cogs`, and the
+59 lines before `cogs` are byte for byte what `erl` prints for the same
+modules, in both builds:
+
+| Build, 160 MHz, 7 schedulers | 913,200 instructions in | a second |
+| --- | --- | --- |
+| checked | 5,662 ms | 161,299 |
+| `--unchecked` | 4,357 ms | 209,592 |
+
+With 2,515 collections, against 604 in M3: four pending messages force one
+where sixteen did. The demo's waits are about 1,050 ms of it.
 
 `cogs` printed `[{1,20000,3},{2,20000,4},{3,20000,3},{4,20000,6},{5,20000,1},{6,20000,1},{7,20000,6}]`
 on one run and a different spread on the next: the seven workers on four or

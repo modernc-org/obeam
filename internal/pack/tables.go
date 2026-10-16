@@ -4,7 +4,11 @@
 
 package pack
 
-import "modernc.org/obeam/internal/beam"
+import (
+	"fmt"
+
+	"modernc.org/obeam/internal/beam"
+)
 
 // The VM's own opcodes, above genop.tab's. The packer writes them where the
 // module's instructions cannot be run as they are.
@@ -32,7 +36,10 @@ var WellKnownAtoms = []string{
 	"exit", "throw", "EXIT",
 	"erlang", "lists", "io", "p2",
 	"millisecond", "microsecond", "nanosecond", "second", "native",
-	"timeout_value",
+	"timeout_value", "file", "line", "trap_exit", "process", "DOWN", "flush",
+	"spawn_link", "link", "unlink", "process_flag", "register", "unregister",
+	"whereis", "monitor", "demonitor", "raise",
+	"math", "float", "trunc", "round", "sqrt", "pow", "pi", "/",
 	// The BIFs apply/3 can reach by name: the functions of the table whose
 	// names are atoms a program would write.
 	"abs", "length", "hd", "tl", "element", "setelement", "tuple_size", "self",
@@ -119,6 +126,26 @@ var Bifs = []Bif{
 	{"erlang", "apply", 2, "bifApply2"},
 	{"erlang", "apply", 3, "bifApply3"},
 	{"erlang", "is_process_alive", 1, "bifIsProcessAlive"},
+	{"erlang", "raise", 3, "bifRaise3"},
+	{"erlang", "spawn_link", 1, "bifSpawnLink1"},
+	{"erlang", "spawn_link", 3, "bifSpawnLink3"},
+	{"erlang", "link", 1, "bifLink"},
+	{"erlang", "unlink", 1, "bifUnlink"},
+	{"erlang", "exit", 2, "bifExit2"},
+	{"erlang", "process_flag", 2, "bifProcessFlag"},
+	{"erlang", "register", 2, "bifRegister"},
+	{"erlang", "unregister", 1, "bifUnregister"},
+	{"erlang", "whereis", 1, "bifWhereis"},
+	{"erlang", "monitor", 2, "bifMonitor2"},
+	{"erlang", "demonitor", 1, "bifDemonitor1"},
+	{"erlang", "demonitor", 2, "bifDemonitor2"},
+	{"erlang", "/", 2, "bifFdiv"},
+	{"erlang", "float", 1, "bifFloat"},
+	{"erlang", "trunc", 1, "bifTrunc"},
+	{"erlang", "round", 1, "bifRound"},
+	{"math", "sqrt", 1, "bifMathSqrt"},
+	{"math", "pow", 2, "bifMathPow"},
+	{"math", "pi", 0, "bifMathPi"},
 	{"erlang", "make_ref", 0, "bifMakeRef"},
 	{"erlang", "error", 1, "bifError1"},
 	{"erlang", "error", 2, "bifError2"},
@@ -155,4 +182,29 @@ func bifIndex(m beam.MFA) (int, bool) {
 		}
 	}
 	return 0, false
+}
+
+// TableID is a fingerprint of what an image and the VM must agree on: the
+// well-known atoms, which the image numbers first, and the BIFs, which a call
+// in the image names by number. obeam gen writes it into the VM and obeam
+// pack into the image, and the board program refuses an image whose
+// fingerprint is not the VM's, which is an image packed before the tables
+// changed.
+func TableID() uint32 {
+	h := uint32(2166136261)
+	add := func(s string) {
+		for i := 0; i < len(s); i++ {
+			h ^= uint32(s[i])
+			h *= 16777619
+		}
+		h ^= '\n'
+		h *= 16777619
+	}
+	for _, a := range WellKnownAtoms {
+		add(a)
+	}
+	for _, b := range Bifs {
+		add(fmt.Sprintf("%s:%s/%d", b.Module, b.Function, b.Arity))
+	}
+	return h
 }

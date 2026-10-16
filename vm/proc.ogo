@@ -12,7 +12,7 @@ const (
 	maxSaveX   = maxArity
 	initOrder  = 6 // a new process's block: 64 longs
 	reductions = 2000
-	maxPending = 16 // messages taken out of the mailbox and still in their fragments, before a collection is forced
+	maxPending = 4 // messages taken out of the mailbox and still in their fragments, before a collection is forced: a hundred processes with fifteen each ran a 96 KB arena dry
 	noProc     = 0xffffffff
 	nsched     = 7 // schedulers at most: the cogs besides main's
 
@@ -40,6 +40,19 @@ type Proc struct {
 	cp    uint32 // the continuation: the code offset a return goes to, 0 for none
 	reds  int32
 	next  uint32 // the run queue's link: the next process's index, or noProc
+
+	catches uint32 // catch tags on the stack
+
+	// Links and monitors, under the stripe: the pids this process is linked
+	// to, the processes that monitor it, and the ones it monitors.
+	links    [maxLinks]uint32
+	nlinks   uint32
+	mons     [maxLinks]monitor
+	nmons    uint32
+	watching [maxLinks]monitor
+	nwatch   uint32
+	trapExit bool
+	signaled bool // an exit signal waits in the mailbox
 
 	// The X registers saved while it is not running: a call's arguments, or
 	// nothing at a receive.
@@ -93,11 +106,17 @@ type sched struct {
 	gcNewE  uint32 // and its end
 	cpTo    uint32 // where a copy writes next
 
+	fr       [maxFR]float32 // the float registers
+	dr, ds   nat            // the digit search's numbers, float.ogo's shortest
+	dmp, dmm nat
+	dt       nat
 	msgStack [msgDepth]uint32
 	cmpA     [cmpDepth]uint32
 	cmpB     [cmpDepth]uint32
 	wstack   [writeDepth]wframe
-	fbuf     [256]byte
+	fbuf     [256]byte     // a format string being written
+	cap      [capSize]byte // what a padded directive wrote
+	ncap     int32         // how much of it, or -1 while nothing is captured
 
 	steps uint32 // instructions interpreted
 	gcs   uint32 // collections
@@ -133,11 +152,13 @@ func procsInit() {
 	}
 	for i := range scheds {
 		scheds[i].id = uint32(i)
+		scheds[i].ncap = -1
 		scheds[i].cur = nil
 		scheds[i].steps = 0
 		scheds[i].gcs = 0
 		scheds[i].refs = 0
 	}
+	namesInit()
 	runHead = noProc
 	runTail = noProc
 	stopping = false
@@ -194,6 +215,12 @@ func spawn(entry, nargs, argLongs uint32) *Proc {
 	p.cp = 0
 	p.reds = reductions
 	p.next = noProc
+	p.catches = 0
+	p.nlinks = 0
+	p.nmons = 0
+	p.nwatch = 0
+	p.trapExit = false
+	p.signaled = false
 	p.nsave = nargs
 	p.mboxHead = noBlock
 	p.mboxTail = noBlock
@@ -361,9 +388,9 @@ func sleep(s *sched, label uint32, timed bool, ms uint32, timeoutPC uint32) uint
 	if timed {
 		p.deadline = now() + ms
 		p.timeoutPC = timeoutPC
-	}
-	unlock(stripe(p))
-	if timed {
+		// On the timer list under the stripe still, so that a walker's
+		// verdict on an entry of this process and the entry's removal
+		// cannot come between the wait and its entry.
 		lock(lockRun)
 		if ntimers < maxProcs {
 			timers[ntimers] = p.idx
@@ -371,13 +398,17 @@ func sleep(s *sched, label uint32, timed bool, ms uint32, timeoutPC uint32) uint
 		}
 		unlock(lockRun)
 	}
+	unlock(stripe(p))
 	s.left = leftWait
 	return 0
 }
 
 // wakeExpired queues every process whose timeout has passed, and forgets the
-// entries of the timer list that no longer stand for a timed wait. The run
-// queue's lock is never held while a stripe's is taken.
+// entries of the timer list that no longer stand for a timed wait. The
+// verdict on an entry and the entry's removal are one step under the
+// process's stripe, the run queue's lock taken inside it, which the lock order
+// allows; two walkers at once cannot otherwise remove a valid entry on a
+// stale verdict. The run queue's lock is never held while a stripe is taken.
 func wakeExpired() {
 	t := now()
 	for i := uint32(0); ; i++ {
@@ -396,10 +427,6 @@ func wakeExpired() {
 			p.pc = p.timeoutPC
 			p.state = procRunnable
 		}
-		unlock(stripe(p))
-		if woke {
-			enqueue(p)
-		}
 		if stale || woke {
 			lock(lockRun)
 			if i < ntimers && &procs[timers[i]] == p {
@@ -408,6 +435,10 @@ func wakeExpired() {
 				i--
 			}
 			unlock(lockRun)
+		}
+		unlock(stripe(p))
+		if woke {
+			enqueue(p)
 		}
 	}
 }

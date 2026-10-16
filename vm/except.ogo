@@ -2,18 +2,29 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-// Exceptions and their reports. There is no catch yet: an exception ends the
-// process, after a report in the shape Erlang's shell prints. A reason of the
-// shape {Tag, Value} is not built as a term, nothing being there to catch it;
-// the report writes the two.
+// Exceptions: raised by the instructions and the BIFs, caught by try and
+// catch, or reported and fatal to the process. A catch is a tag in a y
+// register of the frame that holds it, ending in 1111 with the handler's
+// code offset above, beside the continuations, which end in 0111; neither is
+// a term and the collector passes over both. An exception unwinds the stack
+// to the innermost tag and goes on at its handler with x1 the class, x2 the
+// reason and x3 the raw stacktrace, which is {Class, [Offset, ...]}, the
+// code offsets of the frames, built into Erlang's list only when asked.
 
 const noTag = 0xffffffff
+
+const traceDepth = 8 // frames a stacktrace keeps, as Erlang's default
+
+func mkCP(off uint32) uint32    { return off<<4 | 0x7 }
+func cpOf(w uint32) uint32      { return w >> 4 }
+func mkCatch(off uint32) uint32 { return off<<4 | 0xf }
+func isCP(w uint32) bool        { return w&0xf == 0x7 }
+func isCatch(w uint32) bool     { return w&0xf == 0xf }
 
 // failWith fails a BIF with a class and a reason.
 func failWith(s *sched, class, reason uint32) uint32 {
 	s.bifClass = class
 	s.bifReason = reason
-	s.bifTag = noTag
 	return nonValue
 }
 
@@ -21,98 +32,346 @@ func failAtom(s *sched, reason uint32) uint32 { return failWith(s, atomError, mk
 func badarg(s *sched) uint32                  { return failAtom(s, atomBadarg) }
 func badarith(s *sched) uint32                { return failAtom(s, atomBadarith) }
 
-// raise ends the running process with an exception of a class, an atom
-// index, and a reason; raiseAtom with an atom reason, raiseTagged with a
-// reason {Tag, V}.
-func raise(s *sched, class, reason uint32) {
-	s.bifTag = noTag
-	report(s, class, reason)
-	s.cur.exit(procFailed)
-	s.left = leftFail
+// isClass reports whether a term is one of the three classes.
+func isClass(t uint32) bool {
+	return t == mkAtom(atomError) || t == mkAtom(atomExit) || t == mkAtom(atomThrow)
 }
 
-func raiseAtom(s *sched, class, reason uint32) { raise(s, mkAtom(class), mkAtom(reason)) }
+// raise raises an exception of a class, an atom term, and a reason in the
+// running process, and answers where the process goes on: at the handler of
+// its innermost catch, or nowhere, 0, the process having ended after a
+// report. raiseAtom takes the class and the reason as atom indexes, and
+// raiseTagged a reason {Tag, V}, which it builds.
+func raise(s *sched, class, reason uint32) uint32 { return throw(s, class, reason, 0) }
 
-func raiseTagged(s *sched, class, tag, v uint32) {
-	s.bifTag = tag
-	report(s, mkAtom(class), v)
-	s.cur.exit(procFailed)
-	s.left = leftFail
+func raiseAtom(s *sched, class, reason uint32) uint32 {
+	return throw(s, mkAtom(class), mkAtom(reason), 0)
 }
 
-// report writes what the shell would: the class, the reason explained, and
-// the function and line the process was in, under the output's lock.
-func report(s *sched, class, reason uint32) {
-	lock(lockOut)
-	outString("** exception ")
-	outString(atomName(class))
-	outString(": ")
-	explain(s, reason)
-	m, f, a, ok := funcAt(s.cur.pc)
-	if ok {
-		outString("\n     in function  ")
-		writeAtom(m)
-		out(':')
-		writeAtom(f)
-		out('/')
-		writeInt(int64(a))
-		if file, line, ok := lineAt(s.cur.pc); ok {
-			outString(" (")
-			outString(file)
-			outString(", line ")
-			writeInt(int64(line))
-			out(')')
+func raiseTagged(s *sched, class, tag, v uint32) uint32 {
+	s.bargs[0] = v
+	s.nbargs = 1
+	if !ensure(s, 3, 0) {
+		s.nbargs = 0
+		return throw(s, mkAtom(atomError), mkAtom(atomSystemLimit), 0)
+	}
+	v = s.bargs[0]
+	s.nbargs = 0
+	i := s.cur.htop
+	arena[i] = mkHeader(hdrTuple, 2)
+	arena[i+1] = mkAtom(tag)
+	arena[i+2] = v
+	s.cur.htop += 3
+	return throw(s, mkAtom(class), mkBoxed(i), 0)
+}
+
+// throw delivers an exception, with a raw stacktrace given or, for 0, the
+// stack's as it is.
+func throw(s *sched, class, reason, raw uint32) uint32 {
+	p := s.cur
+	if raw == 0 {
+		s.bargs[0] = reason
+		s.nbargs = 1
+		raw = buildRaw(s, class)
+		reason = s.bargs[0]
+		s.nbargs = 0
+		if raw == nonValue {
+			raw = nilTerm
 		}
 	}
-	out('\n')
+	if p.catches == 0 {
+		// An exit nothing catches is how a process ends, which Erlang does
+		// not log; an error or a throw is a crash, which it does, as the
+		// shell does for its own process, whose part the entry process has.
+		if class != mkAtom(atomExit) || p == entryProc {
+			report(s, class, reason, raw)
+		}
+		endProc(s, exitReason(s, class, reason, raw))
+		s.left = leftFail
+		return 0
+	}
+	end := p.blockEnd()
+	prev := p.stop
+	for i := p.stop; i < end; i++ {
+		w := arena[i]
+		if w&7 != 7 {
+			continue
+		}
+		if isCatch(w) {
+			p.stop = prev
+			s.x[0] = nonValue
+			s.x[1] = class
+			s.x[2] = reason
+			s.x[3] = raw
+			return cpOf(w)
+		}
+		prev = i
+	}
+	panic("vm: a catch counted and not on the stack")
+}
+
+// frames collects the code offsets of the running process's frames: where it
+// is, then the continuation it holds unless the frame holds it already, then
+// the stack's, traceDepth at most.
+func frames(s *sched, offs *[traceDepth]uint32) int {
+	p := s.cur
+	n := 0
+	offs[n] = p.pc
+	n++
+	end := p.blockEnd()
+	first := uint32(0)
+	for i := p.stop; i < end; i++ {
+		if isCP(arena[i]) {
+			first = cpOf(arena[i])
+			break
+		}
+	}
+	if p.cp != 0 && p.cp != first && n < traceDepth {
+		offs[n] = p.cp
+		n++
+	}
+	for i := p.stop; i < end && n < traceDepth; i++ {
+		if w := arena[i]; isCP(w) && cpOf(w) != 0 {
+			offs[n] = cpOf(w)
+			n++
+		}
+	}
+	return n
+}
+
+// buildRaw makes the raw stacktrace of where the process is, {Class, [Offset,
+// ...]}, on its heap, or answers nonValue when there is no room.
+func buildRaw(s *sched, class uint32) uint32 {
+	if !ensure(s, 3+2*traceDepth, 0) {
+		return nonValue
+	}
+	var offs [traceDepth]uint32
+	n := frames(s, &offs)
+	p := s.cur
+	l := uint32(nilTerm)
+	for k := n - 1; k >= 0; k-- {
+		i := p.htop
+		arena[i] = mkSmall(int32(offs[k]))
+		arena[i+1] = l
+		p.htop += 2
+		l = mkCons(i)
+	}
+	i := p.htop
+	arena[i] = mkHeader(hdrTuple, 2)
+	arena[i+1] = class
+	arena[i+2] = l
+	p.htop += 3
+	return mkBoxed(i)
+}
+
+// rawClass returns the class of a raw stacktrace, and whether the term is
+// one.
+func rawClass(raw uint32) (uint32, bool) {
+	if !isTuple(raw) || tupleArity(raw) != 2 || !isClass(tupleElem(raw, 1)) {
+		return 0, false
+	}
+	return tupleElem(raw, 1), true
+}
+
+// frameLine answers the file and line of a frame: the first frame's offset
+// is an instruction, a later one's a return address, whose call is the
+// instruction before it.
+func frameLine(off uint32, first bool) (string, uint32, bool) {
+	if !first && off > 0 {
+		off--
+	}
+	return lineAt(off)
+}
+
+// stackList turns a raw stacktrace into Erlang's list of {M, F, A, [{file,
+// F}, {line, L}]}, on the heap, with live X registers as roots; a stacktrace
+// that is a list already is answered as it is, and nonValue says there was
+// no room.
+func stackList(s *sched, raw uint32, live int32) uint32 {
+	if !isTuple(raw) || tupleArity(raw) != 2 {
+		return raw
+	}
+	offs := tupleElem(raw, 2)
+	if !isCons(offs) || !isSmall(arena[consIdx(offs)]) {
+		return offs
+	}
+	need := uint32(0)
+	first := true
+	for t := offs; isCons(t); t = arena[consIdx(t)+1] {
+		off := uint32(smallVal(arena[consIdx(t)]))
+		need += 5 + 2 + 2 + 3 + 2 + 3
+		if file, _, ok := frameLine(off, first); ok {
+			need += 2 * uint32(len(file))
+		}
+		first = false
+	}
+	s.bargs[0] = raw
+	s.nbargs = 1
+	if !ensure(s, need, live) {
+		s.nbargs = 0
+		return nonValue
+	}
+	raw = s.bargs[0]
+	s.nbargs = 0
+	var o [traceDepth]uint32
+	n := 0
+	for t := tupleElem(raw, 2); isCons(t) && n < traceDepth; t = arena[consIdx(t)+1] {
+		o[n] = uint32(smallVal(arena[consIdx(t)]))
+		n++
+	}
+	p := s.cur
+	l := uint32(nilTerm)
+	for k := n - 1; k >= 0; k-- {
+		m, f, a, ok := funcAt(o[k])
+		if !ok {
+			continue
+		}
+		loc := uint32(nilTerm)
+		if file, line, ok := frameLine(o[k], k == 0); ok {
+			// [{file, "f.erl"}, {line, N}]
+			i := p.htop
+			arena[i] = mkHeader(hdrTuple, 2)
+			arena[i+1] = mkAtom(atomLine)
+			arena[i+2] = mkSmall(int32(line))
+			p.htop += 3
+			lineT := mkBoxed(i)
+			str := strList(s, file)
+			i = p.htop
+			arena[i] = mkHeader(hdrTuple, 2)
+			arena[i+1] = mkAtom(atomFile)
+			arena[i+2] = str
+			p.htop += 3
+			fileT := mkBoxed(i)
+			i = p.htop
+			arena[i] = lineT
+			arena[i+1] = nilTerm
+			arena[i+2] = fileT
+			arena[i+3] = mkCons(i)
+			p.htop += 4
+			loc = mkCons(i + 2)
+		}
+		i := p.htop
+		arena[i] = mkHeader(hdrTuple, 4)
+		arena[i+1] = m
+		arena[i+2] = f
+		arena[i+3] = mkSmall(int32(a))
+		arena[i+4] = loc
+		p.htop += 5
+		arena[i+5] = mkBoxed(i)
+		arena[i+6] = l
+		p.htop += 2
+		l = mkCons(i + 5)
+	}
+	return l
+}
+
+// strList makes a list of a string's bytes on the heap; the room is made.
+func strList(s *sched, str string) uint32 {
+	p := s.cur
+	l := uint32(nilTerm)
+	for k := len(str) - 1; k >= 0; k-- {
+		i := p.htop
+		arena[i] = mkSmall(int32(str[k]))
+		arena[i+1] = l
+		p.htop += 2
+		l = mkCons(i)
+	}
+	return l
+}
+
+// report writes what the shell would of an exception nothing caught: the
+// class, the reason explained, and the frames, under the output's lock.
+func report(s *sched, class, reason, raw uint32) {
+	lock(lockOut)
+	emits(s, "** exception ")
+	emits(s, atomName(class))
+	emits(s, ": ")
+	explain(s, reason)
+	if isTuple(raw) && tupleArity(raw) == 2 {
+		first := true
+		for t := tupleElem(raw, 2); isCons(t); t = arena[consIdx(t)+1] {
+			off := uint32(smallVal(arena[consIdx(t)]))
+			m, f, a, ok := funcAt(off)
+			if !ok {
+				continue
+			}
+			if first {
+				emits(s, "\n     in function  ")
+			} else {
+				emits(s, "\n     in call from ")
+			}
+			writeAtom(s, m)
+			emit(s, ':')
+			writeAtom(s, f)
+			emit(s, '/')
+			writeInt(s, int64(a))
+			if file, line, ok := frameLine(off, first); ok {
+				emits(s, " (")
+				emits(s, file)
+				emits(s, ", line ")
+				writeInt(s, int64(line))
+				emit(s, ')')
+			}
+			first = false
+		}
+	}
+	emit(s, '\n')
 	unlock(lockOut)
 }
 
-// explain writes a reason as the shell explains the ones it knows; bifTag
-// says whether it is {Tag, reason}.
+// explain writes a reason as the shell explains the ones it knows.
 func explain(s *sched, reason uint32) {
-	if s.bifTag != noTag {
-		switch s.bifTag {
-		case atomBadmatch:
-			outString("no match of right hand side value ")
-		case atomCaseClause:
-			outString("no case clause matching ")
-		case atomBadfun:
-			outString("bad function ")
-		case atomBadrecord:
-			outString("bad record ")
-		case atomBadarity:
-			outString("bad arity ")
-		default:
-			out('{')
-			writeAtom(mkAtom(s.bifTag))
-			out(',')
-			writeTerm(s, reason, false)
-			out('}')
-			return
-		}
-		writeTerm(s, reason, false)
-		return
-	}
 	if isAtom(reason) {
 		switch atomIdx(reason) {
 		case atomBadarg:
-			outString("bad argument")
+			emits(s, "bad argument")
 			return
 		case atomBadarith:
-			outString("an error occurred when evaluating an arithmetic expression")
+			emits(s, "an error occurred when evaluating an arithmetic expression")
 			return
 		case atomFunctionClause:
-			outString("no function clause matching")
+			emits(s, "no function clause matching")
 			return
 		case atomIfClause:
-			outString("no true branch found when evaluating an if expression")
+			emits(s, "no true branch found when evaluating an if expression")
 			return
 		case atomUndef:
-			outString("undefined function")
+			emits(s, "undefined function")
 			return
 		case atomSystemLimit:
-			outString("a system limit has been reached")
+			emits(s, "a system limit has been reached")
+			return
+		}
+	}
+	if isTuple(reason) && tupleArity(reason) == 2 && isAtom(tupleElem(reason, 1)) {
+		v := tupleElem(reason, 2)
+		switch atomIdx(tupleElem(reason, 1)) {
+		case atomBadmatch:
+			emits(s, "no match of right hand side value ")
+			writeTerm(s, v, false)
+			return
+		case atomCaseClause:
+			emits(s, "no case clause matching ")
+			writeTerm(s, v, false)
+			return
+		case atomTryClause:
+			emits(s, "no try clause matching ")
+			writeTerm(s, v, false)
+			return
+		case atomBadfun:
+			emits(s, "bad function ")
+			writeTerm(s, v, false)
+			return
+		case atomBadrecord:
+			emits(s, "bad record ")
+			writeTerm(s, v, false)
+			return
+		case atomBadarity:
+			emits(s, "bad arity ")
+			writeTerm(s, v, false)
+			return
+		case atomNocatch:
+			writeTerm(s, v, false)
 			return
 		}
 	}

@@ -11,7 +11,8 @@
 %% beam_disasm does not hand back the opcodes as they are: it folds every test
 %% into {test,Name,...}, and bif0/1/2 and gc_bif1/2/3 into {bif,...} and
 %% {gc_bif,...} with their arguments in a list, as the compiler's own assembly
-%% spells them, and raise into a {bif,raise,...} of two arguments. op/1 undoes
+%% spells them, raise into a {bif,raise,...} of two arguments, and the float
+%% arithmetic, fadd to fnegate, into {bif,...} under its own name. op/1 undoes
 %% that; everything else keeps its name as the first element of its tuple, or
 %% is a bare atom.
 
@@ -28,6 +29,7 @@ main(_) ->
 
 op(I) when is_tuple(I), element(1, I) =:= test -> element(2, I);
 op({bif, raise, _Fail, [_, _], _Dst}) -> raise;
+op({bif, Name, _Fail, _Args, _Dst}) when Name =:= fadd; Name =:= fsub; Name =:= fmul; Name =:= fdiv; Name =:= fnegate -> Name;
 op({bif, _Name, _Fail, Args, _Dst}) -> list_to_atom("bif" ++ integer_to_list(length(Args)));
 op({gc_bif, _Name, _Fail, _Live, Args, _Dst}) -> list_to_atom("gc_bif" ++ integer_to_list(length(Args)));
 op(I) when is_tuple(I) -> element(1, I);

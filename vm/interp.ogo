@@ -86,6 +86,22 @@ var handlers = [256]handler{
 	opRecvMarkerClear:   hRecvMarkerClear,
 	opRecvMarkerReserve: hRecvMarkerReserve,
 	opRecvMarkerUse:     hRecvMarkerUse,
+	opTry:               hTry,
+	opTryEnd:            hTryEnd,
+	opTryCase:           hTryCase,
+	opTryCaseEnd:        hTryCaseEnd,
+	opCatch:             hCatch,
+	opCatchEnd:          hCatchEnd,
+	opRaise:             hRaise,
+	opBuildStacktrace:   hBuildStacktrace,
+	opRawRaise:          hRawRaise,
+	opFmove:             hFmove,
+	opFconv:             hFconv,
+	opFadd:              hFadd,
+	opFsub:              hFsub,
+	opFmul:              hFmul,
+	opFdiv:              hFdiv,
+	opFnegate:           hFnegate,
 	opBadmatch:          hBadmatch,
 	opCaseEnd:           hCaseEnd,
 	opIfEnd:             hIfEnd,
@@ -98,11 +114,15 @@ func run(s *sched, p *Proc) bool {
 	s.cur = p
 	lock(stripe(p))
 	p.state = procRunning
+	sig := p.signaled
 	unlock(stripe(p))
 	for i := uint32(0); i < p.nsave; i++ {
 		s.x[i] = p.xsave[i]
 	}
 	s.left = leftEnd
+	if sig && !signals(s) {
+		return true
+	}
 	pc := p.pc
 	for pc != 0 {
 		h := handlers[code[pc]&0xff]
@@ -115,7 +135,7 @@ func run(s *sched, p *Proc) bool {
 	}
 	switch s.left {
 	case leftEnd:
-		p.exit(procExited)
+		endProc(s, mkAtom(atomNormal))
 		return true
 	case leftFail:
 		return true
@@ -127,8 +147,7 @@ func hHalt(s *sched, pc uint32) uint32 { return 0 }
 
 // hFuncInfo is where a call lands when no clause of the function matched.
 func hFuncInfo(s *sched, pc uint32) uint32 {
-	raiseAtom(s, atomError, atomFunctionClause)
-	return 0
+	return raiseAtom(s, atomError, atomFunctionClause)
 }
 
 func hCall(s *sched, pc uint32) uint32 {
@@ -138,7 +157,7 @@ func hCall(s *sched, pc uint32) uint32 {
 
 func hCallLast(s *sched, pc uint32) uint32 {
 	n := code[pc+3]
-	s.cur.cp = arena[s.cur.stop] >> 3
+	s.cur.cp = cpOf(arena[s.cur.stop])
 	s.cur.stop += n + 1
 	return jump(s, code[pc+2], code[pc+1])
 }
@@ -157,15 +176,18 @@ func jump(s *sched, target, live uint32) uint32 {
 	return target
 }
 
+// hReturn goes on at the continuation, which it clears: a function that has
+// returned leaves no return address behind to be taken for a frame.
 func hReturn(s *sched, pc uint32) uint32 {
-	return s.cur.cp
+	r := s.cur.cp
+	s.cur.cp = 0
+	return r
 }
 
 func hAllocate(s *sched, pc uint32) uint32 {
 	n, live := code[pc+1], code[pc+2]
 	if s.cur.stop-(n+1) < s.cur.htop && !gc(s, live, 0, n+1) {
-		raiseAtom(s, atomError, atomSystemLimit)
-		return 0
+		return raiseAtom(s, atomError, atomSystemLimit)
 	}
 	return pushFrame(s, n, pc+3)
 }
@@ -173,8 +195,7 @@ func hAllocate(s *sched, pc uint32) uint32 {
 func hAllocateHeap(s *sched, pc uint32) uint32 {
 	n, need, live := code[pc+1], code[pc+2], code[pc+3]
 	if s.cur.stop-(n+1) < s.cur.htop+need && !gc(s, live, need, n+1) {
-		raiseAtom(s, atomError, atomSystemLimit)
-		return 0
+		return raiseAtom(s, atomError, atomSystemLimit)
 	}
 	return pushFrame(s, n, pc+4)
 }
@@ -182,7 +203,7 @@ func hAllocateHeap(s *sched, pc uint32) uint32 {
 // pushFrame makes a frame of n y registers, the continuation below them.
 func pushFrame(s *sched, n, next uint32) uint32 {
 	s.cur.stop -= n + 1
-	arena[s.cur.stop] = s.cur.cp<<3 | 7
+	arena[s.cur.stop] = mkCP(s.cur.cp)
 	for i := uint32(1); i <= n; i++ {
 		arena[s.cur.stop+i] = 0
 	}
@@ -191,7 +212,7 @@ func pushFrame(s *sched, n, next uint32) uint32 {
 
 func hDeallocate(s *sched, pc uint32) uint32 {
 	n := code[pc+1]
-	s.cur.cp = arena[s.cur.stop] >> 3
+	s.cur.cp = cpOf(arena[s.cur.stop])
 	s.cur.stop += n + 1
 	return pc + 2
 }
@@ -223,8 +244,7 @@ func hSwap(s *sched, pc uint32) uint32 {
 func hTestHeap(s *sched, pc uint32) uint32 {
 	need, live := code[pc+1], code[pc+2]
 	if (s.cur.htop+need > s.cur.stop || s.cur.forceGC) && !gc(s, live, need, 0) {
-		raiseAtom(s, atomError, atomSystemLimit)
-		return 0
+		return raiseAtom(s, atomError, atomSystemLimit)
 	}
 	return pc + 3
 }
@@ -425,12 +445,10 @@ func hCallFun2(s *sched, pc uint32) uint32 {
 // the BIF.
 func callFun(s *sched, arity, f, next uint32) uint32 {
 	if !isFun(f) {
-		raiseTagged(s, atomError, atomBadfun, f)
-		return 0
+		return raiseTagged(s, atomError, atomBadfun, f)
 	}
 	if funArity(f) != arity {
-		raiseTagged(s, atomError, atomBadarity, f)
-		return 0
+		return raiseTagged(s, atomError, atomBadarity, f)
 	}
 	if funKind(f) == funBif {
 		for i := uint32(0); i < arity; i++ {
@@ -441,8 +459,7 @@ func callFun(s *sched, arity, f, next uint32) uint32 {
 		r := bifs[funCode(f)].f(s, arity)
 		s.nbargs = 0
 		if r == nonValue {
-			raise(s, mkAtom(s.bifClass), s.bifReason)
-			return 0
+			return raise(s, mkAtom(s.bifClass), s.bifReason)
 		}
 		s.x[0] = r
 		return next
@@ -457,23 +474,19 @@ func callFun(s *sched, arity, f, next uint32) uint32 {
 }
 
 func hBadmatch(s *sched, pc uint32) uint32 {
-	raiseTagged(s, atomError, atomBadmatch, src(s, code[pc+1]))
-	return 0
+	return raiseTagged(s, atomError, atomBadmatch, src(s, code[pc+1]))
 }
 
 func hCaseEnd(s *sched, pc uint32) uint32 {
-	raiseTagged(s, atomError, atomCaseClause, src(s, code[pc+1]))
-	return 0
+	return raiseTagged(s, atomError, atomCaseClause, src(s, code[pc+1]))
 }
 
 func hIfEnd(s *sched, pc uint32) uint32 {
-	raiseAtom(s, atomError, atomIfClause)
-	return 0
+	return raiseAtom(s, atomError, atomIfClause)
 }
 
 func hBadrecord(s *sched, pc uint32) uint32 {
-	raiseTagged(s, atomError, atomBadrecord, src(s, code[pc+1]))
-	return 0
+	return raiseTagged(s, atomError, atomBadrecord, src(s, code[pc+1]))
 }
 
 // The BIF instructions. bif0, bif1 and bif2 may not allocate; the gc_bifs
@@ -489,8 +502,7 @@ func hCallBif(s *sched, pc uint32) uint32 {
 	r := bifs[b].f(s, arity)
 	s.nbargs = 0
 	if r == nonValue {
-		raise(s, mkAtom(s.bifClass), s.bifReason)
-		return 0
+		return raise(s, mkAtom(s.bifClass), s.bifReason)
 	}
 	if r == jumpValue {
 		// apply: the BIF set x0 and up and left where to go in bifJump.
@@ -506,8 +518,7 @@ func hCallBif(s *sched, pc uint32) uint32 {
 
 func hSend(s *sched, pc uint32) uint32 {
 	if !sendMsg(s, s.x[0], s.x[1]) {
-		raise(s, mkAtom(s.bifClass), s.bifReason)
-		return 0
+		return raise(s, mkAtom(s.bifClass), s.bifReason)
 	}
 	s.x[0] = s.x[1]
 	return pc + 1
@@ -518,6 +529,12 @@ func hSend(s *sched, pc uint32) uint32 {
 // lock, a sender writing the same words.
 func hLoopRec(s *sched, pc uint32) uint32 {
 	p := s.cur
+	lock(stripe(p))
+	sig := p.signaled
+	unlock(stripe(p))
+	if sig && !signals(s) {
+		return 0
+	}
 	lock(stripe(p))
 	c := p.mboxCur
 	unlock(stripe(p))
@@ -555,8 +572,7 @@ func hWaitTimeout(s *sched, pc uint32) uint32 {
 		return sleep(s, code[pc+1], false, 0, 0)
 	}
 	if !isSmall(t) || smallVal(t) < 0 {
-		raiseAtom(s, atomError, atomTimeoutValue)
-		return 0
+		return raiseAtom(s, atomError, atomTimeoutValue)
 	}
 	return sleep(s, code[pc+1], true, uint32(smallVal(t)), pc+3)
 }
@@ -587,8 +603,7 @@ func hBif0(s *sched, pc uint32) uint32 {
 	s.curLive = -1
 	r := bifs[code[pc+1]].f(s, 0)
 	if r == nonValue {
-		raise(s, mkAtom(s.bifClass), s.bifReason)
-		return 0
+		return raise(s, mkAtom(s.bifClass), s.bifReason)
 	}
 	store(s, code[pc+2], r)
 	return pc + 3
@@ -650,9 +665,129 @@ func bifDone(s *sched, pc, r, dst, next uint32) uint32 {
 		if fail := code[pc+1]; fail != 0 {
 			return fail
 		}
-		raise(s, mkAtom(s.bifClass), s.bifReason)
-		return 0
+		return raise(s, mkAtom(s.bifClass), s.bifReason)
 	}
 	store(s, dst, r)
 	return next
+}
+
+// Catching. try and catch put a tag with the handler's offset in a y
+// register and count it; the normal way out, try_end or catch_end, clears
+// it; the handler, try_case or catch_end after an exception, finds the class,
+// the reason and the raw stacktrace in x1, x2 and x3 and x0 the non-value.
+
+func hTry(s *sched, pc uint32) uint32 {
+	store(s, code[pc+1], mkCatch(code[pc+2]))
+	s.cur.catches++
+	return pc + 3
+}
+
+func hCatch(s *sched, pc uint32) uint32 { return hTry(s, pc) }
+
+func hTryEnd(s *sched, pc uint32) uint32 {
+	store(s, code[pc+1], nilTerm)
+	s.cur.catches--
+	return pc + 2
+}
+
+// hTryCase begins a try's handler: the class, reason and stacktrace move
+// down to x0, x1 and x2.
+func hTryCase(s *sched, pc uint32) uint32 {
+	store(s, code[pc+1], nilTerm)
+	s.cur.catches--
+	s.x[0] = s.x[1]
+	s.x[1] = s.x[2]
+	s.x[2] = s.x[3]
+	return pc + 2
+}
+
+func hTryCaseEnd(s *sched, pc uint32) uint32 {
+	return raiseTagged(s, atomError, atomTryClause, src(s, code[pc+1]))
+}
+
+// hCatchEnd ends a catch expression: after an exception its value is the
+// thrown term, {'EXIT', Reason} of an exit, or {'EXIT', {Reason,
+// Stacktrace}} of an error.
+func hCatchEnd(s *sched, pc uint32) uint32 {
+	store(s, code[pc+1], nilTerm)
+	s.cur.catches--
+	if s.x[0] != nonValue {
+		return pc + 2
+	}
+	switch s.x[1] {
+	case mkAtom(atomThrow):
+		s.x[0] = s.x[2]
+		return pc + 2
+	case mkAtom(atomError):
+		stk := stackList(s, s.x[3], 4)
+		if stk == nonValue {
+			return raiseAtom(s, atomError, atomSystemLimit)
+		}
+		s.x[3] = stk
+		if !ensure(s, 6, 4) {
+			return raiseAtom(s, atomError, atomSystemLimit)
+		}
+		i := s.cur.htop
+		arena[i] = mkHeader(hdrTuple, 2)
+		arena[i+1] = s.x[2]
+		arena[i+2] = s.x[3]
+		arena[i+3] = mkHeader(hdrTuple, 2)
+		arena[i+4] = mkAtom(atomEXIT)
+		arena[i+5] = mkBoxed(i)
+		s.cur.htop += 6
+		s.x[0] = mkBoxed(i + 3)
+		return pc + 2
+	}
+	if !ensure(s, 3, 4) {
+		return raiseAtom(s, atomError, atomSystemLimit)
+	}
+	i := s.cur.htop
+	arena[i] = mkHeader(hdrTuple, 2)
+	arena[i+1] = mkAtom(atomEXIT)
+	arena[i+2] = s.x[2]
+	s.cur.htop += 3
+	s.x[0] = mkBoxed(i)
+	return pc + 2
+}
+
+// hRaise raises again with a raw stacktrace and a reason, the class being
+// the stacktrace's; given what is no raw stacktrace it answers badarg in x0
+// and goes on.
+func hRaise(s *sched, pc uint32) uint32 {
+	raw := src(s, code[pc+1])
+	reason := src(s, code[pc+2])
+	if class, ok := rawClass(raw); ok {
+		return throw(s, class, reason, raw)
+	}
+	s.x[0] = mkAtom(atomBadarg)
+	return pc + 3
+}
+
+// hBuildStacktrace turns the raw stacktrace in x0 into Erlang's list.
+func hBuildStacktrace(s *sched, pc uint32) uint32 {
+	l := stackList(s, s.x[0], 1)
+	if l == nonValue {
+		return raiseAtom(s, atomError, atomSystemLimit)
+	}
+	s.x[0] = l
+	return pc + 1
+}
+
+// hRawRaise is erlang:raise/3: the class in x0, the reason in x1 and the
+// stacktrace, a list, in x2; a class that is none answers badarg in x0.
+func hRawRaise(s *sched, pc uint32) uint32 {
+	class := s.x[0]
+	if !isClass(class) {
+		s.x[0] = mkAtom(atomBadarg)
+		return pc + 1
+	}
+	if !ensure(s, 3, 3) {
+		return raiseAtom(s, atomError, atomSystemLimit)
+	}
+	i := s.cur.htop
+	arena[i] = mkHeader(hdrTuple, 2)
+	arena[i+1] = class
+	arena[i+2] = s.x[2]
+	s.cur.htop += 3
+	return throw(s, class, s.x[1], mkBoxed(i))
 }

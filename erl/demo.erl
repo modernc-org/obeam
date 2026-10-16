@@ -17,4 +17,8 @@ main() ->
     ring:main(),
     sieve:main(),
     counter:main(),
+    exc:main(),
+    links:main(),
+    flt:main(),
+    fmt:main(),
     cogs:main().

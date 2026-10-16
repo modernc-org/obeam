@@ -138,6 +138,10 @@ func main() {
 	vm.Rnd = rnd
 	pinLock = p2.NewLock()
 
+	if image.TableID != vm.TableID {
+		printf("obeam: the image was packed for other tables than the VM's: make image\r\n")
+		return
+	}
 	vm.Load(image.Code[:], image.Literals[:], image.Atoms[:], image.Funcs[:], image.Funs[:], image.Lines[:], image.Files[:])
 	printf("obeam: %s, %d longs of code, %d schedulers\r\n\r\n", image.EntryName, len(image.Code), schedulers)
 	t := p2.GetMs()

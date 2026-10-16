@@ -121,59 +121,27 @@ func copyObj(s *sched, t uint32) uint32 {
 	return t
 }
 
-// sendMsg sends a message to a pid: it is copied into a fragment and appended
-// to the receiver's mailbox, under the receiver's lock, and the receiver is
-// woken if it waits. A message to a process that is gone is dropped. It
-// fails for what is no pid, and for a message there is no room for.
+// sendMsg sends a message to a pid, or to the process registered under an
+// atom: it is copied into a fragment and appended to the receiver's mailbox,
+// and the receiver is woken if it waits. A message to a process that is gone
+// is dropped. It fails for what is no pid and no registered name, and for a
+// message there is no room for.
 func sendMsg(s *sched, to, msg uint32) bool {
+	if isAtom(to) {
+		pid, ok := whereis(to)
+		if !ok {
+			badarg(s)
+			return false
+		}
+		to = pid
+	}
 	if !isPid(to) {
 		badarg(s)
 		return false
 	}
-	size := termSize(s, msg)
-	if size < 0 {
+	if !deliver(s, to, msg, kindMessage) {
 		failAtom(s, atomSystemLimit)
 		return false
-	}
-	order := orderFor(fragHead + uint32(size))
-	if order == 0xff {
-		failAtom(s, atomSystemLimit)
-		return false
-	}
-	b := allocBlock(order)
-	if b == noBlock {
-		failAtom(s, atomSystemLimit)
-		return false
-	}
-	root, _ := copyTerm(s, msg, b+fragHead)
-	arena[b] = noBlock
-	arena[b+1] = order
-	arena[b+2] = root
-	p := procOf(to)
-	lock(stripe(p))
-	if !p.alive(to) {
-		unlock(stripe(p))
-		freeBlock(b, order)
-		return true
-	}
-	if p.mboxTail == noBlock {
-		p.mboxHead = b
-	} else {
-		arena[p.mboxTail] = b
-	}
-	if p.mboxCur == noBlock {
-		p.mboxCur = b
-		p.mboxPrev = p.mboxTail
-	}
-	p.mboxTail = b
-	woke := p.state == procWaiting
-	if woke {
-		p.state = procRunnable
-		p.timed = false
-	}
-	unlock(stripe(p))
-	if woke {
-		enqueue(p)
 	}
 	return true
 }
@@ -182,7 +150,7 @@ func sendMsg(s *sched, to, msg uint32) bool {
 func freeFragments(b uint32) {
 	for b != noBlock {
 		next := arena[b]
-		freeBlock(b, arena[b+1])
+		freeBlock(b, fragOrder(b))
 		b = next
 	}
 }
@@ -219,7 +187,7 @@ func takeMessage(s *sched) {
 // process's pending fragments.
 func inPending(s *sched, i uint32) bool {
 	for b := s.cur.pending; b != noBlock; b = arena[b] {
-		if i >= b && i < b+1<<arena[b+1] {
+		if i >= b && i < b+1<<fragOrder(b) {
 			return true
 		}
 	}

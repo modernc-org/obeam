@@ -2,10 +2,15 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-// Writing terms and io:format, to the output hook, byte by byte and with no
-// recursion: a compound term's parts wait on a stack of their own.
+// Writing terms and io:format, byte by byte and with no recursion: a compound
+// term's parts wait on a stack of the scheduler's. What a directive writes
+// goes through the scheduler's capture buffer first when it has a width, so
+// that it can be padded.
 
-const writeDepth = 64
+const (
+	writeDepth = 64
+	capSize    = 256 // the most a padded directive can write
+)
 
 // A wframe is a compound term being written: a list, with what is left of it
 // in t, or a tuple, with its next element in i, counted from 1.
@@ -17,8 +22,27 @@ type wframe struct {
 	tail  bool // of a list: an improper tail has been written, the bracket is owed
 }
 
+// emit writes a byte of output: into the capture buffer while one is open,
+// else to the output hook.
+func emit(s *sched, b byte) {
+	if s.ncap >= 0 {
+		if s.ncap < capSize {
+			s.cap[s.ncap] = b
+		}
+		s.ncap++
+		return
+	}
+	out(b)
+}
+
+func emits(s *sched, str string) {
+	for i := 0; i < len(str); i++ {
+		emit(s, str[i])
+	}
+}
+
 // writeTerm writes a term as ~w does, or as ~p does when pretty is set: a
-// list of printable characters as a string.
+// list of printable characters as a string, a binary of them as <<"...">>.
 func writeTerm(s *sched, t uint32, pretty bool) {
 	sp := 0
 	wpush(s, &sp, t, pretty)
@@ -26,12 +50,12 @@ func writeTerm(s *sched, t uint32, pretty bool) {
 		f := &s.wstack[sp-1]
 		if !f.list {
 			if f.i > tupleArity(f.t) {
-				out('}')
+				emit(s, '}')
 				sp--
 				continue
 			}
 			if f.i > 1 {
-				out(',')
+				emit(s, ',')
 			}
 			e := tupleElem(f.t, f.i)
 			f.i++
@@ -39,18 +63,18 @@ func writeTerm(s *sched, t uint32, pretty bool) {
 			continue
 		}
 		if f.tail || f.t == nilTerm {
-			out(']')
+			emit(s, ']')
 			sp--
 			continue
 		}
 		if !isCons(f.t) {
-			out('|')
+			emit(s, '|')
 			f.tail = true
 			wpush(s, &sp, f.t, pretty)
 			continue
 		}
 		if !f.first {
-			out(',')
+			emit(s, ',')
 		}
 		f.first = false
 		i := consIdx(f.t)
@@ -65,119 +89,128 @@ func wpush(s *sched, sp *int, t uint32, pretty bool) {
 	switch {
 	case isCons(t):
 		if pretty && isString(t) {
-			writeString(t)
+			writeString(s, t)
 			return
 		}
 		if *sp == writeDepth {
 			panic("vm: a term nested too deeply to write")
 		}
-		out('[')
+		emit(s, '[')
 		s.wstack[*sp] = wframe{t: t, list: true, first: true}
 		*sp++
 	case isTuple(t):
 		if *sp == writeDepth {
 			panic("vm: a term nested too deeply to write")
 		}
-		out('{')
+		emit(s, '{')
 		s.wstack[*sp] = wframe{t: t, i: 1}
 		*sp++
 	default:
-		writeFlat(t)
+		writeFlat(s, t, pretty)
 	}
 }
 
 // writeFlat writes a term that has no parts.
-func writeFlat(t uint32) {
+func writeFlat(s *sched, t uint32, pretty bool) {
 	switch {
 	case isSmall(t) || isInt64(t):
-		writeInt(intVal(t))
+		writeInt(s, intVal(t))
 	case isAtom(t):
-		writeAtom(t)
+		writeAtom(s, t)
 	case t == nilTerm:
-		outString("[]")
+		emits(s, "[]")
 	case isPid(t):
-		out('<')
-		out('0')
-		out('.')
-		writeInt(int64(pidIdx(t)))
-		out('.')
-		writeInt(int64(t >> (5 + pidIndexBits)))
-		out('>')
+		emits(s, "<0.")
+		writeInt(s, int64(pidIdx(t)))
+		emit(s, '.')
+		writeInt(s, int64(t>>(5+pidIndexBits)))
+		emit(s, '>')
 	case isRef(t):
-		outString("#Ref<0.")
-		writeInt(int64(t >> 5))
-		out('>')
+		emits(s, "#Ref<0.")
+		writeInt(s, int64(t>>5))
+		emit(s, '>')
 	case isFun(t):
 		if funKind(t) == funExport {
 			if m, f, a, ok := funcAt(funCode(t)); ok {
-				outString("fun ")
-				writeAtom(m)
-				out(':')
-				writeAtom(f)
-				out('/')
-				writeInt(int64(a))
+				emits(s, "fun ")
+				writeAtom(s, m)
+				emit(s, ':')
+				writeAtom(s, f)
+				emit(s, '/')
+				writeInt(s, int64(a))
 				return
 			}
 		}
-		outString("#Fun<")
-		writeInt(int64(funCode(t)))
-		out('.')
-		writeInt(int64(funArity(t)))
-		out('>')
+		emits(s, "#Fun<")
+		writeInt(s, int64(funCode(t)))
+		emit(s, '.')
+		writeInt(s, int64(funArity(t)))
+		emit(s, '>')
 	case isBinary(t):
-		writeBinary(t)
+		writeBinary(s, t, pretty)
 	case isFloat(t):
-		writeFloat(floatVal(t))
+		writeFloat(s, floatVal(t))
 	default:
-		outString("#Term<")
-		writeInt(int64(t))
-		out('>')
+		emits(s, "#Term<")
+		writeInt(s, int64(t))
+		emit(s, '>')
 	}
 }
 
-func writeInt(v int64) {
-	var buf [20]byte
+// writeInt writes an integer in decimal; writeIntBase in a base from 2 to
+// 36, in capitals when upper is set.
+func writeInt(s *sched, v int64) { writeIntBase(s, v, 10, true) }
+
+func writeIntBase(s *sched, v int64, base int64, upper bool) {
+	var buf [64]byte
 	i := len(buf)
 	neg := v < 0
-	if neg {
-		v = -v
-	}
 	for {
 		i--
-		buf[i] = byte('0' + v%10)
-		v /= 10
+		d := v % base
+		if d < 0 {
+			d = -d
+		}
+		if d < 10 {
+			buf[i] = byte('0' + d)
+		} else if upper {
+			buf[i] = byte('A' + d - 10)
+		} else {
+			buf[i] = byte('a' + d - 10)
+		}
+		v /= base
 		if v == 0 {
 			break
 		}
 	}
 	if neg {
-		out('-')
+		emit(s, '-')
 	}
 	for ; i < len(buf); i++ {
-		out(buf[i])
+		emit(s, buf[i])
 	}
 }
 
 // writeAtom writes an atom, quoted where Erlang quotes it.
-func writeAtom(t uint32) {
-	s := atomName(t)
-	if !atomNeedsQuotes(s) {
-		outString(s)
+func writeAtom(s *sched, t uint32) {
+	name := atomName(t)
+	if !atomNeedsQuotes(name) {
+		emits(s, name)
 		return
 	}
-	out('\'')
-	for i := 0; i < len(s); i++ {
-		writeChar(s[i], '\'')
+	emit(s, '\'')
+	for i := 0; i < len(name); i++ {
+		writeChar(s, name[i], '\'')
 	}
-	out('\'')
+	emit(s, '\'')
 }
 
-func atomNeedsQuotes(s string) bool {
-	if len(s) == 0 || isReserved(s) {
+func atomNeedsQuotes(name string) bool {
+	if len(name) == 0 || isReserved(name) {
 		return true
 	}
-	for i := 0; i < len(s); i++ {
-		c := s[i]
+	for i := 0; i < len(name); i++ {
+		c := name[i]
 		switch {
 		case c >= 'a' && c <= 'z':
 		case i > 0 && (c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '_' || c == '@'):
@@ -194,9 +227,9 @@ var reserved = [29]string{
 	"not", "of", "or", "orelse", "receive", "rem", "try", "when", "xor",
 }
 
-func isReserved(s string) bool {
+func isReserved(name string) bool {
 	for i := range reserved {
-		if reserved[i] == s {
+		if reserved[i] == name {
 			return true
 		}
 	}
@@ -204,34 +237,34 @@ func isReserved(s string) bool {
 }
 
 // writeChar writes a character inside quotes, escaped as Erlang escapes it.
-func writeChar(c byte, quote byte) {
+func writeChar(s *sched, c byte, quote byte) {
 	switch c {
 	case quote, '\\':
-		out('\\')
-		out(c)
+		emit(s, '\\')
+		emit(s, c)
 	case '\n':
-		outString(`\n`)
+		emits(s, `\n`)
 	case '\t':
-		outString(`\t`)
+		emits(s, `\t`)
 	case '\r':
-		outString(`\r`)
+		emits(s, `\r`)
 	case '\b':
-		outString(`\b`)
+		emits(s, `\b`)
 	case '\f':
-		outString(`\f`)
+		emits(s, `\f`)
 	case '\v':
-		outString(`\v`)
+		emits(s, `\v`)
 	case 27:
-		outString(`\e`)
+		emits(s, `\e`)
 	default:
 		if c < 32 || c == 127 {
-			out('\\')
-			out('0' + c>>6)
-			out('0' + c>>3&7)
-			out('0' + c&7)
+			emit(s, '\\')
+			emit(s, '0'+c>>6)
+			emit(s, '0'+c>>3&7)
+			emit(s, '0'+c&7)
 			return
 		}
-		out(c)
+		emit(s, c)
 	}
 }
 
@@ -260,76 +293,60 @@ func isString(t uint32) bool {
 	return t == nilTerm
 }
 
-func writeString(t uint32) {
-	out('"')
+func writeString(s *sched, t uint32) {
+	emit(s, '"')
 	for isCons(t) {
 		i := consIdx(t)
-		writeChar(byte(smallVal(arena[i])), '"')
+		writeChar(s, byte(smallVal(arena[i])), '"')
 		t = arena[i+1]
 	}
-	out('"')
+	emit(s, '"')
 }
 
-func writeBinary(t uint32) {
-	outString("<<")
+// writeBinary writes a binary as ~w does, its bytes, or as ~p does when
+// pretty is set, as a string when every byte is printable.
+func writeBinary(s *sched, t uint32, pretty bool) {
+	emits(s, "<<")
 	n := binaryLen(t)
-	text := n > 0
+	text := pretty && n > 0
 	for k := uint32(0); k < n && text; k++ {
 		text = printable(uint32(binaryByte(t, k)))
 	}
 	if text {
-		out('"')
+		emit(s, '"')
 		for k := uint32(0); k < n; k++ {
-			writeChar(binaryByte(t, k), '"')
+			writeChar(s, binaryByte(t, k), '"')
 		}
-		out('"')
+		emit(s, '"')
 	} else {
 		for k := uint32(0); k < n; k++ {
 			if k > 0 {
-				out(',')
+				emit(s, ',')
 			}
-			writeInt(int64(binaryByte(t, k)))
+			writeInt(s, int64(binaryByte(t, k)))
 		}
 	}
-	outString(">>")
+	emits(s, ">>")
 }
 
 // floatVal returns a boxed float's value.
 func floatVal(t uint32) float32 {
-	return floatFromBits(arena[boxIdx(t)+1])
-}
-
-// writeFloat writes a float with six decimals; the shortest digits that read
-// back the same are for later.
-func writeFloat(f float32) {
-	if f < 0 {
-		out('-')
-		f = -f
-	}
-	whole := int64(f)
-	writeInt(whole)
-	out('.')
-	frac := int64((f - float32(whole)) * 1000000)
-	d := int64(100000)
-	for d > 0 {
-		out(byte('0' + frac/d%10))
-		d /= 10
-	}
+	return floatOf(arena[boxIdx(t)+1])
 }
 
 // writeChars writes a list of characters, a binary or an atom, and reports
 // whether it was one; a list within the list, which io would take, is not
 // taken, so that nothing here recurses.
-func writeChars(t uint32) bool {
+func writeChars(s *sched, t uint32) bool {
 	if isBinary(t) {
 		n := binaryLen(t)
 		for k := uint32(0); k < n; k++ {
-			out(binaryByte(t, k))
+			emit(s, binaryByte(t, k))
 		}
 		return true
 	}
 	if isAtom(t) {
-		outString(atomName(t))
+		emits(s, atomName(t))
 		return true
 	}
 	for isCons(t) {
@@ -338,109 +355,270 @@ func writeChars(t uint32) bool {
 		if !isSmall(h) {
 			return false
 		}
-		out(byte(smallVal(h)))
+		emit(s, byte(smallVal(h)))
 		t = arena[i+1]
 	}
 	return t == nilTerm
 }
 
-// format writes a format string with its arguments as io:format does for
-// ~w, ~p, ~s, ~c, ~B, ~b, ~n and ~~; a directive it does not know is written
-// as it is. It reports whether the format and the arguments were well formed.
+// format writes a format string with its arguments as io:format does: the
+// directives ~w, ~p, ~s, ~c, ~B, ~b, ~e, ~f, ~g, ~n, ~i and ~~, each with a
+// field width, negative for left justified, a precision and a padding
+// character as Erlang writes them, ~F.P.PadC, * taking any of the three from
+// the arguments. It reports whether the format and the arguments were well
+// formed. ~p does not break a long term over lines as Erlang's does.
 func format(s *sched, fmtT, args uint32) bool {
-	if !isList(fmtT) && !isBinary(fmtT) && !isAtom(fmtT) {
+	n := formatString(s, fmtT)
+	if n < 0 {
 		return false
-	}
-	n := 0
-	t := fmtT
-	if isBinary(t) {
-		for k := uint32(0); k < binaryLen(t) && n < len(s.fbuf); k++ {
-			s.fbuf[n] = binaryByte(t, k)
-			n++
-		}
-	} else if isAtom(t) {
-		name := atomName(t)
-		for k := 0; k < len(name) && n < len(s.fbuf); k++ {
-			s.fbuf[n] = name[k]
-			n++
-		}
-	} else {
-		for isCons(t) && n < len(s.fbuf) {
-			i := consIdx(t)
-			if !isSmall(arena[i]) {
-				return false
-			}
-			s.fbuf[n] = byte(smallVal(arena[i]))
-			n++
-			t = arena[i+1]
-		}
 	}
 	for k := 0; k < n; k++ {
 		c := s.fbuf[k]
-		if c != '~' || k+1 >= n {
-			out(c)
+		if c != '~' {
+			emit(s, c)
 			continue
 		}
-		k++
-		d := s.fbuf[k]
-		switch d {
-		case 'n':
-			out('\n')
-		case '~':
-			out('~')
-		case 'w', 'p', 's', 'c', 'B', 'b':
-			if !isCons(args) {
-				return false
-			}
-			i := consIdx(args)
-			a := arena[i]
-			args = arena[i+1]
-			switch d {
-			case 'w':
-				writeTerm(s, a, false)
-			case 'p':
-				writeTerm(s, a, true)
-			case 's':
-				if !writeChars(a) {
-					return false
-				}
-			case 'c':
-				if !isSmall(a) {
-					return false
-				}
-				out(byte(smallVal(a)))
-			default:
-				if !isInteger(a) {
-					return false
-				}
-				writeInt(intVal(a))
-			}
-		default:
-			out('~')
-			out(d)
+		var ok bool
+		k, args, ok = directive(s, k+1, n, args)
+		if !ok {
+			return false
 		}
 	}
 	return args == nilTerm
 }
 
-// floatFromBits makes a float of its IEEE bits, with no unsafe: the mantissa
-// scaled by the exponent, a bit at a time.
-func floatFromBits(u uint32) float32 {
-	if u&0x7fffffff == 0 {
-		return 0
+// formatString copies the format, a list, a binary or an atom, into the
+// scheduler's buffer and answers its length, or -1 for what is none.
+func formatString(s *sched, t uint32) int {
+	n := 0
+	if isBinary(t) {
+		for k := uint32(0); k < binaryLen(t) && n < len(s.fbuf); k++ {
+			s.fbuf[n] = binaryByte(t, k)
+			n++
+		}
+		return n
 	}
-	e := int32(u>>23&0xff) - 127 - 23
-	f := float32(int32(u&0x7fffff) | 0x800000)
-	for e > 0 {
-		f *= 2
-		e--
+	if isAtom(t) {
+		name := atomName(t)
+		for k := 0; k < len(name) && n < len(s.fbuf); k++ {
+			s.fbuf[n] = name[k]
+			n++
+		}
+		return n
 	}
-	for e < 0 {
-		f /= 2
-		e++
+	if !isList(t) {
+		return -1
 	}
-	if u>>31 != 0 {
-		f = -f
+	for isCons(t) && n < len(s.fbuf) {
+		i := consIdx(t)
+		if !isSmall(arena[i]) {
+			return -1
+		}
+		s.fbuf[n] = byte(smallVal(arena[i]))
+		n++
+		t = arena[i+1]
 	}
-	return f
+	return n
+}
+
+// directive reads one directive from k, ~F.P.PadC, writes it, and answers
+// where the format goes on, what is left of the arguments, and whether all
+// was well.
+func directive(s *sched, k, n int, args uint32) (int, uint32, bool) {
+	width, prec := -1, -1
+	left := false
+	pad := byte(' ')
+	if k < n && s.fbuf[k] == '-' {
+		left = true
+		k++
+	}
+	if k < n && s.fbuf[k] == '*' {
+		v, rest, ok := nextInt(args)
+		if !ok {
+			return k, args, false
+		}
+		args = rest
+		if v < 0 {
+			left = true
+			v = -v
+		}
+		width = v
+		k++
+	} else {
+		width, k = digits(s, k, n)
+	}
+	if k < n && s.fbuf[k] == '.' {
+		k++
+		if k < n && s.fbuf[k] == '*' {
+			v, rest, ok := nextInt(args)
+			if !ok {
+				return k, args, false
+			}
+			args = rest
+			prec = v
+			k++
+		} else {
+			prec, k = digits(s, k, n)
+		}
+		if k < n && s.fbuf[k] == '.' {
+			k++
+			if k < n && s.fbuf[k] == '*' {
+				v, rest, ok := nextInt(args)
+				if !ok {
+					return k, args, false
+				}
+				args = rest
+				pad = byte(v)
+				k++
+			} else if k < n {
+				pad = s.fbuf[k]
+				k++
+			}
+		}
+	}
+	for k < n && (s.fbuf[k] == 't' || s.fbuf[k] == 'l' || s.fbuf[k] == 'k' || s.fbuf[k] == 'K') {
+		k++
+	}
+	if k >= n {
+		return k, args, false
+	}
+	d := s.fbuf[k]
+	switch d {
+	case 'n':
+		if width < 0 {
+			width = 1
+		}
+		for ; width > 0; width-- {
+			emit(s, '\n')
+		}
+		return k, args, true
+	case '~':
+		emit(s, '~')
+		return k, args, true
+	case 'i':
+		if !isCons(args) {
+			return k, args, false
+		}
+		return k, arena[consIdx(args)+1], true
+	}
+	if !isCons(args) {
+		return k, args, false
+	}
+	a := arena[consIdx(args)]
+	args = arena[consIdx(args)+1]
+	s.ncap = 0
+	ok := writeDirective(s, d, a, width, prec)
+	got := s.ncap
+	s.ncap = -1
+	if !ok {
+		return k, args, false
+	}
+	padded(s, got, width, left, pad)
+	return k, args, true
+}
+
+// digits reads a number of the format, answering -1 and k for none.
+func digits(s *sched, k, n int) (int, int) {
+	v := -1
+	for k < n && s.fbuf[k] >= '0' && s.fbuf[k] <= '9' {
+		if v < 0 {
+			v = 0
+		}
+		v = v*10 + int(s.fbuf[k]-'0')
+		k++
+	}
+	return v, k
+}
+
+// writeDirective writes one argument as a directive says, into the capture
+// buffer, and reports whether the argument was one the directive takes.
+func writeDirective(s *sched, d byte, a uint32, width, prec int) bool {
+	switch d {
+	case 'w':
+		writeTerm(s, a, false)
+	case 'p':
+		writeTerm(s, a, true)
+	case 's':
+		if !writeChars(s, a) {
+			return false
+		}
+		if prec >= 0 && s.ncap > int32(prec) {
+			s.ncap = int32(prec)
+		}
+	case 'c':
+		if !isSmall(a) {
+			return false
+		}
+		times := 1
+		if prec >= 0 {
+			times = prec
+		} else if width >= 0 {
+			times = width
+		}
+		for ; times > 0; times-- {
+			emit(s, byte(smallVal(a)))
+		}
+	case 'B', 'b':
+		if !isInteger(a) {
+			return false
+		}
+		base := int64(10)
+		if prec >= 2 && prec <= 36 {
+			base = int64(prec)
+		}
+		writeIntBase(s, intVal(a), base, d == 'B')
+	case 'e', 'f', 'g':
+		if !isNumber(a) {
+			return false
+		}
+		f := float32(numVal(a))
+		if prec < 0 {
+			prec = 6
+		}
+		switch d {
+		case 'e':
+			writeExp(s, f, prec)
+		case 'f':
+			writeFixed(s, f, prec)
+		default:
+			writeGeneral(s, f, prec)
+		}
+	default:
+		return false
+	}
+	return true
+}
+
+// padded writes what the capture buffer holds, got bytes, in a field of a
+// width, padded on the left, or on the right when left is set.
+func padded(s *sched, got int32, width int, left bool, pad byte) {
+	if got > capSize {
+		got = capSize
+	}
+	if !left {
+		for w := int32(width); w > got; w-- {
+			out(pad)
+		}
+	}
+	for i := int32(0); i < got; i++ {
+		out(s.cap[i])
+	}
+	if left {
+		for w := int32(width); w > got; w-- {
+			out(pad)
+		}
+	}
+}
+
+// nextInt takes the next argument, which must be a small integer, and
+// answers it with what is left of the arguments.
+func nextInt(args uint32) (int, uint32, bool) {
+	if !isCons(args) {
+		return 0, args, false
+	}
+	a := arena[consIdx(args)]
+	if !isSmall(a) {
+		return 0, args, false
+	}
+	return int(smallVal(a)), arena[consIdx(args)+1], true
 }

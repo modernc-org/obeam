@@ -1,0 +1,324 @@
+// Copyright 2026 The obeam Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file.
+
+// Links, monitors, exit signals and registered names. A process keeps the
+// pids it is linked to and the processes that monitor it, a few of each, under
+// its stripe's lock. When it ends, each link gets an exit signal, a message
+// of a kind of its own, {'EXIT', Pid, Reason}, and each monitor the message
+// {'DOWN', Ref, process, Pid, Reason}. A receiver that traps exits reads a
+// signal as a message; one that does not ends with the signal's reason, unless
+// the reason is normal, when the signal is dropped. Signals are looked at
+// when the receiver's turn begins and when it receives.
+
+const (
+	maxLinks = 4  // links a process has at most, and monitors on it
+	maxNames = 16 // registered names
+
+	kindMessage = 0 // a fragment's kind, in bits 24 and up of its order word
+	kindExit    = 1 // an exit signal, {'EXIT', From, Reason}
+)
+
+// A monitor is one process watching another: who, and by which reference.
+type monitor struct {
+	pid uint32
+	ref uint32
+}
+
+// A name is a registered process.
+type name struct {
+	atom uint32 // the term, or 0 for a free entry
+	pid  uint32
+}
+
+var names [maxNames]name // under lockProcs
+
+func namesInit() {
+	for i := range names {
+		names[i].atom = 0
+	}
+}
+
+// fragKind returns a fragment's kind, and fragOrder its order.
+func fragKind(b uint32) uint32  { return arena[b+1] >> 24 }
+func fragOrder(b uint32) uint32 { return arena[b+1] & 0xffffff }
+
+// deliver appends a term to a process's mailbox as a message of a kind,
+// copied into a fragment, and wakes the receiver if it waits; it reports
+// false when there is no room. A process that is gone gets nothing. The
+// caller holds no stripe.
+func deliver(s *sched, to, msg, kind uint32) bool {
+	size := termSize(s, msg)
+	if size < 0 {
+		return false
+	}
+	order := orderFor(fragHead + uint32(size))
+	if order == 0xff {
+		return false
+	}
+	b := allocBlock(order)
+	if b == noBlock {
+		return false
+	}
+	root, _ := copyTerm(s, msg, b+fragHead)
+	arena[b] = noBlock
+	arena[b+1] = order | kind<<24
+	arena[b+2] = root
+	p := procOf(to)
+	lock(stripe(p))
+	if !p.alive(to) {
+		unlock(stripe(p))
+		freeBlock(b, order)
+		return true
+	}
+	if p.mboxTail == noBlock {
+		p.mboxHead = b
+	} else {
+		arena[p.mboxTail] = b
+	}
+	if p.mboxCur == noBlock {
+		p.mboxCur = b
+		p.mboxPrev = p.mboxTail
+	}
+	p.mboxTail = b
+	if kind == kindExit {
+		p.signaled = true
+	}
+	woke := p.state == procWaiting
+	if woke {
+		p.state = procRunnable
+		p.timed = false
+	}
+	unlock(stripe(p))
+	if woke {
+		enqueue(p)
+	}
+	return true
+}
+
+// signals deals with the exit signals in the running process's mailbox: a
+// signal is made a message when the process traps exits, dropped when its
+// reason is normal, and ends the process otherwise, with that reason, killed
+// for kill. It reports whether the process goes on.
+func signals(s *sched) bool {
+	p := s.cur
+	lock(stripe(p))
+	p.signaled = false
+	prev := uint32(noBlock)
+	b := p.mboxHead
+	reason := uint32(0)
+	for b != noBlock {
+		next := arena[b]
+		if fragKind(b) != kindExit {
+			prev = b
+			b = next
+			continue
+		}
+		r := tupleElem(arena[b+2], 3)
+		if p.trapExit && r != mkAtom(atomKill) {
+			arena[b+1] = fragOrder(b)
+			prev = b
+			b = next
+			continue
+		}
+		// Out of the mailbox, whether dropped or fatal.
+		if prev == noBlock {
+			p.mboxHead = next
+		} else {
+			arena[prev] = next
+		}
+		if p.mboxTail == b {
+			p.mboxTail = prev
+		}
+		if p.mboxCur == b {
+			p.mboxCur = next
+			p.mboxPrev = prev
+		}
+		if r != mkAtom(atomNormal) {
+			reason = r
+			if r == mkAtom(atomKill) {
+				reason = mkAtom(atomKilled)
+			}
+			arena[b] = p.pending
+			p.pending = b
+			p.npending++
+			unlock(stripe(p))
+			endProc(s, reason)
+			s.left = leftFail
+			return false
+		}
+		arena[b] = p.pending
+		p.pending = b
+		p.npending++
+		b = next
+	}
+	unlock(stripe(p))
+	return true
+}
+
+// endProc ends the running process with an exit reason: its links get the
+// signal, its monitors the message, its name is given up, and it is freed.
+// It is dead to a linker or a monitor from the same locked step that takes
+// the links and monitors it has, so that none is added after and never told.
+func endProc(s *sched, reason uint32) {
+	p := s.cur
+	state := uint8(procFailed)
+	if reason == mkAtom(atomNormal) {
+		state = procExited
+	}
+	lock(stripe(p))
+	p.state = state
+	var links [maxLinks]uint32
+	var mons [maxLinks]monitor
+	nl, nm := p.nlinks, p.nmons
+	for i := uint32(0); i < nl; i++ {
+		links[i] = p.links[i]
+	}
+	for i := uint32(0); i < nm; i++ {
+		mons[i] = p.mons[i]
+	}
+	p.nlinks = 0
+	p.nmons = 0
+	unlock(stripe(p))
+	self := p.pid()
+	lock(lockProcs)
+	for i := range names {
+		if names[i].atom != 0 && names[i].pid == self {
+			names[i].atom = 0
+		}
+	}
+	unlock(lockProcs)
+	if nl > 0 || nm > 0 {
+		s.bargs[0] = reason
+		s.nbargs = 1
+		if !ensure(s, 4+6, 0) {
+			s.nbargs = 0
+			p.exit(state)
+			return
+		}
+		reason = s.bargs[0]
+		s.nbargs = 0
+		i := p.htop
+		arena[i] = mkHeader(hdrTuple, 3)
+		arena[i+1] = mkAtom(atomEXIT)
+		arena[i+2] = self
+		arena[i+3] = reason
+		p.htop += 4
+		sig := mkBoxed(i)
+		for k := uint32(0); k < nl; k++ {
+			unlinkFrom(links[k], self)
+			deliver(s, links[k], sig, kindExit)
+		}
+		i = p.htop
+		arena[i] = mkHeader(hdrTuple, 5)
+		arena[i+1] = mkAtom(atomDOWN)
+		arena[i+2] = 0
+		arena[i+3] = mkAtom(atomProcess)
+		arena[i+4] = self
+		arena[i+5] = reason
+		p.htop += 6
+		for k := uint32(0); k < nm; k++ {
+			arena[i+2] = mons[k].ref
+			deliver(s, mons[k].pid, mkBoxed(i), kindMessage)
+		}
+	}
+	p.exit(state)
+}
+
+// unlinkFrom takes a pid out of another process's links.
+func unlinkFrom(of, pid uint32) {
+	q := procOf(of)
+	lock(stripe(q))
+	if q.alive(of) {
+		for i := uint32(0); i < q.nlinks; i++ {
+			if q.links[i] == pid {
+				q.nlinks--
+				q.links[i] = q.links[q.nlinks]
+				break
+			}
+		}
+	}
+	unlock(stripe(q))
+}
+
+// linkTo adds a pid to a process's links, under the stripe; it reports
+// false when the process is gone or has no room.
+func linkTo(of, pid uint32) bool {
+	q := procOf(of)
+	lock(stripe(q))
+	ok := q.alive(of)
+	if ok {
+		found := false
+		for i := uint32(0); i < q.nlinks; i++ {
+			if q.links[i] == pid {
+				found = true
+			}
+		}
+		if !found {
+			if q.nlinks == maxLinks {
+				ok = false
+			} else {
+				q.links[q.nlinks] = pid
+				q.nlinks++
+			}
+		}
+	}
+	unlock(stripe(q))
+	return ok
+}
+
+// exitReason answers what a process that raised an exception exits with:
+// {Reason, Stacktrace} of an error, the reason of an exit, {nocatch, V} of a
+// throw; it is built on the process's heap, or is the reason alone when
+// there is no room.
+func exitReason(s *sched, class, reason, raw uint32) uint32 {
+	switch class {
+	case mkAtom(atomExit):
+		return reason
+	case mkAtom(atomThrow):
+		s.bargs[0] = reason
+		s.nbargs = 1
+		if !ensure(s, 3, 0) {
+			s.nbargs = 0
+			return reason
+		}
+		reason = s.bargs[0]
+		s.nbargs = 0
+		i := s.cur.htop
+		arena[i] = mkHeader(hdrTuple, 2)
+		arena[i+1] = mkAtom(atomNocatch)
+		arena[i+2] = reason
+		s.cur.htop += 3
+		return mkBoxed(i)
+	}
+	s.bargs[0] = reason
+	s.bargs[1] = raw
+	s.nbargs = 2
+	stk := stackList(s, s.bargs[1], 0)
+	if stk == nonValue || !ensure(s, 3, 0) {
+		s.nbargs = 0
+		return reason
+	}
+	reason = s.bargs[0]
+	s.nbargs = 0
+	i := s.cur.htop
+	arena[i] = mkHeader(hdrTuple, 2)
+	arena[i+1] = reason
+	arena[i+2] = stk
+	s.cur.htop += 3
+	return mkBoxed(i)
+}
+
+// whereis answers the pid registered under an atom.
+func whereis(atom uint32) (uint32, bool) {
+	lock(lockProcs)
+	for i := range names {
+		if names[i].atom == atom {
+			pid := names[i].pid
+			unlock(lockProcs)
+			return pid, true
+		}
+	}
+	unlock(lockProcs)
+	return 0, false
+}

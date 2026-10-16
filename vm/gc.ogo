@@ -12,7 +12,7 @@ func gc(s *sched, live, heapNeed, stackNeed uint32) bool {
 	end := p.blockEnd()
 	used := p.htop - p.block + end - p.stop
 	for b := p.pending; b != noBlock; b = arena[b] {
-		used += 1 << arena[b+1]
+		used += 1 << fragOrder(b)
 	}
 	order := orderFor(used + heapNeed + stackNeed)
 	if order == 0xff {

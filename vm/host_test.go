@@ -8,10 +8,14 @@ package vm
 
 import (
 	"bytes"
+	"math"
+	"math/rand"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -31,7 +35,7 @@ func TestErl(t *testing.T) {
 	if err != nil {
 		t.Skip("no erl on PATH")
 	}
-	for _, m := range []string{"fac", "fib", "lst", "tuples", "funs", "pingpong", "ring", "sieve", "counter"} {
+	for _, m := range []string{"fac", "fib", "lst", "tuples", "funs", "pingpong", "ring", "sieve", "counter", "exc", "links", "flt", "fmt"} {
 		t.Run(m, func(t *testing.T) {
 			img, err := pack.Pack([]string{filepath.Join(root, "erl", m+".beam")}, pack.Options{Lines: true})
 			if err != nil {
@@ -74,7 +78,8 @@ func testNewLock() int {
 const testSchedulers = 7
 
 // runImage loads an image, runs its entry on testSchedulers schedulers, and
-// returns what it printed.
+// returns what it printed. A run that takes more than a minute is given up,
+// with the process table dumped after what it printed.
 func runImage(img *pack.Image) []byte {
 	Out = testWrite
 	Millis = testMillis
@@ -84,6 +89,61 @@ func runImage(img *pack.Image) []byte {
 	Unlock = testUnlock
 	Load(img.Code, img.Literals, img.Atoms, img.Funcs, img.Funs, img.Lines, img.Files)
 	testOut = testOut[:0]
-	Run(img.Entry, testSchedulers)
+	if !Start(img.Entry, testSchedulers) {
+		return []byte("no room for the first process\n")
+	}
+	deadline := time.Now().Add(time.Minute)
+	for !Finished() {
+		if time.Now().After(deadline) {
+			Dump()
+			lock(lockRun)
+			stopping = true
+			unlock(lockRun)
+			break
+		}
+		runtime.Gosched()
+	}
+	for Running() > 0 {
+		runtime.Gosched()
+	}
 	return append([]byte(nil), testOut...)
+}
+
+// TestShortest holds the digit search of writeFloat to Go's, which finds the
+// fewest digits that read back as the same 32-bit float when asked for
+// strconv.FormatFloat(f, 'e', -1, 32): the digits and the exponent must be
+// the same, for the powers of ten and of two, the ends of the range, and a
+// hundred thousand floats of random bits.
+func TestShortest(t *testing.T) {
+	var fs []float32
+	for e := -45; e <= 38; e++ {
+		f := float32(math.Pow(10, float64(e)))
+		fs = append(fs, f, math.Nextafter32(f, 0), math.Nextafter32(f, math.MaxFloat32))
+	}
+	for e := -149; e <= 127; e++ {
+		fs = append(fs, float32(math.Ldexp(1, e)))
+	}
+	fs = append(fs, math.MaxFloat32, math.SmallestNonzeroFloat32, 0.1, 0.3, 1.0/3, 0.0015, 16777216, 16777215)
+	rng := rand.New(rand.NewSource(1))
+	for len(fs) < 100000 {
+		f := math.Float32frombits(rng.Uint32() & 0x7fffffff)
+		if f != 0 && !math.IsInf(float64(f), 0) && !math.IsNaN(float64(f)) {
+			fs = append(fs, f)
+		}
+	}
+	s := &scheds[0]
+	for _, f := range fs {
+		if f == 0 {
+			continue
+		}
+		want := strconv.FormatFloat(float64(f), 'e', -1, 32)
+		mant, exp, _ := strings.Cut(want, "e")
+		mant = strings.Replace(mant, ".", "", 1)
+		wantE, _ := strconv.Atoi(exp)
+		var d [12]byte
+		n, e := shortest(s, math.Float32bits(f), &d)
+		if got := string(d[:n]); got != mant || e != wantE {
+			t.Fatalf("%v (%#08x): digits %s e%d, Go's %s e%d", f, math.Float32bits(f), got, e, mant, wantE)
+		}
+	}
 }

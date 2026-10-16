@@ -8,7 +8,7 @@
 // order when it frees the block.
 
 const (
-	arenaLongs = 49152 // 192 KB, six blocks of the largest order
+	arenaLongs = 32768 // 128 KB, four blocks of the largest order: the 192 KB decided on did not fit beside M4's checked build
 	minOrder   = 3     // 8 longs
 	maxOrder   = 13    // 8,192 longs
 	orders     = maxOrder - minOrder + 1

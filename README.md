@@ -11,42 +11,48 @@ seven of them. It is the second program of size in OctoGo, after
 
 ## Status
 
-Begun on 2026-10-16, and at milestone M3 of the plan in `ASSESSMENT.md`:
-Erlang processes, spawned, sending and receiving, on seven scheduler cogs,
-running modules compiled by `erlc`.
+Begun on 2026-10-16, and at milestone M4 of the plan in `ASSESSMENT.md`:
+Erlang processes, spawned, linked and monitored, sending and receiving,
+catching exceptions, computing in floats, on seven scheduler cogs, running
+modules compiled by `erlc`.
 
 - `cmd/obeam`: the host tool, Go. `obeam pack` turns `.beam` files into the
   image the board runs, every operand resolved and every literal laid out as
   the board's own terms, and refuses, by module, function and line, what the
   VM cannot run yet. `obeam dis` and `obeam stats` list and count a module.
-- `vm/`: the VM, in OctoGo: about 3,300 lines for the terms, a buddy arena,
-  processes with mailboxes and a run queue, seven schedulers each a cog, the
-  interpreter, a copying collector per process, 85 BIFs, `io:format` and the
-  exception reports. It is Go once given a package clause, and the tests run
-  it so, on seven goroutines, against `erl`: nine modules of the corpus, from
-  `fac` to a ring of a hundred processes and a server with timeouts, print
-  the same bytes under both.
+- `vm/`: the VM, in OctoGo: about 5,500 lines for the terms, a buddy arena,
+  processes with mailboxes, links, monitors and a run queue, seven schedulers
+  each a cog, the interpreter, a copying collector per process, exceptions
+  caught by `try` and `catch`, floats, 105 BIFs, `io:format` with its widths
+  and precisions, and the exception reports. It is Go once given a package
+  clause, and the tests run it so, on seven goroutines, against `erl`:
+  thirteen modules of the corpus, from `fac` to a ring of a hundred
+  processes, a server with timeouts, linked workers, `try` and `catch` and
+  floats, print the same bytes under both.
 - `main.ogo`, `image/`: the board program and its image, `demo`, which runs
-  the nine and then `cogs`, seven workers that report which scheduler ran
+  the thirteen and then `cogs`, seven workers that report which scheduler ran
   them. Build it with `ogo build`, run it with `make run`. On a P2-EC it
   prints what `erl` prints, line for line, then the workers' schedulers, and
   then:
 
   ```
-  912532 instructions in 4949 ms, 184387 a second, 604 collections
+  913276 instructions in 5662 ms, 161299 a second, 2515 collections
   ```
 
   which is the checked build at 160 MHz, a second of it the demo's own
   waiting. DESIGN.md section 8 has the figures of each milestone.
-- `erl/`: the corpus, twelve small Erlang modules from `fac` to a process
-  ring and a concurrent prime sieve, compiled with OTP 27 and committed;
-  `erl/stats.txt` is the opcode and call histogram over them.
+- `erl/`: the corpus, sixteen small Erlang modules from `fac` to a process
+  ring, a concurrent prime sieve, linked workers and floats, compiled with
+  OTP 27 and committed; `erl/stats.txt` is the opcode and call histogram M0
+  measured over the first eleven.
 - `DESIGN.md`: how it is made, and what each milestone measured.
 
-Not yet: exceptions caught, floats, links, bit syntax, maps, bignums (M4 and
-later). A process's stack is bounded by its largest heap block, 8,192 longs,
-so a recursion 20,000 deep that Erlang takes ends here in `system_limit`;
-write it as a tail call.
+Not yet: bit syntax, maps, bignums, an image loaded from the SD card, `~p`'s
+line breaking. The arena for process heaps is 128 KB: the checked build of
+the VM with the full demo image fills most of the rest of the 512 KB. A process's stack is bounded by its largest heap block, 8,192
+longs, so a recursion 20,000 deep that Erlang takes ends here in
+`system_limit`; write it as a tail call. Floats are 32 bits wide: what is
+not exact in 32 bits prints differently from Erlang's 64.
 
 ```sh
 ogo build                                    # the board binary; ogo run loads it (make run takes the shared board lock)

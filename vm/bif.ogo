@@ -2,6 +2,8 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
+import "math"
+
 // The BIFs. Each takes its arguments from bargs, as many as n says, and
 // answers its result, or nonValue after failWith; one that allocates asks
 // ensure first and reads its arguments again after, a collection having
@@ -26,6 +28,9 @@ func bifAdd(s *sched, n uint32) uint32 {
 		}
 	}
 	if !isInteger(a) || !isInteger(b) {
+		if isNumber(a) && isNumber(b) {
+			return floatResult(s, numVal(a)+numVal(b))
+		}
 		return badarith(s)
 	}
 	va, vb := intVal(a), intVal(b)
@@ -45,6 +50,9 @@ func bifSub(s *sched, n uint32) uint32 {
 		}
 	}
 	if !isInteger(a) || !isInteger(b) {
+		if isNumber(a) && isNumber(b) {
+			return floatResult(s, numVal(a)-numVal(b))
+		}
 		return badarith(s)
 	}
 	va, vb := intVal(a), intVal(b)
@@ -58,6 +66,9 @@ func bifSub(s *sched, n uint32) uint32 {
 func bifMul(s *sched, n uint32) uint32 {
 	a, b := s.bargs[0], s.bargs[1]
 	if !isInteger(a) || !isInteger(b) {
+		if isNumber(a) && isNumber(b) {
+			return floatResult(s, numVal(a)*numVal(b))
+		}
 		return badarith(s)
 	}
 	va, vb := intVal(a), intVal(b)
@@ -101,6 +112,9 @@ func bifRem(s *sched, n uint32) uint32 {
 func bifNeg(s *sched, n uint32) uint32 {
 	a := s.bargs[0]
 	if !isInteger(a) {
+		if isFloat(a) {
+			return floatResult(s, -numVal(a))
+		}
 		return badarith(s)
 	}
 	v := intVal(a)
@@ -120,6 +134,9 @@ func bifPlus(s *sched, n uint32) uint32 {
 func bifAbs(s *sched, n uint32) uint32 {
 	a := s.bargs[0]
 	if !isInteger(a) {
+		if isFloat(a) {
+			return floatResult(s, math.Abs(numVal(a)))
+		}
 		return badarith(s)
 	}
 	v := intVal(a)
@@ -572,7 +589,7 @@ func bifThrow(s *sched, n uint32) uint32  { return failWith(s, atomThrow, s.barg
 func bifDisplay(s *sched, n uint32) uint32 {
 	lock(lockOut)
 	writeTerm(s, s.bargs[0], false)
-	out('\n')
+	emit(s, '\n')
 	unlock(lockOut)
 	return trueTerm
 }
@@ -690,7 +707,7 @@ func bifIoFormat2(s *sched, n uint32) uint32 {
 
 func bifIoPutChars(s *sched, n uint32) uint32 {
 	lock(lockOut)
-	ok := writeChars(s.bargs[0])
+	ok := writeChars(s, s.bargs[0])
 	unlock(lockOut)
 	if !ok {
 		return badarg(s)
@@ -700,7 +717,7 @@ func bifIoPutChars(s *sched, n uint32) uint32 {
 
 func bifIoNl(s *sched, n uint32) uint32 {
 	lock(lockOut)
-	out('\n')
+	emit(s, '\n')
 	unlock(lockOut)
 	return okTerm
 }
@@ -982,3 +999,270 @@ type bifName struct {
 }
 
 const noAtom = 0xffffffff
+
+// bifRaise3 is erlang:raise/3 called by name rather than compiled to
+// raw_raise: the class and the reason are raised, with the stack as it is.
+func bifRaise3(s *sched, n uint32) uint32 {
+	if !isClass(s.bargs[0]) {
+		return mkAtom(atomBadarg)
+	}
+	return failWith(s, atomIdx(s.bargs[0]), s.bargs[1])
+}
+
+// Links, monitors, signals and names.
+
+// bifSpawnLink1 and bifSpawnLink3 spawn as spawn does and link the new process
+// with the caller before it runs.
+func bifSpawnLink1(s *sched, n uint32) uint32 {
+	pid := bifSpawn1(s, n)
+	if pid != nonValue {
+		linkBoth(s, pid)
+	}
+	return pid
+}
+
+func bifSpawnLink3(s *sched, n uint32) uint32 {
+	pid := bifSpawn3(s, n)
+	if pid != nonValue {
+		linkBoth(s, pid)
+	}
+	return pid
+}
+
+// linkBoth links the running process and another, each to the other.
+func linkBoth(s *sched, pid uint32) bool {
+	self := s.cur.pid()
+	if !linkTo(pid, self) {
+		return false
+	}
+	linkTo(self, pid)
+	return true
+}
+
+// bifLink links to a process; one that is gone is noproc, an error, or
+// {'EXIT', Pid, noproc} for a process that traps exits.
+func bifLink(s *sched, n uint32) uint32 {
+	pid := s.bargs[0]
+	if !isPid(pid) {
+		return badarg(s)
+	}
+	if pid == s.cur.pid() {
+		return trueTerm
+	}
+	if linkBoth(s, pid) {
+		return trueTerm
+	}
+	if !s.cur.trapExit {
+		return failAtom(s, atomNoproc)
+	}
+	if !ensure(s, 4, s.curLive) {
+		return nonValue
+	}
+	pid = s.bargs[0]
+	i := s.cur.htop
+	arena[i] = mkHeader(hdrTuple, 3)
+	arena[i+1] = mkAtom(atomEXIT)
+	arena[i+2] = pid
+	arena[i+3] = mkAtom(atomNoproc)
+	s.cur.htop += 4
+	deliver(s, s.cur.pid(), mkBoxed(i), kindExit)
+	return trueTerm
+}
+
+func bifUnlink(s *sched, n uint32) uint32 {
+	pid := s.bargs[0]
+	if !isPid(pid) {
+		return badarg(s)
+	}
+	self := s.cur.pid()
+	unlinkFrom(pid, self)
+	unlinkFrom(self, pid)
+	return trueTerm
+}
+
+// bifExit2 sends an exit signal: to the running process itself it is the
+// exception, or a message when it traps exits; to another it is delivered as
+// a signal.
+func bifExit2(s *sched, n uint32) uint32 {
+	pid, reason := s.bargs[0], s.bargs[1]
+	if !isPid(pid) {
+		return badarg(s)
+	}
+	self := s.cur.pid()
+	if pid == self && (!s.cur.trapExit || reason == mkAtom(atomKill)) {
+		if reason == mkAtom(atomKill) {
+			reason = mkAtom(atomKilled)
+		}
+		return failWith(s, atomExit, reason)
+	}
+	if !ensure(s, 4, s.curLive) {
+		return nonValue
+	}
+	pid, reason = s.bargs[0], s.bargs[1]
+	i := s.cur.htop
+	arena[i] = mkHeader(hdrTuple, 3)
+	arena[i+1] = mkAtom(atomEXIT)
+	arena[i+2] = self
+	arena[i+3] = reason
+	s.cur.htop += 4
+	if !deliver(s, pid, mkBoxed(i), kindExit) {
+		return failAtom(s, atomSystemLimit)
+	}
+	return trueTerm
+}
+
+// bifProcessFlag sets trap_exit and answers the old value; other flags are
+// not here.
+func bifProcessFlag(s *sched, n uint32) uint32 {
+	if s.bargs[0] != mkAtom(atomTrapExit) || !isBool(s.bargs[1]) {
+		return badarg(s)
+	}
+	p := s.cur
+	lock(stripe(p))
+	old := p.trapExit
+	p.trapExit = s.bargs[1] == trueTerm
+	unlock(stripe(p))
+	return boolTerm(old)
+}
+
+func bifRegister(s *sched, n uint32) uint32 {
+	atom, pid := s.bargs[0], s.bargs[1]
+	if !isAtom(atom) || atom == mkAtom(atomUndefined) || !isPid(pid) {
+		return badarg(s)
+	}
+	q := procOf(pid)
+	lock(stripe(q))
+	alive := q.alive(pid)
+	unlock(stripe(q))
+	if !alive {
+		return badarg(s)
+	}
+	lock(lockProcs)
+	free := -1
+	for i := range names {
+		if names[i].atom == atom || names[i].atom != 0 && names[i].pid == pid {
+			unlock(lockProcs)
+			return badarg(s)
+		}
+		if names[i].atom == 0 && free < 0 {
+			free = i
+		}
+	}
+	if free < 0 {
+		unlock(lockProcs)
+		return failAtom(s, atomSystemLimit)
+	}
+	names[free].atom = atom
+	names[free].pid = pid
+	unlock(lockProcs)
+	return trueTerm
+}
+
+func bifUnregister(s *sched, n uint32) uint32 {
+	atom := s.bargs[0]
+	lock(lockProcs)
+	for i := range names {
+		if names[i].atom == atom {
+			names[i].atom = 0
+			unlock(lockProcs)
+			return trueTerm
+		}
+	}
+	unlock(lockProcs)
+	return badarg(s)
+}
+
+func bifWhereis(s *sched, n uint32) uint32 {
+	if !isAtom(s.bargs[0]) {
+		return badarg(s)
+	}
+	if pid, ok := whereis(s.bargs[0]); ok {
+		return pid
+	}
+	return mkAtom(atomUndefined)
+}
+
+// bifMonitor2 monitors a process: {'DOWN', Ref, process, Pid, Reason} comes
+// when it ends, at once with noproc when it is gone.
+func bifMonitor2(s *sched, n uint32) uint32 {
+	pid := s.bargs[1]
+	if s.bargs[0] != mkAtom(atomProcess) || !isPid(pid) {
+		return badarg(s)
+	}
+	s.refs++
+	ref := mkRef(s.id<<24 | s.refs&0xffffff)
+	self := s.cur.pid()
+	q := procOf(pid)
+	lock(stripe(q))
+	alive := q.alive(pid)
+	full := q.nmons == maxLinks
+	if alive && !full {
+		q.mons[q.nmons] = monitor{self, ref}
+		q.nmons++
+	}
+	unlock(stripe(q))
+	if alive && full {
+		return failAtom(s, atomSystemLimit)
+	}
+	p := s.cur
+	lock(stripe(p))
+	if p.nwatch < maxLinks {
+		p.watching[p.nwatch] = monitor{pid, ref}
+		p.nwatch++
+	}
+	unlock(stripe(p))
+	if !alive {
+		if !ensure(s, 6, s.curLive) {
+			return nonValue
+		}
+		i := p.htop
+		arena[i] = mkHeader(hdrTuple, 5)
+		arena[i+1] = mkAtom(atomDOWN)
+		arena[i+2] = ref
+		arena[i+3] = mkAtom(atomProcess)
+		arena[i+4] = s.bargs[1]
+		arena[i+5] = mkAtom(atomNoproc)
+		p.htop += 6
+		deliver(s, self, mkBoxed(i), kindMessage)
+	}
+	return ref
+}
+
+// bifDemonitor1 ends a monitor; a {'DOWN', ...} already in the mailbox stays,
+// as without the flush option.
+func bifDemonitor1(s *sched, n uint32) uint32 {
+	ref := s.bargs[0]
+	if !isRef(ref) {
+		return badarg(s)
+	}
+	p := s.cur
+	lock(stripe(p))
+	pid := uint32(0)
+	for i := uint32(0); i < p.nwatch; i++ {
+		if p.watching[i].ref == ref {
+			pid = p.watching[i].pid
+			p.nwatch--
+			p.watching[i] = p.watching[p.nwatch]
+			break
+		}
+	}
+	unlock(stripe(p))
+	if pid == 0 {
+		return trueTerm
+	}
+	q := procOf(pid)
+	lock(stripe(q))
+	if q.alive(pid) {
+		for i := uint32(0); i < q.nmons; i++ {
+			if q.mons[i].ref == ref {
+				q.nmons--
+				q.mons[i] = q.mons[q.nmons]
+				break
+			}
+		}
+	}
+	unlock(stripe(q))
+	return trueTerm
+}
+
+func bifDemonitor2(s *sched, n uint32) uint32 { return bifDemonitor1(s, 1) }

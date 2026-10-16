@@ -1,0 +1,76 @@
+// Copyright 2026 The obeam Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file.
+
+// Dump writes the state of every process that is not free, for finding out
+// why a program hangs: its pid, state, the function it is in, its mailbox and
+// pending counts, its timer, and the run queue. It takes the locks it reads
+// under, so it is called when nothing else is sure to be running, or is
+// prepared to see a moment's picture.
+func Dump() {
+	s := &scheds[0]
+	lock(lockOut)
+	emits(s, "-- processes at ")
+	writeInt(s, int64(now()))
+	emits(s, " ms, run queue")
+	lock(lockRun)
+	for i := runHead; i != noProc; i = procs[i].next {
+		emit(s, ' ')
+		writeInt(s, int64(i))
+	}
+	emits(s, ", timers")
+	for i := uint32(0); i < ntimers; i++ {
+		emit(s, ' ')
+		writeInt(s, int64(timers[i]))
+	}
+	unlock(lockRun)
+	emit(s, '\n')
+	for i := range procs {
+		p := &procs[i]
+		lock(stripe(p))
+		if p.state == procFree && !p.used {
+			unlock(stripe(p))
+			continue
+		}
+		state := p.state
+		pc, cp := p.pc, p.cp
+		nm := uint32(0)
+		for b := p.mboxHead; b != noBlock; b = arena[b] {
+			nm++
+		}
+		np, timed, deadline, cur := p.npending, p.timed, p.deadline, p.mboxCur
+		unlock(stripe(p))
+		emits(s, "   ")
+		writeInt(s, int64(i))
+		emits(s, ": ")
+		emits(s, stateNames[state-procFree])
+		m, f, a, ok := funcAt(pc)
+		if ok {
+			emits(s, " in ")
+			writeAtom(s, m)
+			emit(s, ':')
+			writeAtom(s, f)
+			emit(s, '/')
+			writeInt(s, int64(a))
+		}
+		emits(s, " pc ")
+		writeInt(s, int64(pc))
+		emits(s, " cp ")
+		writeInt(s, int64(cp))
+		emits(s, ", mailbox ")
+		writeInt(s, int64(nm))
+		if cur == noBlock {
+			emits(s, " at end")
+		}
+		emits(s, ", pending ")
+		writeInt(s, int64(np))
+		if timed {
+			emits(s, ", timeout at ")
+			writeInt(s, int64(deadline))
+		}
+		emit(s, '\n')
+	}
+	unlock(lockOut)
+}
+
+var stateNames = [6]string{"free", "runnable", "running", "waiting", "exited", "failed"}

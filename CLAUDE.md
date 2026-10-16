@@ -11,18 +11,19 @@ scheduler on each of seven cogs. The user is the author of OctoGo (`../ogo`) and
 p2-11 (`../p2-11`); the idea came from a talk with a friend who likes Erlang on
 2026-10-16.
 
-**Status, 2026-10-16, night: M3 built.** The user said go that afternoon; M0
+**Status, 2026-10-16, night: M4 built.** The user said go that afternoon; M0
 (the reader, the corpus, DESIGN.md) was done by evening, DESIGN.md's open
 points decided with the user, M1 (one process on one cog, e1a384e), M2
-(processes, messages, receive with timeouts, funs and apply, 18c3c27) and
-M3 (seven scheduler cogs, locks, the pin ring) built the same night: nine
-modules of the corpus run under the Go twin on seven goroutines with the
-bytes `erl` prints, clean under the race detector, and the board prints the
-same lines on seven cogs and shows `cogs`' workers spread over them
-(DESIGN.md section 8 has the figures). Next: M4, exceptions caught (`try`,
-`catch`, `raise`, `build_stacktrace`), floats, links and exit signals,
-`io:format`'s remaining directives, loading an image from the SD card. The
-files:
+(processes, messages, receive with timeouts, funs and apply, 18c3c27), M3
+(seven scheduler cogs, locks, the pin ring, da899c2) and M4 (exceptions
+caught, links, monitors, exit signals, registered names, floats, io:format's
+widths and precisions) built the same night: thirteen modules of the corpus
+run under the Go twin on seven goroutines with the bytes `erl` prints, clean
+under the race detector, and the board prints the same lines on seven cogs.
+Left for later: loading an image from the SD card (the VM's atom names would
+have to become bytes), bit syntax, maps, bignums, `~p`'s line breaking. Next
+in the plan: M5, a PASM core for the hot instructions, and before it a
+profile of where the clocks go. The files:
 
 - `ASSESSMENT.md`: the consolidated assessment and the plan. Verdict: start,
   staged. It holds the measured facts (opcode counts, AtomVM's size, what a
@@ -75,9 +76,11 @@ files:
   (30 bits); 256 processes, a pid an 8-bit index and a 19-bit generation,
   buddy blocks of 8 to 8,192 longs in an arena of 192 KB to begin with, a
   process starting with 64 longs; line numbers in a side table on the board,
-  `-lines=none` to drop it; the hardware API is the module `p2`, OctoGo's
+  `-lines=false` to drop it; the hardware API is the module `p2`, OctoGo's
   `p2` package name for name in snake_case, plus `p2:cog/0`, with no blocking
-  waits.
+  waits. **The arena is 128 KB since M4** (`arenaLongs` in `vm/arena.ogo`):
+  the checked build did not fit the hub beside more; a leaner VM gives it
+  back. `ogo build` says by how much a build misses the 512 KB.
 
 ## The neighbours and the board
 
@@ -136,6 +139,8 @@ scripts/twin.sh -run TestErl/lst ./vm   # the same without make
 ogo build ./vm                   # the VM through OctoGo's checker, no main, no board
 ogo build                        # the board binary, obeam.binary, from main.ogo and image/
 make image                       # regenerate image/image.ogo from the corpus (IMAGE_ENTRY, IMAGE_MODULES)
+                                 # after ANY change to internal/pack/tables.go: `go run ./cmd/obeam gen -vm vm && make image`;
+                                 # the board refuses an image whose TableID is not the VM's
 make run                         # ogo run on the board, under the shared lock
 make beam                        # recompile the corpus (erlc +deterministic, OTP 27) after a .erl edit
 make stats                       # regenerate erl/stats.txt
@@ -218,6 +223,23 @@ the tree or be ahead of what this file knows; do not install over it.
 - The scheduler cogs drive no pin: `main.ogo` posts pin BIFs to a ring and
   does them on main's cog, since several cogs' drives on a pin OR together.
   `p2:cog/0` is the scheduler's number, not the cog's.
+- **A verdict about a process and the change it leads to are one step under
+  the process's stripe** (`wakeExpired`'s removal of a timer entry, `sleep`'s
+  appending of one): a verdict taken under the stripe and acted on after it
+  let two walkers remove a valid entry, a hang of one run in ten that only
+  `vm.Dump()`, the process table printed by the test's watchdog, explained.
+  A hang is diagnosed with `Dump()`, not with guesses; the host test prints
+  it after a minute.
+- **`raise*` answer the pc to go on at**: a handler writes `return raise(...)`,
+  never `raise(...); return 0`. A catch is a `1111` word in a y register, a
+  continuation a `0111` word; `hReturn` clears the continuation register.
+- Every writer takes the scheduler and goes through `emit`, so that a
+  directive with a width can be captured and padded; `out` is the raw hook
+  for `main.ogo`'s own use. Erlang's rule for writing a float is the shorter
+  of the plain and the exponent form, plain on a tie.
+- Erlang logs a crash of a spawned process (error, throw) and not an exit, so
+  a corpus module's workers end with `exit/1` when the test must compare
+  outputs; the VM reports exits only for the entry process.
 
 ## The host tool and the corpus
 

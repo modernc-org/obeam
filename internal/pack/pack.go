@@ -633,8 +633,7 @@ func (p *packer) emitArg(f *beam.File, a beam.Arg, where string) {
 	case beam.ArgTyped:
 		p.emitArg(f, *a.Reg, where)
 	case beam.ArgFR:
-		p.errorf("%s: a floating-point register, which is not yet done", where)
-		p.emit(0)
+		p.emit(uint32(a.Val))
 	default:
 		p.errorf("%s: an operand of kind %s", where, a.Kind)
 		p.emit(0)
@@ -660,6 +659,9 @@ func (p *packer) supported(op beam.Opcode) bool {
 		beam.OpSend, beam.OpLoopRec, beam.OpLoopRecEnd, beam.OpWait, beam.OpWaitTimeout, beam.OpTimeout,
 		beam.OpRemoveMessage, beam.OpRecvMarkerBind, beam.OpRecvMarkerClear, beam.OpRecvMarkerReserve,
 		beam.OpRecvMarkerUse,
+		beam.OpTry, beam.OpTryEnd, beam.OpTryCase, beam.OpTryCaseEnd, beam.OpCatch, beam.OpCatchEnd,
+		beam.OpRaise, beam.OpBuildStacktrace, beam.OpRawRaise,
+		beam.OpFmove, beam.OpFconv, beam.OpFadd, beam.OpFsub, beam.OpFmul, beam.OpFdiv, beam.OpFnegate,
 		beam.OpBadmatch, beam.OpCaseEnd, beam.OpIfEnd, beam.OpBadrecord:
 		return true
 	}
