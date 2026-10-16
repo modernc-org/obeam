@@ -6,9 +6,9 @@ how a term, a process and the image are laid out, and why. ASSESSMENT.md says
 why the project exists and in what order it is built; README.md what there is
 and how to run it.
 
-**Status: proposed on 2026-10-16, at the end of milestone M0, to be decided
-with the user before M1.** Nothing below runs yet. What M0 measured is in
-section 6 and in `erl/stats.txt`.
+**Status: proposed at the end of milestone M0 and decided with the user on
+2026-10-16; section 7 records the decisions.** Nothing below runs yet. What
+M0 measured is in section 6 and in `erl/stats.txt`.
 
 ## 1. The pieces
 
@@ -46,7 +46,7 @@ literals can be laid out at pack time and nothing is relocated.
 | `00` | small integer | 30 bits, two's complement: -536870912 to 536870911 |
 | `01` | a list cell | the index of its two longs, head then tail |
 | `10` | a boxed term | the index of its header long |
-| `011` | an immediate | bits 3-4 say which: `00` atom, index in bits 5-31; `01` pid, the process's index; `10` nil, so that `[]` is the one value `0x13`; `11` reference, its number |
+| `011` | an immediate | bits 3-4 say which: `00` atom, index in bits 5-31; `01` pid, the process's index and generation; `10` nil, so that `[]` is the one value `0x13`; `11` reference, its number |
 | `111` | a header, or a continuation on the stack | bits 3-5 the kind: tuple, float, integer of 64 bits, fun, binary; bits 6-31 the size in longs or the arity. On the stack, bits 3-31 a code offset |
 
 Why so:
@@ -63,10 +63,10 @@ Why so:
 - A continuation pointer on the stack ends in `111` too, so the collector
   skips it, the stack holding nothing else that is not a term.
 - `[]` is one bit pattern, tested with one compare, and `is_list` is two.
-- A pid is the process's index in the table, with no generation count: a
-  message to a dead process is dropped, as in Erlang; a message to a reused
-  slot is the one thing this gives up, and a 16-bit generation in the pid's
-  upper bits is the fix if it ever matters.
+- A pid is the process's index in the table, 8 bits, beside a generation of
+  19 bits that a slot counts up each time it is reused: a message to a dead
+  process is dropped, as in Erlang, and one to a reused slot is dropped too,
+  not misdelivered.
 
 Floats are the board's 32-bit floats, boxed, with one long of payload (a
 documented difference from Erlang, as OctoGo's `float64` is from Go's).
@@ -80,20 +80,26 @@ with no reference counting; a literal binary lives in the image.
 **A process** is an entry of a fixed table, its control block: its state, its
 heap block, its heap top, its stack top, its continuation, its saved X
 registers while it is not running, its mailbox, its reductions left, its links
-later. The table's size is a build-time constant, 256 to begin with, and
-`spawn` fails with `system_limit` past it.
+later. The table has 256 entries, a build-time constant, and `spawn` fails
+with `system_limit` past them.
 
-**The heap** is a block from a pool of fixed sizes, with the heap growing up
-from the block's start and the stack down from its end, as in the BEAM, so
-that `test_heap` and `allocate` are one compare between the two tops. When
-they meet, the process is collected: a Cheney copy of what its registers,
-stack and mailbox reach into a fresh block, at most the next size up, and the
-old block goes back to the pool. There is no generational collector and no
-shared heap; a process that dies returns its block, which is most of what
-Erlang programs do with memory.
+**The heap** is a block of the arena, a package-level array of 49,152 longs
+(192 KB) to begin with, a build-time constant to raise once the VM's own size
+is known. The arena is managed as buddy blocks of 8 to 8,192 longs by powers
+of two: eleven free lists, a block split on allocation and joined with its
+buddy when freed. A process begins with 64 longs, its heap growing up from
+the block's start and its stack down from the end, as in the BEAM, so that
+`test_heap` and `allocate` are one compare between the two tops. When they
+meet, the process is collected: a Cheney copy of what its registers, stack
+and mailbox reach into a fresh block, the next size up where the live data
+needs it, and the old block goes back to the pool. The largest block, 8,192
+longs, is the most a process can have; one that needs more exits with
+`system_limit`. There is no generational collector and no shared heap; a
+process that dies returns its block, which is most of what Erlang programs
+do with memory.
 
-**A message** is copied by the sender into a fragment, a small block of the
-pool holding the term and a link, and the fragment is appended to the
+**A message** is copied by the sender into a fragment, the smallest block
+of the pool that holds the term and a link, and the fragment is appended to the
 receiver's mailbox under one of a few locks, striped by the receiver's index.
 The receiver's `loop_rec` reads fragments in place; `remove_message` unlinks
 one; and the next collection copies what live fragments hold into the heap and
@@ -154,9 +160,13 @@ Little-endian longs, in sections, every section long-aligned:
    variables.
 
 The packer keeps only what the entry point, the exports named on the command
-line and every `spawn/3` and `apply/3` target it can see reach, and drops
-`line` instructions, keeping their locations in a table of its own for the
-messages a crash prints. It refuses, by name and place: an opcode the VM does
+line and every `spawn/3` and `apply/3` target it can see reach. It drops the
+`line` instructions from the stream and keeps their locations in a seventh
+section, a table of code offset to file and line that is searched only when
+a crash is printed, so that the board says what Erlang says, `exception
+error: badarith in function fib:fib/1 (fib.erl, line 9)`, at no cost to a
+program that does not crash; `-lines=none` leaves the table out of a tight
+image. It refuses, by name and place: an opcode the VM does
 not implement, an external call to a function neither a BIF nor in the image,
 a literal the board cannot hold, and the bit syntax, maps and bignums until
 they are done.
@@ -203,13 +213,41 @@ opcodes come to about sixty-five:
   `raise`, `build_stacktrace`, `badmatch` and `case_end`: exceptions are a
   milestone of their own, M4, as planned.
 
-## 7. Open, for the user
+## 7. Decided, 2026-10-16
 
-- The small integer's tag (`00` here) against the BEAM's layout, which an
-  Erlang person reading the code may expect.
-- The process table's size and the heap blocks' sizes, which decide how many
-  processes a ring can have in 512 KB.
-- Whether `line` locations ride in the image for crash messages, which costs
-  hub RAM, or are left on the host, which costs a lookup by hand.
-- The name of the board's demo module's hardware API: `p2:pin_toggle/1`,
-  `p2:pin_low/1` and their kin, as `erl/blink.erl` already spells them.
+Proposed at the end of M0 and decided with the user the same day, each with
+what the alternative was:
+
+- **Small integers are tagged `00`**, the Lisp fixnum, not the BEAM's `1111`:
+  the interpreter pays for every instruction, and 30 bits hold what the demos
+  compute. The layout is section 2's and is not meant to look like the BEAM's.
+- **256 processes, pids with a generation, buddy blocks of 8 to 8,192
+  longs**, a process beginning with 64 of them, in an arena of 192 KB to begin
+  with (section 3). Not a fixed 2 KB a process, which the ring of 100 would
+  outgrow, and not 512 processes over 256 KB before the VM's own size is
+  known.
+- **Line numbers ride on the board**, in a side table the packer writes and
+  `-lines=none` leaves out (section 4), rather than on the host only: a crash
+  prints the file and the line as Erlang does.
+- **The board's hardware API is the module `p2`**, mirroring OctoGo's `p2`
+  package name for name in snake_case, with the same arities and argument
+  order, so that the two documentations mirror each other. AtomVM's `gpio`
+  spelling may come later as a module written in Erlang over it, if anyone
+  wants `blink.erl` to run on an ESP32 unchanged. The names:
+
+| Erlang | OctoGo | |
+| --- | --- | --- |
+| `p2:pin_high(Pin)`, `pin_low/1`, `pin_toggle/1`, `pin_float/1` | `PinHigh`, `PinLow`, `PinToggle`, `PinFloat` | drive a pin |
+| `p2:pin_in(Pin)` | `PinIn` | read a pin, 0 or 1 |
+| `p2:pin_write(Pin, V)` | `PinWrite` | |
+| `p2:pin_start(Pin, Mode, X, Y)`, `write_pin_mode/2`, `write_pin_x/2`, `write_pin_y/2`, `read_pin/1`, `ack_pin/1` | `PinStart`, `WritePinMode`, `WritePinX`, `WritePinY`, `ReadPin`, `AckPin` | smart pins |
+| `p2:get_ct()`, `clock_freq/0` | `GetCt`, `ClockFreq` | the cycle counter and the clock |
+| `p2:rnd()`, `rev/1`, `reboot/0` | `Rnd`, `Rev`, `Reboot` | |
+| `p2:cog()` | | the cog the calling process runs on, which its next switch may change |
+
+A mode is an integer, or a list of atoms named after OctoGo's constants in
+snake_case (`dac_990r_3v`, `output_enable`), which the BIF ORs together.
+There is no `wait_ms`: an Erlang process waits with `receive after`, which
+lets its scheduler run others; and no `get_ms`: the time is
+`erlang:monotonic_time(millisecond)`. The serial line is `io`'s. The LUT,
+the locks and the baud rate are the VM's own and out of reach.

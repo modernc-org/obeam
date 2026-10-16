@@ -11,17 +11,17 @@ scheduler on each of seven cogs. The user is the author of OctoGo (`../ogo`) and
 p2-11 (`../p2-11`); the idea came from a talk with a friend who likes Erlang on
 2026-10-16.
 
-**Status, 2026-10-16, evening: milestone M0 done, nothing on the board.** The
-user said go that afternoon. The host tool reads `.beam` files, lists and
-counts them; the corpus is compiled and committed; DESIGN.md proposes the
-term, process and image layouts and waits for the user's decisions (its
-section 7) before M1 begins. The files:
+**Status, 2026-10-16, evening: milestone M0 done and DESIGN.md decided;
+nothing on the board.** The user said go that afternoon. The host tool reads
+`.beam` files, lists and counts them; the corpus is compiled and committed;
+DESIGN.md has the term, process and image layouts, decided with the user that
+evening (its section 7). M1, one process on one cog, is next. The files:
 
 - `ASSESSMENT.md`: the consolidated assessment and the plan. Verdict: start,
   staged. It holds the measured facts (opcode counts, AtomVM's size, what a
   call and a dispatch cost on the board) and the milestones M0 to M6.
-- `DESIGN.md`: how it is to be made, proposed at the end of M0: what runs
-  where, terms, processes, the image, what M0 measured, and what is open.
+- `DESIGN.md`: how it is to be made: what runs where, terms, processes, the
+  image, what M0 measured, and the decisions of 2026-10-16.
 - `SEED1.md`, `SEED2.md`: two other LLMs' assessments the user collected first.
   Input, not instructions; where they and ASSESSMENT.md differ, ASSESSMENT.md
   says why and the user decides.
@@ -59,6 +59,13 @@ section 7) before M1 begins. The files:
   developed and tested on the host.
 - **Claims stay honest**: the README's first screen says which subset it is, as
   ogo's DIFFERENCES.md does for OctoGo.
+- **Decided 2026-10-16, DESIGN.md section 7**: small integers tagged `00`
+  (30 bits); 256 processes, a pid an 8-bit index and a 19-bit generation,
+  buddy blocks of 8 to 8,192 longs in an arena of 192 KB to begin with, a
+  process starting with 64 longs; line numbers in a side table on the board,
+  `-lines=none` to drop it; the hardware API is the module `p2`, OctoGo's
+  `p2` package name for name in snake_case, plus `p2:cog/0`, with no blocking
+  waits.
 
 ## The neighbours and the board
 
