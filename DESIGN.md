@@ -52,7 +52,7 @@ literals can be laid out at pack time and nothing is relocated.
 | `01` | a list cell | the index of its two longs, head then tail |
 | `10` | a boxed term | the index of its header long |
 | `011` | an immediate | bits 3-4 say which: `00` atom, index in bits 5-31; `01` pid, the process's index and generation; `10` nil, so that `[]` is the one value `0x13`; `11` reference, its number |
-| `111` | a header, or a continuation on the stack | bits 3-5 the kind: tuple, float, integer of 64 bits, fun, binary; bits 6-31 the size in longs or the arity. On the stack, bits 3-31 a code offset |
+| `111` | a header, or a continuation on the stack | bits 3-5 the kind: tuple, float, integer of 64 bits, fun, binary, map, a non-value, a binary's match context; bits 6-31 the size in longs or the arity. On the stack, bits 3-31 a code offset |
 
 Why so:
 
@@ -79,6 +79,17 @@ Integers outside 30 bits are boxed 64-bit integers, and there are no bignums:
 the packer refuses a literal beyond 64 bits and the BIFs raise `system_limit`
 on overflow. Binaries are heap binaries, copied with the message they are in,
 with no reference counting; a literal binary lives in the image.
+
+A map (M6b) is a header of kind 5 and its keys in map-key order, the order of
+terms with every integer before every float, then their values in the same
+order, the size twice the pairs: the collector and the copier pass over it as
+over a tuple, and Erlang's order of maps, by size, then keys, then values, is
+the comparison of tuples as it is. A key is found by a binary search, and a
+change makes a new map, of any size; OTP keeps a map of more than 32 keys in a
+hash trie, and orders its atom keys by its atom table, neither of which this
+does. A binary's match context is kind 7, the binary and an offset in bits.
+The non-values, a failing BIF's answer, `apply`'s two and the collector's mark
+on a moved list cell, are kind 6, told apart by their size.
 
 ## 3. Processes
 
@@ -292,7 +303,7 @@ failed, showed it.
 are on its own stack between turns, and its links and monitors are records
 of a pool shared by all, a list a process; the VM calls no function value
 but the handlers and the BIFs, so that ogo's bound on a goroutine's stack is
-not a sum over every BIF; and the arena is 192 KB.
+not a sum over every BIF; and the arena is 192 KB, 160 since M6b.
 
 ## 4. The image
 
@@ -734,3 +745,73 @@ heaps are in, so that a program and its heaps share it, and the VM's binary
 carries no program. The card is no store to run from: p2-11 measured 1,610
 microseconds to read a block of 512 bytes, about 8,000 hub reads for one
 long.
+
+**M6b, maps and binary matching**, 2026-10-17. Probes compiled with OTP 27
+and Elixir 1.18 named what it took: maps are `put_map_assoc`,
+`put_map_exact`, `get_map_elements` and `has_map_fields`, and the guard BIFs
+and the `maps` functions; binary matching is `bs_start_match4` and its
+older form `bs_start_match3`, `bs_match` with its list of commands,
+`bs_get_tail`, `bs_get_position` and `bs_set_position`, `bs_get_binary2` for
+a size taken from an earlier segment, `bs_get_utf8`, and `bs_init_writable`
+before a loop that appends; Elixir's `map.field` calls
+`elixir_erl_pass:no_parens_remote/2` where the field is missing, and `Mod:Fun()`
+is the `apply_last` instruction. What was built:
+
+- Maps as section 2 lays them out. The packer lays a literal map out with its
+  keys in map-key order, `internal/pack/order.go`, which is the VM's
+  comparison of terms in its exact mode. A comparison keeps, for each pair
+  still to compare, whether it is exact, since a map's keys compare exactly
+  even under `==`: `#{1 => a} == #{1.0 => a}` is false. And `=:=` is exact
+  at every depth now, `{1} =:= {1.0}` having been true.
+- `put_map_assoc` and `put_map_exact` copy the map and put each pair into the
+  copy at the heap's top by a binary search, the room made for every pair
+  first; `get_map_elements` and `has_map_fields`; `map_size`, `is_map_key`,
+  `map_get` and `is_map`; and `maps:get/2,3`, `find`, `is_key`, `put`,
+  `update`, `remove`, `keys`, `values`, `to_list`, `from_list`, `merge`,
+  `size` and `new` as BIFs. A BIF that fails with `{badmap, M}` or `{badkey,
+  K}` sets `bifTag` with the reason, and the handler builds the tuple when it
+  raises, so that a guard BIF, which may not allocate, fails so too.
+- `maps:fold`, `map`, `filter`, `filtermap`, `foreach`, `with`, `without`,
+  `update_with`, `from_keys`, `take` and `merge_with` in a shim,
+  `erl/shim/maps.erl`, as `ex/shim/` has Elixir's library. OTP's own
+  `maps.beam` packs to more than the hub has: the reach of its `fold` goes
+  through `iterator/2` and its `ordered` option to `lists:sort/2`, and from
+  there through most of `lists`. A shim is a library module, `obeam pack
+  -lib`, packed by what the program reaches and not by its exports, and its
+  literals only when a function of it is.
+- Binary matching: a match context is made by `bs_start_match4` of a binary,
+  and `bs_match`, which the packer rewrites into the VM's form as it does
+  `bs_create_bin`, ensures, reads integers of up to 64 bits big- or
+  little-endian, signed or not, at any bit offset, takes binaries and the
+  rest, skips, and compares, moving the context's offset on in place. A
+  binary taken out is a copy, whole bytes at a byte's offset; one that would
+  be a bitstring makes the match fail. UTF-8 is decoded strictly: no
+  overlong forms, no surrogates, nothing past U+10FFFF.
+- Elixir: `inspect` writes maps, `%{"a" => 1}` or `%{a: 1}`, a struct as
+  `%Point{x: 3, y: -4, label: nil}` in the order of its fields, which only the
+  module's `__info__(:struct)` knows and which the packer therefore reads and
+  carries in the image, `Structs`, and a range as `1..5` or `1..10//3`.
+  `__struct__/0,1` are no roots of the packer: the compiler expands a struct
+  literal. The `Enum` shim takes maps and ranges, and sorts; a `Map` shim and
+  an `elixir_erl_pass` one.
+- `apply` and `apply_last`, a function called by a module and a name in
+  registers, through the lookup `apply/3` has.
+
+`erl/mp.erl`, `erl/bin.erl` and `ex/maps.ex` hold it to `erl` and `elixir`, all
+three agreeing on their first run but for the `==` of maps, which `mp` found
+once it compared maps at run time: `erlc` had folded the comparisons of its
+literals away. A map with atom keys is printed with `~kp` in the corpus, or
+sorted, since `erl` and `elixir` print them in the order of their atom
+tables; `~p` breaks a line past 80 columns, which the VM's does not, so a
+long one is `~w`.
+
+The hub had 37 KB. The VM grew by about 21 KB, maps 15 KB of it, and the
+demo's image by 24 KB, to 11,789 longs of code and 2,213 of literals. So the
+arena is 160 KB, the lever section 8 named: the checked build is 512,444
+bytes, the unchecked 459,752, and 10.7 KB of the hub are left beside
+`main`'s stack. A program smaller than the demo's twenty-six modules and four
+shims leaves more, and the image read from the SD card would let a program
+and its heaps share the region as each needs. On the board both builds
+print the 143 lines before `cogs` that `erl` and `elixir` print: 1,142,805
+instructions in 5,483 ms checked and 4,451 unchecked; the profile is
+unchanged, 657 clocks an instruction with the core.

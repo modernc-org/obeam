@@ -13,14 +13,19 @@ const (
 )
 
 // A wframe is a compound term being written: a list, with what is left of it
-// in t, or a tuple, with its next element in i, counted from 1.
+// in t, a tuple, with its next element in i, counted from 1, or a map, with
+// its next pair in i, counted from 0.
 type wframe struct {
 	t     uint32
 	i     uint32
 	list  bool
 	first bool // of a list: nothing written after the bracket yet
 	tail  bool // of a list: an improper tail has been written, the bracket is owed
-	kw    bool // of a list Elixir writes as a keyword list, [a: 1]
+	kw    bool // of a list Elixir writes as a keyword list, [a: 1]; of a map, as %{a: 1}
+	isMap bool
+	val   bool // of a map: the key of pair i has been written, its value is next
+	st    bool // of a map Elixir writes as a struct: u is the fields left to write
+	u     uint32
 }
 
 // emit writes a byte of output: into the capture buffer while one is open,
@@ -55,6 +60,26 @@ func writeTerm(s *sched, t uint32, pretty bool) {
 	wpush(s, &sp, t, pretty)
 	for sp > 0 {
 		f := &s.wstack[sp-1]
+		if f.isMap {
+			if f.val {
+				emits(s, " => ")
+				f.val = false
+				f.i++
+				wpush(s, &sp, mapVal(f.t, f.i-1), pretty)
+				continue
+			}
+			if f.i == mapPairs(f.t) {
+				emit(s, '}')
+				sp--
+				continue
+			}
+			if f.i > 0 {
+				emit(s, ',')
+			}
+			f.val = true
+			wpush(s, &sp, mapKey(f.t, f.i), pretty)
+			continue
+		}
 		if !f.list {
 			if f.i > tupleArity(f.t) {
 				emit(s, '}')
@@ -111,6 +136,13 @@ func wpush(s *sched, sp *int, t uint32, pretty bool) {
 		}
 		emit(s, '{')
 		s.wstack[*sp] = wframe{t: t, i: 1}
+		*sp++
+	case isMap(t):
+		if *sp == writeDepth {
+			panic("vm: a term nested too deeply to write")
+		}
+		emits(s, "#{")
+		s.wstack[*sp] = wframe{t: t, isMap: true}
 		*sp++
 	default:
 		writeFlat(s, t, pretty)

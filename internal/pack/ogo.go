@@ -25,6 +25,7 @@ func (img *Image) WriteOgo(w io.Writer) error {
 	writeLongs(&b, "Funs", "the funs, by make_fun3's index: code offset, arity, free variables", img.Funs, 3)
 	writeLongs(&b, "Lines", "the lines, by code offset: offset, file, line", img.Lines, 3)
 	writeStrings(&b, "Files", "the files Lines name", img.Files)
+	writeLongs(&b, "Structs", "Elixir's structs: a module, and its fields in their order, a list", img.Structs, 2)
 	src, err := FormatOgo(b.String())
 	if err != nil {
 		return err

@@ -80,7 +80,7 @@ func main() {
 		say("obeam: the image was packed for other tables than the VM's: make image\r\n")
 		return
 	}
-	vm.Load(image.Code[:], image.Literals[:], image.Atoms[:], image.Funcs[:], image.Funs[:], image.Lines[:], image.Files[:])
+	vm.Load(image.Code[:], image.Literals[:], image.Atoms[:], image.Funcs[:], image.Funs[:], image.Lines[:], image.Files[:], image.Structs[:])
 	say("obeam: ")
 	say(image.EntryName)
 	say(", ")

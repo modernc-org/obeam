@@ -3,15 +3,19 @@
 // license that can be found in the LICENSE file.
 
 // Elixir's inspect, what IO.inspect writes and Kernel.inspect makes a binary
-// of, for the terms without maps: integers and floats as ~w writes them;
-// atoms as :ok, true, false and nil bare, a module's alias without its
-// Elixir. prefix, others in quotes; lists [1, 2] with a space after each
-// comma, a keyword list as [a: 1], a printable charlist as ~c"ab"; tuples
-// {1, 2}; a printable binary as "ab", Elixir's escapes in it, another as
-// <<1, 2>>. A collection shows 50 items at most, and then "...", as
-// inspect's default limit says. What it does not do: break a long result
-// over lines at 80 columns, which Elixir's pretty printer does, and take
-// bytes past 127 for printable, which Elixir does for valid UTF-8.
+// of: integers and floats as ~w writes them; atoms as :ok, true, false and
+// nil bare, a module's alias without its Elixir. prefix, others in quotes;
+// lists [1, 2] with a space after each comma, a keyword list as [a: 1], a
+// printable charlist as ~c"ab"; tuples {1, 2}; a printable binary as "ab",
+// Elixir's escapes in it, another as <<1, 2>>; maps as %{"a" => 1}, or
+// %{a: 1} when every key is an atom, in map-key order; a struct as
+// %Point{x: 1, y: 2} in the order of its fields, which obeam pack takes from
+// the module's __info__(:struct), and a range as 1..5 or 1..9//2. A
+// collection shows 50 items at most, and then "...", as inspect's default
+// limit says. What it does not do: break a long result over lines at 80
+// columns, which Elixir's pretty printer does; take bytes past 127 for
+// printable, which Elixir does for valid UTF-8; and print a map with atom
+// keys in Elixir's order, which is that of its atom table.
 
 const inspectLimit = 50
 
@@ -22,6 +26,59 @@ func inspect(s *sched, t uint32) {
 	ipush(s, &sp, t)
 	for sp > 0 {
 		f := &s.wstack[sp-1]
+		if f.st {
+			if f.u == nilTerm {
+				emit(s, '}')
+				sp--
+				continue
+			}
+			if !f.first {
+				emits(s, ", ")
+			}
+			f.first = false
+			k := arena[consIdx(f.u)]
+			f.u = arena[consIdx(f.u)+1]
+			writeExAtom(s, k, true)
+			emit(s, ' ')
+			v := uint32(nilTerm)
+			if i, ok := mapFind(s, f.t, k); ok {
+				v = mapVal(f.t, i)
+			}
+			ipush(s, &sp, v)
+			continue
+		}
+		if f.isMap {
+			n := mapPairs(f.t)
+			if f.val {
+				emits(s, " => ")
+				f.val = false
+				ipush(s, &sp, mapVal(f.t, f.i-1))
+				continue
+			}
+			if f.i == n {
+				emit(s, '}')
+				sp--
+				continue
+			}
+			if f.i > 0 {
+				emits(s, ", ")
+			}
+			if f.i >= inspectLimit {
+				emits(s, "...")
+				f.i = n
+				continue
+			}
+			f.i++
+			if f.kw {
+				writeExAtom(s, mapKey(f.t, f.i-1), true)
+				emit(s, ' ')
+				ipush(s, &sp, mapVal(f.t, f.i-1))
+				continue
+			}
+			f.val = true
+			ipush(s, &sp, mapKey(f.t, f.i-1))
+			continue
+		}
 		if !f.list {
 			n := tupleArity(f.t)
 			if f.i > n {
@@ -106,6 +163,28 @@ func ipush(s *sched, sp *int, t uint32) {
 		}
 		emit(s, '{')
 		s.wstack[*sp] = wframe{t: t, i: 1}
+		*sp++
+	case isMap(t):
+		if *sp == writeDepth {
+			panic("vm: a term nested too deeply to inspect")
+		}
+		mod := uint32(nilTerm)
+		if i, ok := mapFind(s, t, mkAtom(atomStruct)); ok {
+			mod = mapVal(t, i)
+		}
+		if mod == mkAtom(atomElixirRange) && inspectRange(s, t) {
+			return
+		}
+		if fields, ok := structFields(mod); ok {
+			emit(s, '%')
+			writeExAtom(s, mod, false)
+			emit(s, '{')
+			s.wstack[*sp] = wframe{t: t, isMap: true, st: true, u: fields, first: true}
+			*sp++
+			return
+		}
+		emits(s, "%{")
+		s.wstack[*sp] = wframe{t: t, isMap: true, kw: mapAtomKeys(t)}
 		*sp++
 	case isAtom(t):
 		writeExAtom(s, t, false)
@@ -324,4 +403,50 @@ func isExOperator(name string) bool {
 		}
 	}
 	return false
+}
+
+// structFields answers the fields of the struct a module defines, a list,
+// in their order, and whether it is a struct obeam pack found.
+func structFields(mod uint32) (uint32, bool) {
+	if !isAtom(mod) {
+		return 0, false
+	}
+	for i := 0; i+1 < len(exStructs); i += 2 {
+		if exStructs[i] == mod {
+			return exStructs[i+1], true
+		}
+	}
+	return 0, false
+}
+
+// mapAtomKeys reports whether every key of a map is an atom, which inspect
+// writes as %{a: 1}.
+func mapAtomKeys(m uint32) bool {
+	for i := uint32(0); i < mapPairs(m); i++ {
+		if !isAtom(mapKey(m, i)) {
+			return false
+		}
+	}
+	return true
+}
+
+// inspectRange writes a range, first..last, with //step where the step is
+// not 1, and reports false for a map that is no range of integers.
+func inspectRange(s *sched, m uint32) bool {
+	var v [3]uint32
+	for k, a := range [3]uint32{atomFirst, atomLast, atomStep} {
+		i, ok := mapFind(s, m, mkAtom(a))
+		if !ok || !isInteger(mapVal(m, i)) {
+			return false
+		}
+		v[k] = mapVal(m, i)
+	}
+	writeInt(s, intVal(v[0]))
+	emits(s, "..")
+	writeInt(s, intVal(v[1]))
+	if intVal(v[2]) != 1 {
+		emits(s, "//")
+		writeInt(s, intVal(v[2]))
+	}
+	return true
 }

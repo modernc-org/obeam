@@ -25,7 +25,26 @@ func isCatch(w uint32) bool     { return w&0xf == 0xf }
 func failWith(s *sched, class, reason uint32) uint32 {
 	s.bifClass = class
 	s.bifReason = reason
+	s.bifTag = noTag
 	return nonValue
+}
+
+// failTagged fails a BIF with an error whose reason is {Tag, V}, which the
+// handler builds if it raises it: a BIF that may not allocate fails so too.
+func failTagged(s *sched, tag, v uint32) uint32 {
+	s.bifClass = atomError
+	s.bifReason = v
+	s.bifTag = tag
+	return nonValue
+}
+
+// bifRaise raises what a BIF failed with.
+func bifRaise(s *sched) uint32 {
+	if tag := s.bifTag; tag != noTag {
+		s.bifTag = noTag
+		return raiseTagged(s, s.bifClass, tag, s.bifReason)
+	}
+	return raise(s, mkAtom(s.bifClass), s.bifReason)
 }
 
 func failAtom(s *sched, reason uint32) uint32 { return failWith(s, atomError, mkAtom(reason)) }

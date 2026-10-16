@@ -1,0 +1,400 @@
+// Copyright 2026 The obeam Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file.
+
+// Binary matching. bs_start_match4 makes a match context of a binary: a
+// boxed object of its own kind, hdrMatch, whose two words are the binary and
+// the offset in bits so far, a small integer, which bs_match and the bs_get_
+// instructions move on in place. A context is the matching code's own, which
+// the compiler never lets a program see. What a match takes out is a copy:
+// an integer of up to 64 bits, or a binary of whole bytes at a byte's offset;
+// one that is not whole bytes there, a bitstring, the VM has no term for,
+// and such a match fails.
+
+func isMatch(t uint32) bool    { return boxKind(t) == hdrMatch }
+func ctxBin(c uint32) uint32   { return arena[boxIdx(c)+1] }
+func ctxOff(c uint32) uint32   { return uint32(smallVal(arena[boxIdx(c)+2])) }
+func ctxLeft(c uint32) uint32  { return 8*binaryLen(ctxBin(c)) - ctxOff(c) }
+func ctxSkip(c, bits uint32)   { arena[boxIdx(c)+2] = mkSmall(int32(ctxOff(c) + bits)) }
+func ctxAligned(c uint32) bool { return ctxOff(c)%8 == 0 }
+
+// How a step of a match ended.
+const (
+	matchOK   = iota
+	matchNo   // it does not hold: the fail label
+	matchRoom // no room on the heap: system_limit
+)
+
+// matchEnd is where a match goes that did not hold or had no room: its fail
+// label, or an error where it has none.
+func matchEnd(s *sched, r int, fail uint32) uint32 {
+	if r == matchRoom {
+		return raiseAtom(s, atomError, atomSystemLimit)
+	}
+	if fail == 0 {
+		return raiseAtom(s, atomError, atomBadarg)
+	}
+	return fail
+}
+
+// ctxRoom makes n longs of room on the heap, with live X registers and the
+// context an operand names among the roots, and answers the context, a
+// collection perhaps having moved it, or 0 for no room.
+func ctxRoom(s *sched, op, n, live uint32) uint32 {
+	s.bargs[0] = src(s, op)
+	s.nbargs = 1
+	ok := ensure(s, n, int32(live))
+	s.nbargs = 0
+	if !ok {
+		return 0
+	}
+	return s.bargs[0]
+}
+
+// bitsByte reads the 8 bits from bit k of a binary.
+func bitsByte(b, k uint32) uint64 {
+	if k%8 == 0 {
+		return uint64(binaryByte(b, k/8))
+	}
+	w := uint64(binaryByte(b, k/8))<<8 | uint64(binaryByte(b, k/8+1))
+	return w >> (8 - k%8) & 0xff
+}
+
+// ctxInt reads an integer of bits bits at a context's offset, as flags say,
+// without moving on; false for more than 64 bits, or 64 unsigned ones that
+// do not fit in 64 signed. Little-endian is of whole bytes only.
+func ctxInt(c, bits, flags uint32) (int64, bool) {
+	if bits > 64 {
+		return 0, false
+	}
+	b, off := ctxBin(c), ctxOff(c)
+	v := uint64(0)
+	if bits%8 == 0 {
+		for j := uint32(0); j < bits/8; j++ {
+			if flags&bsLittle != 0 {
+				v |= bitsByte(b, off+8*j) << (8 * j)
+			} else {
+				v = v<<8 | bitsByte(b, off+8*j)
+			}
+		}
+	} else {
+		for i := uint32(0); i < bits; i++ {
+			k := off + i
+			v = v<<1 | uint64(binaryByte(b, k/8)>>(7-k%8)&1)
+		}
+	}
+	if flags&bsSigned != 0 {
+		if bits > 0 && bits < 64 && v>>(bits-1)&1 != 0 {
+			v |= ^uint64(0) << bits
+		}
+	} else if bits == 64 && v>>63 != 0 {
+		return 0, false
+	}
+	return int64(v), true
+}
+
+// intTerm makes an integer's term, on the heap when it is no small one.
+func intTerm(s *sched, op uint32, v int64, live uint32) (uint32, int) {
+	if fitsSmall(v) {
+		return mkSmall(int32(v)), matchOK
+	}
+	if ctxRoom(s, op, 3, live) == 0 {
+		return 0, matchRoom
+	}
+	return mkInt(s, v), matchOK
+}
+
+// takeInt takes an integer of bits bits out of the context an operand names.
+func takeInt(s *sched, op, bits, flags, live uint32) (uint32, int) {
+	c := src(s, op)
+	if bits > ctxLeft(c) {
+		return 0, matchNo
+	}
+	v, ok := ctxInt(c, bits, flags)
+	if !ok {
+		return 0, matchNo
+	}
+	t, r := intTerm(s, op, v, live)
+	if r == matchOK {
+		ctxSkip(src(s, op), bits)
+	}
+	return t, r
+}
+
+// takeBinary takes a binary of bits bits out of the context an operand
+// names, a copy.
+func takeBinary(s *sched, op, bits, live uint32) (uint32, int) {
+	c := src(s, op)
+	if bits > ctxLeft(c) || bits%8 != 0 || !ctxAligned(c) {
+		return 0, matchNo
+	}
+	n := bits / 8
+	words := (n + 3) / 4
+	if c = ctxRoom(s, op, 2+words, live); c == 0 {
+		return 0, matchRoom
+	}
+	b, from := ctxBin(c), ctxOff(c)/8
+	at := s.cur.htop
+	arena[at] = mkHeader(hdrBinary, 1+words)
+	arena[at+1] = n
+	for i := uint32(0); i < words; i++ {
+		arena[at+2+i] = 0
+	}
+	for i := uint32(0); i < n; i++ {
+		arena[at+2+i/4] |= uint32(binaryByte(b, from+i)) << (8 * (i % 4))
+	}
+	s.cur.htop += 2 + words
+	ctxSkip(c, bits)
+	return mkBoxed(at), matchOK
+}
+
+// bsSize reads a size operand: an integer, or all; false for neither.
+func bsSize(s *sched, op uint32) (uint32, bool, bool) {
+	t := src(s, op)
+	if t == mkAtom(atomAll) {
+		return 0, true, true
+	}
+	if !isSmall(t) || smallVal(t) < 0 {
+		return 0, false, false
+	}
+	return uint32(smallVal(t)), false, true
+}
+
+// utf8At decodes the code point at a context's offset, a byte's: its value
+// and its length in bytes, and false for none, or one that is no valid
+// UTF-8: an overlong one, a surrogate, or one past U+10FFFF.
+func utf8At(c uint32) (uint32, uint32, bool) {
+	left := ctxLeft(c) / 8
+	if !ctxAligned(c) || left == 0 {
+		return 0, 0, false
+	}
+	b, at := ctxBin(c), ctxOff(c)/8
+	b0 := uint32(binaryByte(b, at))
+	n, cp, min := uint32(1), b0, uint32(0)
+	switch {
+	case b0 < 0x80:
+		return b0, 1, true
+	case b0&0xe0 == 0xc0:
+		n, cp, min = 2, b0&0x1f, 0x80
+	case b0&0xf0 == 0xe0:
+		n, cp, min = 3, b0&0x0f, 0x800
+	case b0&0xf8 == 0xf0:
+		n, cp, min = 4, b0&0x07, 0x10000
+	default:
+		return 0, 0, false
+	}
+	if left < n {
+		return 0, 0, false
+	}
+	for i := uint32(1); i < n; i++ {
+		x := uint32(binaryByte(b, at+i))
+		if x&0xc0 != 0x80 {
+			return 0, 0, false
+		}
+		cp = cp<<6 | x&0x3f
+	}
+	if cp < min || cp > 0x10ffff || cp >= 0xd800 && cp <= 0xdfff {
+		return 0, 0, false
+	}
+	return cp, n, true
+}
+
+// bs_start_match4: Fail Live Src Dst, Fail 0 where the compiler knows the
+// source is a binary or a context; bs_start_match3: Fail Src Live Dst, which
+// the compiler writes where there is a label to fail to. A context is
+// answered as it is.
+func hBsStartMatch4(s *sched, pc uint32) uint32 {
+	return startMatch(s, code[pc+1], code[pc+2], code[pc+3], code[pc+4], pc+5)
+}
+
+func hBsStartMatch3(s *sched, pc uint32) uint32 {
+	return startMatch(s, code[pc+1], code[pc+3], code[pc+2], code[pc+4], pc+5)
+}
+
+func startMatch(s *sched, fail, live, op, dst, next uint32) uint32 {
+	t := src(s, op)
+	if isMatch(t) {
+		store(s, dst, t)
+		return next
+	}
+	if !isBinary(t) {
+		return matchEnd(s, matchNo, fail)
+	}
+	c := ctxRoom(s, op, 3, live)
+	if c == 0 {
+		return matchEnd(s, matchRoom, 0)
+	}
+	at := s.cur.htop
+	arena[at] = mkHeader(hdrMatch, 2)
+	arena[at+1] = c
+	arena[at+2] = mkSmall(0)
+	s.cur.htop += 3
+	store(s, dst, mkBoxed(at))
+	return next
+}
+
+// bs_match: Fail Ctx, how many longs of commands, and the commands. A command
+// that does not hold goes to the fail label, what the ones before it did
+// done, as the compiler expects.
+func hBsMatch(s *sched, pc uint32) uint32 {
+	fail, op := code[pc+1], code[pc+2]
+	end := pc + 4 + code[pc+3]
+	for k := pc + 4; k < end; {
+		c := src(s, op)
+		switch code[k] {
+		case bsEnsureAtLeast:
+			left := ctxLeft(c)
+			if left < code[k+1] || (left-code[k+1])%code[k+2] != 0 {
+				return fail
+			}
+			k += 3
+		case bsEnsureExactly:
+			if ctxLeft(c) != code[k+1] {
+				return fail
+			}
+			k += 2
+		case bsInteger, bsBinary:
+			t, r := uint32(0), 0
+			if code[k] == bsInteger {
+				t, r = takeInt(s, op, code[k+3]*code[k+4], code[k+2], code[k+1])
+			} else {
+				t, r = takeBinary(s, op, code[k+3]*code[k+4], code[k+1])
+			}
+			if r != matchOK {
+				return matchEnd(s, r, fail)
+			}
+			store(s, code[k+5], t)
+			k += 6
+		case bsSkip:
+			ctxSkip(c, code[k+1])
+			k += 2
+		case bsGetTail:
+			t, r := takeBinary(s, op, ctxLeft(c), code[k+1])
+			if r != matchOK {
+				return matchEnd(s, r, fail)
+			}
+			store(s, code[k+3], t)
+			k += 4
+		case bsEqual:
+			v, ok := ctxInt(c, code[k+1], 0)
+			if !ok || v != intVal(code[k+2]) {
+				return fail
+			}
+			ctxSkip(c, code[k+1])
+			k += 3
+		}
+	}
+	return end
+}
+
+// bs_get_tail: Ctx Dst Live, the rest a binary.
+func hBsGetTail(s *sched, pc uint32) uint32 {
+	t, r := takeBinary(s, code[pc+1], ctxLeft(src(s, code[pc+1])), code[pc+3])
+	if r != matchOK {
+		return matchEnd(s, r, 0)
+	}
+	store(s, code[pc+2], t)
+	return pc + 4
+}
+
+// bs_get_position: Ctx Dst Live; bs_set_position: Ctx Pos.
+func hBsGetPosition(s *sched, pc uint32) uint32 {
+	store(s, code[pc+2], arena[boxIdx(src(s, code[pc+1]))+2])
+	return pc + 4
+}
+
+func hBsSetPosition(s *sched, pc uint32) uint32 {
+	arena[boxIdx(src(s, code[pc+1]))+2] = src(s, code[pc+2])
+	return pc + 3
+}
+
+// bs_get_integer2 and bs_get_binary2: Fail Ctx Live Size Unit Flags Dst.
+func hBsGetInteger2(s *sched, pc uint32) uint32 {
+	n, all, ok := bsSize(s, code[pc+4])
+	if !ok || all {
+		return code[pc+1]
+	}
+	t, r := takeInt(s, code[pc+2], n*code[pc+5], code[pc+6], code[pc+3])
+	if r != matchOK {
+		return matchEnd(s, r, code[pc+1])
+	}
+	store(s, code[pc+7], t)
+	return pc + 8
+}
+
+func hBsGetBinary2(s *sched, pc uint32) uint32 {
+	n, all, ok := bsSize(s, code[pc+4])
+	if !ok {
+		return code[pc+1]
+	}
+	bits := n * code[pc+5]
+	if all {
+		bits = ctxLeft(src(s, code[pc+2]))
+	}
+	t, r := takeBinary(s, code[pc+2], bits, code[pc+3])
+	if r != matchOK {
+		return matchEnd(s, r, code[pc+1])
+	}
+	store(s, code[pc+7], t)
+	return pc + 8
+}
+
+// bs_skip_bits2: Fail Ctx Size Unit Flags.
+func hBsSkipBits2(s *sched, pc uint32) uint32 {
+	c := src(s, code[pc+2])
+	n, all, ok := bsSize(s, code[pc+3])
+	bits := n * code[pc+4]
+	if all {
+		bits = ctxLeft(c)
+	}
+	if !ok || bits > ctxLeft(c) {
+		return code[pc+1]
+	}
+	ctxSkip(c, bits)
+	return pc + 6
+}
+
+// bs_test_tail2: Fail Ctx Bits; bs_test_unit: Fail Ctx Unit.
+func hBsTestTail2(s *sched, pc uint32) uint32 {
+	return test(pc, ctxLeft(src(s, code[pc+2])) == code[pc+3], 2)
+}
+
+func hBsTestUnit(s *sched, pc uint32) uint32 {
+	return test(pc, ctxLeft(src(s, code[pc+2]))%code[pc+3] == 0, 2)
+}
+
+// bs_get_utf8: Fail Ctx Live Flags Dst; bs_skip_utf8: Fail Ctx Live Flags.
+func hBsGetUtf8(s *sched, pc uint32) uint32 {
+	c := src(s, code[pc+2])
+	cp, n, ok := utf8At(c)
+	if !ok {
+		return code[pc+1]
+	}
+	ctxSkip(c, 8*n)
+	store(s, code[pc+5], mkSmall(int32(cp)))
+	return pc + 6
+}
+
+func hBsSkipUtf8(s *sched, pc uint32) uint32 {
+	c := src(s, code[pc+2])
+	_, n, ok := utf8At(c)
+	if !ok {
+		return code[pc+1]
+	}
+	ctxSkip(c, 8*n)
+	return pc + 5
+}
+
+// bs_init_writable: x0, a size, becomes an empty binary to append to, which
+// here, every append a copy, is any binary.
+func hBsInitWritable(s *sched, pc uint32) uint32 {
+	if !ensure(s, 2, 0) {
+		return raiseAtom(s, atomError, atomSystemLimit)
+	}
+	at := s.cur.htop
+	arena[at] = mkHeader(hdrBinary, 1)
+	arena[at+1] = 0
+	s.cur.htop += 2
+	s.x[0] = mkBoxed(at)
+	return pc + 1
+}

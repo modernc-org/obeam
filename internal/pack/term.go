@@ -31,11 +31,15 @@ const (
 	HdrInt64    = 2 // two longs, low then high
 	HdrFun      = 3 // code offset, arity and free count packed, then the environment
 	HdrBinary   = 4 // the length in bytes, then the bytes
-	HdrNonValue = 6 // size 0: what a failing BIF returns, never a term
-	HdrMoved    = 7 // size 0: a list cell the collector has moved, its new place in the tail
+	HdrMap      = 5 // the keys in map-key order, then their values in the same order: the size is twice the pairs
+	HdrNonValue = 6 // what a failing BIF returns and the collector's mark, never a term
+	HdrMatch    = 7 // a binary's match context, size 2: the binary, then the offset in bits, a small integer
 
 	NonValue = HdrNonValue<<3 | 7
-	Moved    = HdrMoved<<3 | 7
+
+	// Moved is the collector's mark on a list cell it has moved, the new
+	// place in the cell's tail. Like NonValue, never a term.
+	Moved = 3<<6 | HdrNonValue<<3 | 7
 
 	SmallMin = -1 << 29
 	SmallMax = 1<<29 - 1

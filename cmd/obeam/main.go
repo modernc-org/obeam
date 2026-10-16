@@ -9,7 +9,7 @@
 //	obeam dis FILE.beam...      list each module's code, as erlc -S would
 //	obeam stats FILE.beam...    count the opcodes and the external calls over the modules
 //	obeam chunks FILE.beam...   list each file's chunks
-//	obeam pack [-o image.ogo] [-entry m:f/a] [-lines=false] FILE.beam...
+//	obeam pack [-o image.ogo] [-entry m:f/a] [-lines=false] [-lib LIB.beam,...] FILE.beam...
 //	                            pack the modules into an image for the board
 //	obeam gen [-vm DIR]         write the VM's copies of the opcodes, tags, atoms and BIFs
 //	obeam version
@@ -192,10 +192,15 @@ func packCmd(args []string) error {
 	out := fs.String("o", "", "write the image here, as the OctoGo package image")
 	entry := fs.String("entry", "", "the entry function, module:function/arity")
 	lines := fs.Bool("lines", true, "keep the line table for crash messages")
+	lib := fs.String("lib", "", "library modules, comma separated: packed by what the program reaches, as the shims are")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	img, err := pack.Pack(fs.Args(), pack.Options{Entry: *entry, Lines: *lines})
+	var libs []string
+	if *lib != "" {
+		libs = strings.Split(*lib, ",")
+	}
+	img, err := pack.Pack(fs.Args(), pack.Options{Entry: *entry, Lines: *lines, Lib: libs})
 	if err != nil {
 		return err
 	}

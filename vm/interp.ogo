@@ -64,6 +64,26 @@ var handlers = [256]handler{
 	opIsFunction:        hIsFunction,
 	opIsFunction2:       hIsFunction2,
 	opIsMap:             hIsMap,
+	opPutMapAssoc:       hPutMapAssoc,
+	opPutMapExact:       hPutMapExact,
+	opGetMapElements:    hGetMapElements,
+	opHasMapFields:      hHasMapFields,
+	opBsStartMatch4:     hBsStartMatch4,
+	opApply:             hApply,
+	opApplyLast:         hApplyLast,
+	opBsStartMatch3:     hBsStartMatch3,
+	opBsMatch:           hBsMatch,
+	opBsGetTail:         hBsGetTail,
+	opBsGetPosition:     hBsGetPosition,
+	opBsSetPosition:     hBsSetPosition,
+	opBsGetInteger2:     hBsGetInteger2,
+	opBsGetBinary2:      hBsGetBinary2,
+	opBsSkipBits2:       hBsSkipBits2,
+	opBsTestTail2:       hBsTestTail2,
+	opBsTestUnit:        hBsTestUnit,
+	opBsGetUtf8:         hBsGetUtf8,
+	opBsSkipUtf8:        hBsSkipUtf8,
+	opBsInitWritable:    hBsInitWritable,
 	opGetList:           hGetList,
 	opGetHd:             hGetHd,
 	opGetTl:             hGetTl,
@@ -355,7 +375,7 @@ func hIsBoolean(s *sched, pc uint32) uint32 { return test(pc, isBool(src(s, code
 func hIsFunction(s *sched, pc uint32) uint32 {
 	return test(pc, isFun(src(s, code[pc+2])), 1)
 }
-func hIsMap(s *sched, pc uint32) uint32 { return test(pc, false, 1) }
+func hIsMap(s *sched, pc uint32) uint32 { return test(pc, isMap(src(s, code[pc+2])), 1) }
 
 func hTestArity(s *sched, pc uint32) uint32 {
 	t := src(s, code[pc+2])
@@ -485,7 +505,7 @@ func callFun(s *sched, arity, f, next uint32) uint32 {
 		r := callBif(s, funCode(f), arity)
 		s.nbargs = 0
 		if r == nonValue {
-			return raise(s, mkAtom(s.bifClass), s.bifReason)
+			return bifRaise(s)
 		}
 		if r == jumpValue {
 			s.cur.cp = next
@@ -522,6 +542,51 @@ func hBadrecord(s *sched, pc uint32) uint32 {
 // The BIF instructions. bif0, bif1 and bif2 may not allocate; the gc_bifs
 // say how many X registers are live, and call_bif's are its arguments.
 
+// apply Arity and apply_last Arity Dealloc call the function x(Arity) of
+// the module x(Arity+1) names, its arguments in x0 and up, as call_ext and
+// call_ext_last do; a BIF is called and returned from.
+func hApply(s *sched, pc uint32) uint32 {
+	s.cur.cp = pc + 2
+	return applyX(s, code[pc+1])
+}
+
+func hApplyLast(s *sched, pc uint32) uint32 {
+	s.cur.cp = cpOf(arena[s.cur.stop])
+	s.cur.stop += code[pc+2] + 1
+	return applyX(s, code[pc+1])
+}
+
+func applyX(s *sched, a uint32) uint32 {
+	m, f := s.x[a], s.x[a+1]
+	if !isAtom(m) || !isAtom(f) {
+		return raiseAtom(s, atomError, atomBadarg)
+	}
+	if entry, ok := findFunction(m, f, a); ok {
+		return jump(s, entry, a)
+	}
+	b, ok := bifByName(m, f, a)
+	if !ok {
+		return raiseAtom(s, atomError, atomUndef)
+	}
+	for i := uint32(0); i < a; i++ {
+		s.bargs[i] = s.x[i]
+	}
+	s.nbargs = a
+	s.curLive = int32(a)
+	r := callBif(s, b, a)
+	s.nbargs = 0
+	if r == nonValue {
+		return bifRaise(s)
+	}
+	if r == jumpValue {
+		return jump(s, s.bifJump, s.bifLive)
+	}
+	s.x[0] = r
+	r = s.cur.cp
+	s.cur.cp = 0
+	return r
+}
+
 // callBif calls BIF b with its arguments in bargs, and then the BIF an apply
 // answers with bifValue, until one answers something else. apply calls no
 // BIF itself: a chain of applies does not deepen the stack, and no BIF is a
@@ -545,7 +610,7 @@ func hCallBif(s *sched, pc uint32) uint32 {
 	r := callBif(s, b, arity)
 	s.nbargs = 0
 	if r == nonValue {
-		return raise(s, mkAtom(s.bifClass), s.bifReason)
+		return bifRaise(s)
 	}
 	if r == jumpValue {
 		// apply: the BIF set x0 and up and left where to go in bifJump.
@@ -561,7 +626,7 @@ func hCallBif(s *sched, pc uint32) uint32 {
 
 func hSend(s *sched, pc uint32) uint32 {
 	if !sendMsg(s, s.x[0], s.x[1]) {
-		return raise(s, mkAtom(s.bifClass), s.bifReason)
+		return bifRaise(s)
 	}
 	s.x[0] = s.x[1]
 	return pc + 1
@@ -649,7 +714,7 @@ func hBif0(s *sched, pc uint32) uint32 {
 	s.curLive = -1
 	r := bifs[code[pc+1]].f(s, 0)
 	if r == nonValue {
-		return raise(s, mkAtom(s.bifClass), s.bifReason)
+		return bifRaise(s)
 	}
 	store(s, code[pc+2], r)
 	return pc + 3
@@ -711,7 +776,7 @@ func bifDone(s *sched, pc, r, dst, next uint32) uint32 {
 		if fail := code[pc+1]; fail != 0 {
 			return fail
 		}
-		return raise(s, mkAtom(s.bifClass), s.bifReason)
+		return bifRaise(s)
 	}
 	store(s, dst, r)
 	return next

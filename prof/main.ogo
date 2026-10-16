@@ -20,7 +20,7 @@ import (
 // run loads the image afresh and runs it on one scheduler, and answers the
 // clocks it took and the instructions.
 func run(profile bool) (uint64, uint32) {
-	vm.Load(image.Code[:], image.Literals[:], image.Atoms[:], image.Funcs[:], image.Funs[:], image.Lines[:], image.Files[:])
+	vm.Load(image.Code[:], image.Literals[:], image.Atoms[:], image.Funcs[:], image.Funs[:], image.Lines[:], image.Files[:], image.Structs[:])
 	vm.Profile = profile
 	vm.ProfReset()
 	t0 := p2.GetCt()

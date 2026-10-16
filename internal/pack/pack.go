@@ -27,6 +27,7 @@ type Image struct {
 	Funs     []uint32 // triples, by make_fun3's index: code offset, arity, free variables
 	Lines    []uint32 // triples, by code offset: offset, file index, line
 	Files    []string // what Lines index
+	Structs  []uint32 // pairs: an Elixir struct's module, an atom, and its fields in their order, a literal list
 	Modules  []string // the modules packed, in order
 	Dropped  int      // functions left out as unreachable
 	EntryMFA string   // for messages
@@ -34,8 +35,9 @@ type Image struct {
 
 // Options say what to pack.
 type Options struct {
-	Entry string // module:function/arity; the first module's main/0 by default
-	Lines bool   // keep the line table
+	Entry string   // module:function/arity; the first module's main/0 by default
+	Lines bool     // keep the line table
+	Lib   []string // library modules: packed by what the program reaches, their exports no roots
 }
 
 type fnKey struct {
@@ -58,6 +60,7 @@ type packer struct {
 	img       *Image
 	opts      Options
 	files     []*beam.File
+	lib       map[*beam.File]bool
 	atoms     map[string]int
 	fileIdx   map[string]int
 	funcs     map[fnKey]*function
@@ -98,15 +101,17 @@ func Pack(paths []string, opts Options) (*Image, error) {
 		literals: map[*beam.File][]uint32{},
 		funs:     map[*beam.File]map[int]int{},
 		labels:   map[*beam.File]map[int]uint32{},
+		lib:      map[*beam.File]bool{},
 	}
 	for _, name := range WellKnownAtoms {
 		p.atom(name)
 	}
-	for _, path := range paths {
+	for i, path := range append(append([]string(nil), paths...), opts.Lib...) {
 		f, err := beam.ReadFile(path)
 		if err != nil {
 			return nil, err
 		}
+		p.lib[f] = i >= len(paths)
 		for _, g := range p.files {
 			if g.Module == f.Module {
 				return nil, fmt.Errorf("%s: module %s twice", path, f.Module)
@@ -123,8 +128,20 @@ func Pack(paths []string, opts Options) (*Image, error) {
 		return nil, err
 	}
 	kept := p.reach(entry)
+	used := map[*beam.File]bool{}
+	for _, fn := range kept {
+		used[fn.file] = true
+	}
 	for _, f := range p.files {
+		if !used[f] {
+			continue
+		}
 		if err := p.layoutLiterals(f); err != nil {
+			return nil, err
+		}
+	}
+	for _, f := range p.files {
+		if err := p.structFields(f); err != nil {
 			return nil, err
 		}
 	}
@@ -280,7 +297,9 @@ func (p *packer) reach(entry fnKey) []*function {
 	}
 	sort.Slice(all, func(i, j int) bool { return all[i].index < all[j].index })
 	for _, fn := range all {
-		if fn.export {
+		// An Elixir struct's __struct__/0 and /1 are the compiler's: a
+		// struct literal is expanded at compile time.
+		if fn.export && !p.lib[fn.file] && fn.key.name != "__struct__" {
 			add(fn)
 		}
 	}
@@ -390,7 +409,28 @@ func (p *packer) layoutTerm(t beam.Term) (uint32, error) {
 	case beam.TermBitstring:
 		return 0, errors.New("a bitstring, which is not in version 1")
 	case beam.TermMap:
-		return 0, errors.New("a map, which is not in version 1")
+		keys, vals := sortedPairs(t)
+		funs := 0
+		for _, k := range keys {
+			if k.Kind == beam.TermExport {
+				funs++
+			}
+		}
+		if funs > 1 {
+			return 0, errors.New("a map keyed by more than one fun, which the VM orders otherwise than the packer can")
+		}
+		elems := make([]uint32, 0, 2*len(keys))
+		for _, e := range append(keys, vals...) {
+			v, err := p.layoutTerm(e)
+			if err != nil {
+				return 0, err
+			}
+			elems = append(elems, v)
+		}
+		at := len(p.img.Literals)
+		p.img.Literals = append(p.img.Literals, Header(HdrMap, len(elems)))
+		p.img.Literals = append(p.img.Literals, elems...)
+		return BoxedPtr(at), nil
 	case beam.TermExport:
 		m := beam.MFA{Module: t.Atom, Function: t.Elems[0].Atom, Arity: int(t.Elems[1].Int)}
 		at := len(p.img.Literals)
@@ -537,6 +577,22 @@ func (p *packer) emitFunction(fn *function) {
 		case beam.OpBsCreateBin:
 			p.emitBsCreateBin(f, in, where(in))
 			continue
+		case beam.OpBsMatch:
+			p.emitBsMatch(f, in, where(in))
+			continue
+		case beam.OpBsStartMatch4:
+			// Its fail operand is no_fail or resume where the compiler
+			// knows the source is a binary or a match context: 0, no label.
+			p.emit(opw(in.Op))
+			if in.Args[0].Kind == beam.ArgAtom {
+				p.emit(0)
+			} else {
+				p.emitArg(f, in.Args[0], where(in))
+			}
+			for _, a := range in.Args[1:] {
+				p.emitArg(f, a, where(in))
+			}
+			continue
 		case beam.OpMakeFun3:
 			idx := int(in.Args[0].Val)
 			if idx >= len(f.Funs) {
@@ -658,6 +714,11 @@ func (p *packer) supported(op beam.Opcode) bool {
 		beam.OpIsPort, beam.OpIsNil, beam.OpIsBinary, beam.OpIsList, beam.OpIsNonemptyList, beam.OpIsTuple,
 		beam.OpTestArity, beam.OpIsTaggedTuple, beam.OpIsBoolean, beam.OpIsFunction, beam.OpIsFunction2,
 		beam.OpIsMap, beam.OpIsBitstr,
+		beam.OpPutMapAssoc, beam.OpPutMapExact, beam.OpGetMapElements, beam.OpHasMapFields,
+		beam.OpBsGetTail, beam.OpBsGetPosition, beam.OpBsSetPosition, beam.OpBsGetBinary2,
+		beam.OpBsGetInteger2, beam.OpBsSkipBits2, beam.OpBsGetUtf8, beam.OpBsSkipUtf8,
+		beam.OpBsTestTail2, beam.OpBsTestUnit, beam.OpBsInitWritable, beam.OpBsStartMatch3,
+		beam.OpApply, beam.OpApplyLast,
 		beam.OpGetList, beam.OpGetHd, beam.OpGetTl, beam.OpPutList, beam.OpPutTuple2,
 		beam.OpGetTupleElement, beam.OpSetTupleElement, beam.OpUpdateRecord,
 		beam.OpCallFun, beam.OpCallFun2,
@@ -746,4 +807,147 @@ func (p *packer) emitBsCreateBin(f *beam.File, in beam.Instr, where string) {
 			p.emitArg(f, size, where)
 		}
 	}
+}
+
+// The commands of bs_match in the image: each its code and operands, the
+// operands as bs_match has them but for the flags, which are a field's
+// flags as the other bs_ instructions have them, and the sizes and units,
+// which are plain numbers.
+const (
+	BsEnsureAtLeast = 0 // Size Unit: at least Size bits are left, and a multiple of Unit after them
+	BsEnsureExactly = 1 // Size: exactly Size bits are left
+	BsInteger       = 2 // Live Flags Size Unit Dst: an integer of Size*Unit bits
+	BsBinary        = 3 // Live Flags Size Unit Dst: a binary of Size*Unit bits
+	BsSkip          = 4 // Size: Size bits passed over
+	BsGetTail       = 5 // Live Unit Dst: the rest, a binary
+	BsEqual         = 6 // Size Value: the next Size bits are the integer Value
+
+	BsLittle = 2 // a field's flags: little-endian
+	BsSigned = 4 // and signed
+)
+
+// emitBsMatch writes bs_match as the VM takes it: Fail and Ctx as they are,
+// then how many longs of commands follow, and the commands. The compiler
+// writes them as one flat list of the commands' names and operands.
+func (p *packer) emitBsMatch(f *beam.File, in beam.Instr, where string) {
+	if len(in.Args) != 3 || in.Args[2].Kind != beam.ArgList {
+		p.errorf("%s: bs_match of an unexpected shape", where)
+		return
+	}
+	p.emit(opw(in.Op))
+	p.emitArg(f, in.Args[0], where)
+	p.emitArg(f, in.Args[1], where)
+	count := len(p.img.Code)
+	p.emit(0)
+	list := in.Args[2].List
+	num := func(a beam.Arg) uint32 {
+		if a.Kind != beam.ArgU && a.Kind != beam.ArgI || a.Big != nil {
+			p.errorf("%s: a size of bs_match that is no number", where)
+		}
+		return uint32(a.Val)
+	}
+	flags := func(a beam.Arg) uint32 {
+		if a.Kind != beam.ArgLiteral {
+			return 0
+		}
+		r := uint32(0)
+		for _, e := range f.Literals[a.Val].Elems {
+			switch e.Atom {
+			case "little":
+				r |= BsLittle
+			case "signed":
+				r |= BsSigned
+			case "native":
+				p.errorf("%s: a native-endian segment", where)
+			}
+		}
+		return r
+	}
+	for i := 0; i < len(list); {
+		if list[i].Kind != beam.ArgAtom {
+			p.errorf("%s: bs_match of an unexpected shape", where)
+			return
+		}
+		name := f.Atoms[list[i].Val]
+		need := map[string]int{"ensure_at_least": 3, "ensure_exactly": 2, "integer": 6, "binary": 6, "skip": 2, "get_tail": 4, "=:=": 4}[name]
+		if need == 0 || i+need > len(list) {
+			p.errorf("%s: a bs_match command %s, which the VM does not have", where, name)
+			return
+		}
+		a := list[i+1 : i+need]
+		switch name {
+		case "ensure_at_least":
+			p.emit(BsEnsureAtLeast, num(a[0]), num(a[1]))
+		case "ensure_exactly":
+			p.emit(BsEnsureExactly, num(a[0]))
+		case "integer", "binary":
+			code := uint32(BsInteger)
+			if name == "binary" {
+				code = BsBinary
+			}
+			p.emit(code, num(a[0]), flags(a[1]), num(a[2]), num(a[3]))
+			p.emitArg(f, a[4], where)
+		case "skip":
+			p.emit(BsSkip, num(a[0]))
+		case "get_tail":
+			p.emit(BsGetTail, num(a[0]), num(a[1]))
+			p.emitArg(f, a[2], where)
+		case "=:=":
+			p.emit(BsEqual, num(a[1]), p.layoutInt(a[2].Val))
+		}
+		i += need
+	}
+	p.img.Code[count] = uint32(len(p.img.Code) - count - 1)
+}
+
+// structFields finds an Elixir struct's fields in their order, which inspect
+// writes them in, in what the module's __info__(:struct) answers, a literal
+// list of maps each with its field, and adds them to the image's Structs.
+// __info__/1 itself is not packed.
+func (p *packer) structFields(f *beam.File) error {
+	fn := p.funcs[fnKey{f.Module, "__info__", 1}]
+	if fn == nil {
+		return nil
+	}
+	label := int64(-1)
+	for _, in := range fn.fn.Instrs {
+		if in.Op != beam.OpSelectVal || len(in.Args) != 3 {
+			continue
+		}
+		l := in.Args[2].List
+		for i := 0; i+1 < len(l); i += 2 {
+			if l[i].Kind == beam.ArgAtom && f.Atoms[l[i].Val] == "struct" {
+				label = l[i+1].Val
+			}
+		}
+	}
+	var lit *beam.Term
+	at := false
+	for _, in := range fn.fn.Instrs {
+		if in.Op == beam.OpLabel {
+			at = in.Args[0].Val == label
+			continue
+		}
+		if at && in.Op == beam.OpMove && in.Args[0].Kind == beam.ArgLiteral {
+			lit = &f.Literals[in.Args[0].Val]
+			break
+		}
+	}
+	if lit == nil || lit.Kind != beam.TermList {
+		return nil // no struct, __info__(struct) being nil
+	}
+	fields := beam.Term{Kind: beam.TermList}
+	for _, m := range lit.Elems {
+		for i := 0; m.Kind == beam.TermMap && i+1 < len(m.Elems); i += 2 {
+			if m.Elems[i].Kind == beam.TermAtom && m.Elems[i].Atom == "field" {
+				fields.Elems = append(fields.Elems, m.Elems[i+1])
+			}
+		}
+	}
+	t, err := p.layoutTerm(fields)
+	if err != nil {
+		return fmt.Errorf("%s: the struct's fields: %w", f.Name, err)
+	}
+	p.img.Structs = append(p.img.Structs, Atom(p.atom(f.Module)), t)
+	return nil
 }

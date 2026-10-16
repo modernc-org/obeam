@@ -5,6 +5,10 @@
 // Comparing terms: exact equality, and Erlang's order of terms, number <
 // atom < reference < fun < port < pid < tuple < map < nil < list < binary,
 // with no recursion: the pairs still to compare wait on a stack of their own.
+// Exact comparison is the order of a map's keys, every integer before every
+// float, at any depth: 1 and 1.0 are two keys, and {1} =/= {1.0}. A map's
+// keys compare exactly even under ==, #{1 => a} /= #{1.0 => a}, its values as
+// the comparison does; each pair waiting on the stack has its own exactness.
 
 const cmpDepth = 64
 
@@ -23,6 +27,8 @@ func order(t uint32) uint32 {
 			return 3
 		case hdrTuple:
 			return 6
+		case hdrMap:
+			return 7
 		case hdrBinary:
 			return 10
 		}
@@ -47,12 +53,16 @@ func eqExact(s *sched, a, b uint32) bool {
 	if a&3 != tagBoxed && a&3 != tagList || a&3 != b&3 {
 		return false
 	}
-	return cmp(s, a, b) == 0 && (!isNumber(a) || isFloat(a) == isFloat(b))
+	return cmpExact(s, a, b) == 0
 }
 
 // cmp compares two terms in the order of terms, numbers by value whatever
-// their kind as == does: negative, zero or positive.
-func cmp(s *sched, a, b uint32) int {
+// their kind as == does: negative, zero or positive. cmpExact compares them
+// in map-key order.
+func cmp(s *sched, a, b uint32) int      { return cmpTerms(s, a, b, false) }
+func cmpExact(s *sched, a, b uint32) int { return cmpTerms(s, a, b, true) }
+
+func cmpTerms(s *sched, a, b uint32, exact bool) int {
 	sp := 0
 	for {
 		if a != b {
@@ -63,6 +73,12 @@ func cmp(s *sched, a, b uint32) int {
 			r := 0
 			switch oa {
 			case 0:
+				if exact && isFloat(a) != isFloat(b) {
+					if isFloat(a) {
+						return 1
+					}
+					return -1
+				}
 				r = cmpNumbers(a, b)
 			case 1:
 				r = cmpAtoms(a, b)
@@ -70,10 +86,16 @@ func cmp(s *sched, a, b uint32) int {
 				r = cmpWords(a, b)
 			case 3:
 				r = cmpWords(funCode(a), funCode(b))
-			case 6:
+			case 6, 7:
+				// A map's words are its keys, then its values: by size,
+				// then by keys, then by values, as Erlang orders maps.
 				na, nb := tupleArity(a), tupleArity(b)
 				if na != nb {
 					return int(na) - int(nb)
+				}
+				keys := uint32(0)
+				if oa == 7 {
+					keys = na / 2
 				}
 				// The elements wait, the last deepest.
 				for i := na; i >= 1; i-- {
@@ -82,6 +104,7 @@ func cmp(s *sched, a, b uint32) int {
 					}
 					s.cmpA[sp] = tupleElem(a, i)
 					s.cmpB[sp] = tupleElem(b, i)
+					s.cmpX[sp] = exact || i <= keys
 					sp++
 				}
 			case 9:
@@ -92,6 +115,7 @@ func cmp(s *sched, a, b uint32) int {
 				}
 				s.cmpA[sp] = arena[ia+1]
 				s.cmpB[sp] = arena[ib+1]
+				s.cmpX[sp] = exact
 				sp++
 				a, b = arena[ia], arena[ib]
 				continue
@@ -106,7 +130,7 @@ func cmp(s *sched, a, b uint32) int {
 			return 0
 		}
 		sp--
-		a, b = s.cmpA[sp], s.cmpB[sp]
+		a, b, exact = s.cmpA[sp], s.cmpB[sp], s.cmpX[sp]
 	}
 }
 

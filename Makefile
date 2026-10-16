@@ -6,8 +6,12 @@ GENOP_URL = https://raw.githubusercontent.com/erlang/otp/$(GENOP_TAG)/lib/compil
 ERLC      ?= erlc
 ERLCFLAGS  = +deterministic
 
-ERLS  = $(wildcard erl/*.erl)
+ERLS  = $(wildcard erl/*.erl) $(wildcard erl/shim/*.erl)
 BEAMS = $(ERLS:.erl=.beam)
+
+comma := ,
+empty :=
+space := $(empty) $(empty)
 
 .PHONY: all test twin beam exbeam stats generate image prof prof-run run budget clean
 
@@ -30,12 +34,16 @@ twin:
 IMAGE_ENTRY   = demo:main/0
 IMAGE_MODULES = erl/demo.beam erl/fac.beam erl/fib.beam erl/lst.beam erl/tuples.beam erl/funs.beam \
 	erl/pingpong.beam erl/ring.beam erl/sieve.beam erl/counter.beam erl/exc.beam erl/links.beam \
-	erl/sup.beam erl/flt.beam erl/fmt.beam erl/cogs.beam ex/Elixir.Hello.beam ex/Elixir.Fac.beam ex/Elixir.Ping.beam \
-	ex/Elixir.Ring.beam ex/Elixir.Enums.beam ex/Elixir.Strings.beam ex/shim/Elixir.Enum.beam
+	erl/sup.beam erl/flt.beam erl/fmt.beam erl/mp.beam erl/bin.beam erl/cogs.beam \
+	ex/Elixir.Hello.beam ex/Elixir.Fac.beam ex/Elixir.Ping.beam ex/Elixir.Ring.beam \
+	ex/Elixir.Enums.beam ex/Elixir.Strings.beam ex/Elixir.Maps.beam ex/Elixir.Point.beam
+# IMAGE_LIBS are the shims, Erlang's of OTP's and Erlang's of Elixir's
+# library, which a program takes by what it reaches.
+IMAGE_LIBS = $(wildcard erl/shim/*.beam) $(wildcard ex/shim/*.beam)
 
 image: $(BEAMS)
 	mkdir -p image
-	go run ./cmd/obeam pack -o image/image.ogo -entry $(IMAGE_ENTRY) $(IMAGE_MODULES)
+	go run ./cmd/obeam pack -o image/image.ogo -entry $(IMAGE_ENTRY) -lib $(subst $(space),$(comma),$(strip $(IMAGE_LIBS))) $(IMAGE_MODULES)
 
 # prof packs erl/bench.erl into prof/image, writes the names the profiler
 # prints, and builds the profiler, prof/prof.binary; prof-run runs it on the
@@ -69,7 +77,7 @@ run:
 beam: $(BEAMS)
 
 erl/%.beam: erl/%.erl
-	$(ERLC) $(ERLCFLAGS) -o erl $<
+	$(ERLC) $(ERLCFLAGS) -o $(@D) $<
 
 # exbeam compiles the Elixir corpus, ex/*.ex, with elixirc, and the shims,
 # ex/shim/*.erl, with erlc. The .beam files are committed, so this is needed

@@ -60,6 +60,7 @@ var operatorNames = map[string]string{
 	"+": "Plus", "-": "Minus", "*": "Times", "++": "Append", "--": "Subtract",
 	"==": "Eq", "/=": "Ne", "=:=": "EqExact", "=/=": "NeExact",
 	"<": "Lt", ">": "Gt", "=<": "Le", ">=": "Ge", "/": "Fdiv",
+	"Elixir.Range": "ElixirRange",
 }
 
 // ident turns is_eq_exact into IsEqExact, and an operator into its name.
@@ -104,7 +105,7 @@ func genTags() string {
 		{"tagSmall", TagSmall}, {"tagList", TagList}, {"tagBoxed", TagBoxed}, {"tagImm", TagImm},
 		{"immAtom", ImmAtom}, {"immPid", ImmPid}, {"immNil", ImmNil}, {"immRef", ImmRef}, {"nilTerm", Nil},
 		{"hdrTuple", HdrTuple}, {"hdrFloat", HdrFloat}, {"hdrInt64", HdrInt64}, {"hdrFun", HdrFun},
-		{"hdrBinary", HdrBinary}, {"hdrNonValue", HdrNonValue}, {"hdrMoved", HdrMoved},
+		{"hdrBinary", HdrBinary}, {"hdrMap", HdrMap}, {"hdrNonValue", HdrNonValue}, {"hdrMatch", HdrMatch},
 		{"nonValue", NonValue}, {"moved", Moved},
 		{"smallMin", SmallMin}, {"smallMax", SmallMax},
 		{"pidIndexBits", PidIndexBits}, {"pidGenBits", PidGenBits}, {"funHeadLongs", FunHeadLongs},
@@ -112,6 +113,9 @@ func genTags() string {
 		{"jumpValue", JumpValue}, {"bifValue", BifValue},
 		{"segBinary", SegBinary}, {"segInteger", SegInteger}, {"segUTF8", SegUTF8},
 		{"segAll", SegAll}, {"segLittle", SegLittle},
+		{"bsEnsureAtLeast", BsEnsureAtLeast}, {"bsEnsureExactly", BsEnsureExactly}, {"bsInteger", BsInteger},
+		{"bsBinary", BsBinary}, {"bsSkip", BsSkip}, {"bsGetTail", BsGetTail}, {"bsEqual", BsEqual},
+		{"bsLittle", BsLittle}, {"bsSigned", BsSigned},
 		{"markX", MarkX}, {"markY", MarkY},
 	} {
 		fmt.Fprintf(&b, "\t%s = %d\n", c.name, c.v)

@@ -827,6 +827,19 @@ func findFunction(m, f, arity uint32) (uint32, bool) {
 	return 0, false
 }
 
+// bifByName answers the number of the BIF a module, a function and an
+// arity name, if there is one: one whose module and function are well-known
+// atoms.
+func bifByName(m, f, arity uint32) (uint32, bool) {
+	for i := range bifs {
+		b := bifNames[i]
+		if uint32(bifs[i].arity) == arity && mkAtom(b.module) == m && mkAtom(b.function) == f {
+			return uint32(i), true
+		}
+	}
+	return 0, false
+}
+
 // listToArgs puts a list's elements in bargs and answers how many, or -1
 // for what is no list of at most maxArity.
 func listToX(s *sched, l uint32) int32 {
@@ -926,19 +939,12 @@ func bifApply3(s *sched, n uint32) uint32 {
 		s.bifLive = uint32(na)
 		return jumpValue
 	}
-	for i := range bifs {
-		if int(bifs[i].arity) != int(na) {
-			continue
-		}
-		b := bifNames[i]
-		if mkAtom(b.module) != m || mkAtom(b.function) != f {
-			continue
-		}
+	if i, ok := bifByName(m, f, uint32(na)); ok {
 		for k := int32(0); k < na; k++ {
 			s.bargs[k] = s.x[k]
 		}
 		s.nbargs = uint32(na)
-		s.bifJump = uint32(i)
+		s.bifJump = i
 		return bifValue
 	}
 	return failAtom(s, atomUndef)

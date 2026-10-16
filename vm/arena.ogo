@@ -8,7 +8,7 @@
 // order when it frees the block.
 
 const (
-	arenaLongs = 49152 // 192 KB, six blocks of the largest order, as decided; 128 KB from M4 until the room before M6b gave it back
+	arenaLongs = 40960 // 160 KB, five blocks of the largest order: 192 KB as decided from the room before M6b, 160 since M6b, whose maps, binaries and demo took the rest; 128 KB from M4 until the room
 	minOrder   = 3     // 8 longs
 	maxOrder   = 13    // 8,192 longs
 	orders     = maxOrder - minOrder + 1

@@ -107,6 +107,7 @@ type sched struct {
 	msgStack [msgDepth]uint32
 	cmpA     [cmpDepth]uint32
 	cmpB     [cmpDepth]uint32
+	cmpX     [cmpDepth]bool // whether the pair waiting there compares exactly
 	wstack   [writeDepth]wframe
 	fbuf     [256]byte     // a format string being written
 	cap      [capSize]byte // what a padded directive wrote
@@ -154,6 +155,7 @@ func procsInit() {
 	for i := range scheds {
 		scheds[i].id = uint32(i)
 		scheds[i].ncap = -1
+		scheds[i].bifTag = noTag
 		scheds[i].cur = nil
 		scheds[i].steps = 0
 		scheds[i].gcs = 0

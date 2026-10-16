@@ -24,10 +24,15 @@ import (
 )
 
 // uses names the modules a module of the corpus calls, which are packed with
-// it.
-var uses = map[string][]string{
-	"bench": {"fib", "lst", "tuples", "pingpong", "ring", "sieve"},
-}
+// it, and exUses those of an Elixir module of ex/.
+var (
+	uses = map[string][]string{
+		"bench": {"fib", "lst", "tuples", "pingpong", "ring", "sieve"},
+	}
+	exUses = map[string][]string{
+		"Maps": {"Point"},
+	}
+)
 
 // TestErl runs the modules of the corpus the VM can run, packed in memory,
 // and holds their output to what erl prints for the same module. It runs in
@@ -43,13 +48,17 @@ func TestErl(t *testing.T) {
 	if err != nil {
 		t.Skip("no erl on PATH")
 	}
-	for _, m := range []string{"fac", "fib", "lst", "tuples", "funs", "pingpong", "ring", "sieve", "counter", "exc", "links", "sup", "flt", "fmt", "bench"} {
+	for _, m := range []string{"fac", "fib", "lst", "tuples", "funs", "pingpong", "ring", "sieve", "counter", "exc", "links", "sup", "flt", "fmt", "mp", "bin", "bench"} {
 		t.Run(m, func(t *testing.T) {
 			var files []string
 			for _, mod := range append([]string{m}, uses[m]...) {
 				files = append(files, filepath.Join(root, "erl", mod+".beam"))
 			}
-			img, err := pack.Pack(files, pack.Options{Lines: true})
+			libs, err := filepath.Glob(filepath.Join(root, "erl", "shim", "*.beam"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			img, err := pack.Pack(files, pack.Options{Lines: true, Lib: libs})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -130,7 +139,7 @@ const testSchedulers = 7
 // with the process table dumped after what it printed.
 func runImage(img *pack.Image) []byte {
 	p2.Sink = testWrite
-	Load(img.Code, img.Literals, img.Atoms, img.Funcs, img.Funs, img.Lines, img.Files)
+	Load(img.Code, img.Literals, img.Atoms, img.Funcs, img.Funs, img.Lines, img.Files, img.Structs)
 	testOut = testOut[:0]
 	if !Start(img.Entry, testSchedulers) {
 		return []byte("no room for the first process\n")
@@ -207,10 +216,18 @@ func TestElixir(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, m := range []string{"Hello", "Fac", "Ping", "Ring", "Enums", "Strings"} {
+	erlShims, err := filepath.Glob(filepath.Join(root, "erl", "shim", "*.beam"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	shims = append(shims, erlShims...)
+	for _, m := range []string{"Hello", "Fac", "Ping", "Ring", "Enums", "Strings", "Maps"} {
 		t.Run(m, func(t *testing.T) {
-			files := append([]string{filepath.Join(root, "ex", "Elixir."+m+".beam")}, shims...)
-			img, err := pack.Pack(files, pack.Options{Entry: "Elixir." + m + ":main/0", Lines: true})
+			var files []string
+			for _, mod := range append([]string{m}, exUses[m]...) {
+				files = append(files, filepath.Join(root, "ex", "Elixir."+mod+".beam"))
+			}
+			img, err := pack.Pack(files, pack.Options{Entry: "Elixir." + m + ":main/0", Lines: true, Lib: shims})
 			if err != nil {
 				t.Fatal(err)
 			}

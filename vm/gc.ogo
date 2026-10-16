@@ -68,7 +68,7 @@ func gc(s *sched, live, heapNeed, stackNeed uint32) bool {
 			continue
 		}
 		switch hdrKind(w) {
-		case hdrTuple:
+		case hdrTuple, hdrMap, hdrMatch:
 			scan++
 		case hdrFun:
 			scan += 1 + funHeadLongs

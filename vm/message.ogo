@@ -46,7 +46,7 @@ func termSize(s *sched, t uint32) int32 {
 				if hdrKind(h) == hdrFun {
 					first = 1 + funHeadLongs
 				}
-				if hdrKind(h) == hdrTuple || hdrKind(h) == hdrFun {
+				if k := hdrKind(h); k == hdrTuple || k == hdrFun || k == hdrMap || k == hdrMatch {
 					for k := first; k <= n; k++ {
 						if sp == msgDepth {
 							return -1
@@ -76,7 +76,7 @@ func copyTerm(s *sched, t, dst uint32) (uint32, uint32) {
 		w := arena[scan]
 		if w&7 == 7 {
 			switch hdrKind(w) {
-			case hdrTuple:
+			case hdrTuple, hdrMap, hdrMatch:
 				scan++
 			case hdrFun:
 				scan += 1 + funHeadLongs

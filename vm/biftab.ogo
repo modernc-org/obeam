@@ -3,10 +3,10 @@
 // TableID is the fingerprint of the well-known atoms and the BIFs, which an
 // image must carry too: one packed before the tables changed calls BIFs by
 // numbers that are no longer theirs.
-const TableID = 0x31124ad4
+const TableID = 0xa56f0a00
 
 // nBifs is how many BIFs there are.
-const nBifs = 116
+const nBifs = 134
 
 // The BIFs' numbers, for the handlers that do some of them themselves.
 const (
@@ -124,15 +124,30 @@ const (
 	bixP2GetCt         = 113
 	bixP2ClockFreq     = 114
 	bixP2Rnd           = 115
+	bixIsMap           = 116
+	bixMapSize         = 117
+	bixIsMapKey        = 118
+	bixMapGet          = 119
+	bixMapsGet3        = 121
+	bixMapsFind        = 122
+	bixMapsPut         = 124
+	bixMapsUpdate      = 125
+	bixMapsRemove      = 126
+	bixMapsKeys        = 127
+	bixMapsValues      = 128
+	bixMapsToList      = 129
+	bixMapsFromList    = 130
+	bixMapsMerge       = 131
+	bixMapsNew         = 133
 )
 
 // The BIFs, by the number the packer gives a call of each. The table is filled
 // in init: apply refers to it, and under Go a variable's initializer may not
 // reach the variable.
-var bifs [116]bifEntry
+var bifs [134]bifEntry
 
 func init() {
-	bifs = [116]bifEntry{
+	bifs = [134]bifEntry{
 		{bifAdd, 2},             // erlang:+/2
 		{bifSub, 2},             // erlang:-/2
 		{bifMul, 2},             // erlang:*/2
@@ -249,13 +264,31 @@ func init() {
 		{bifP2GetCt, 0},         // p2:get_ct/0
 		{bifP2ClockFreq, 0},     // p2:clock_freq/0
 		{bifP2Rnd, 0},           // p2:rnd/0
+		{bifIsMap, 1},           // erlang:is_map/1
+		{bifMapSize, 1},         // erlang:map_size/1
+		{bifIsMapKey, 2},        // erlang:is_map_key/2
+		{bifMapGet, 2},          // erlang:map_get/2
+		{bifMapGet, 2},          // maps:get/2
+		{bifMapsGet3, 3},        // maps:get/3
+		{bifMapsFind, 2},        // maps:find/2
+		{bifIsMapKey, 2},        // maps:is_key/2
+		{bifMapsPut, 3},         // maps:put/3
+		{bifMapsUpdate, 3},      // maps:update/3
+		{bifMapsRemove, 2},      // maps:remove/2
+		{bifMapsKeys, 1},        // maps:keys/1
+		{bifMapsValues, 1},      // maps:values/1
+		{bifMapsToList, 1},      // maps:to_list/1
+		{bifMapsFromList, 1},    // maps:from_list/1
+		{bifMapsMerge, 2},       // maps:merge/2
+		{bifMapSize, 1},         // maps:size/1
+		{bifMapsNew, 0},         // maps:new/0
 	}
 }
 
 // bifNames are the BIFs' modules and functions, by the atoms' indexes among the
 // well-known atoms, for apply by name; a module or function that is no
 // well-known atom is noAtom.
-var bifNames = [116]bifName{
+var bifNames = [134]bifName{
 	{atomErlang, atomPlus},
 	{atomErlang, atomMinus},
 	{atomErlang, atomTimes},
@@ -372,4 +405,22 @@ var bifNames = [116]bifName{
 	{atomP2, atomGetCt},
 	{atomP2, atomClockFreq},
 	{atomP2, atomRnd},
+	{atomErlang, atomIsMap},
+	{atomErlang, atomMapSize},
+	{atomErlang, atomIsMapKey},
+	{atomErlang, atomMapGet},
+	{atomMaps, atomGet},
+	{atomMaps, atomGet},
+	{atomMaps, atomFind},
+	{atomMaps, atomIsKey},
+	{atomMaps, atomPut},
+	{atomMaps, atomUpdate},
+	{atomMaps, atomRemove},
+	{atomMaps, atomKeys},
+	{atomMaps, atomValues},
+	{atomMaps, atomToList},
+	{atomMaps, atomFromList},
+	{atomMaps, atomMerge},
+	{atomMaps, atomSize},
+	{atomMaps, atomNew},
 }

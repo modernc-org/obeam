@@ -146,7 +146,7 @@ var opNames = [256]string{
 }
 
 // nb is how many BIFs there are, and bifNames their names, by number.
-const nb = 116
+const nb = 134
 
 var bifNames = [nb]string{
 	"erlang:+/2",
@@ -265,4 +265,22 @@ var bifNames = [nb]string{
 	"p2:get_ct/0",
 	"p2:clock_freq/0",
 	"p2:rnd/0",
+	"erlang:is_map/1",
+	"erlang:map_size/1",
+	"erlang:is_map_key/2",
+	"erlang:map_get/2",
+	"maps:get/2",
+	"maps:get/3",
+	"maps:find/2",
+	"maps:is_key/2",
+	"maps:put/3",
+	"maps:update/3",
+	"maps:remove/2",
+	"maps:keys/1",
+	"maps:values/1",
+	"maps:to_list/1",
+	"maps:from_list/1",
+	"maps:merge/2",
+	"maps:size/1",
+	"maps:new/0",
 }

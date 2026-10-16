@@ -81,6 +81,10 @@ var WellKnownAtoms = []string{
 	"is_boolean", "is_function", "is_pid", "is_reference", "is_binary", "is_record",
 	"not", "and", "or", "xor", "band", "bor", "bxor", "bsl", "bsr", "bnot", "div", "rem",
 	"+", "-", "*", "==", "/=", "=:=", "=/=", "<", ">", "=<", ">=", "++", "--",
+	"badmap", "badkey", "maps", "is_map", "map_size", "is_map_key", "map_get",
+	"get", "find", "is_key", "put", "update", "remove", "keys", "values",
+	"to_list", "from_list", "merge", "size", "new", "all",
+	"__struct__", "Elixir.Range", "first", "last", "step",
 }
 
 // A Bif is a function the VM implements itself: what an import of it resolves
@@ -212,6 +216,24 @@ var Bifs = []Bif{
 	{"p2", "get_ct", 0, "bifP2GetCt"},
 	{"p2", "clock_freq", 0, "bifP2ClockFreq"},
 	{"p2", "rnd", 0, "bifP2Rnd"},
+	{"erlang", "is_map", 1, "bifIsMap"},
+	{"erlang", "map_size", 1, "bifMapSize"},
+	{"erlang", "is_map_key", 2, "bifIsMapKey"},
+	{"erlang", "map_get", 2, "bifMapGet"},
+	{"maps", "get", 2, "bifMapGet"},
+	{"maps", "get", 3, "bifMapsGet3"},
+	{"maps", "find", 2, "bifMapsFind"},
+	{"maps", "is_key", 2, "bifIsMapKey"},
+	{"maps", "put", 3, "bifMapsPut"},
+	{"maps", "update", 3, "bifMapsUpdate"},
+	{"maps", "remove", 2, "bifMapsRemove"},
+	{"maps", "keys", 1, "bifMapsKeys"},
+	{"maps", "values", 1, "bifMapsValues"},
+	{"maps", "to_list", 1, "bifMapsToList"},
+	{"maps", "from_list", 1, "bifMapsFromList"},
+	{"maps", "merge", 2, "bifMapsMerge"},
+	{"maps", "size", 1, "bifMapSize"},
+	{"maps", "new", 0, "bifMapsNew"},
 }
 
 // bifIndex answers the number of a BIF, if there is one.

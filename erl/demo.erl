@@ -23,10 +23,13 @@ main() ->
     sup:main(),
     flt:main(),
     fmt:main(),
+    mp:main(),
+    bin:main(),
     'Elixir.Hello':main(),
     'Elixir.Fac':main(),
     'Elixir.Ping':main(),
     'Elixir.Ring':main(),
     'Elixir.Enums':main(),
     'Elixir.Strings':main(),
+    'Elixir.Maps':main(),
     cogs:main().

@@ -11,7 +11,7 @@ scheduler on each of seven cogs. The user is the author of OctoGo (`../ogo`) and
 p2-11 (`../p2-11`); the idea came from a talk with a friend who likes Erlang on
 2026-10-16.
 
-**Status, 2026-10-17: M6a committed (3b56176), the room before M6b built.** The user said go that afternoon; M0
+**Status, 2026-10-17: the room before M6b committed (b5b3df2), M6b built.** The user said go that afternoon; M0
 (the reader, the corpus, DESIGN.md) was done by evening, DESIGN.md's open
 points decided with the user, M1 (one process on one cog, e1a384e), M2
 (processes, messages, receive with timeouts, funs and apply, 18c3c27), M3
@@ -32,8 +32,10 @@ and print what `elixir` prints, through `bs_create_bin`, run-time binaries,
 the user's word that the programs the VM can run come before its speed: 88
 KB of the checked build given back at no cost in speed (DESIGN.md section
 8), the arena back to 192 KB, 37 KB of the hub left. M6b, maps and binary
-matching, is next in the plan, and then the image read from the SD card at
-boot into the region the heaps share. The files:
+matching, Erlang's and Elixir's, structs and ranges among them: `mp`, `bin`
+and `Maps` agree with `erl` and `elixir`, and the demo with them took the
+arena to 160 KB, 10.7 KB of the hub left. Next in the plan: the image read
+from the SD card at boot into the region the heaps share. The files:
 
 - `ASSESSMENT.md`: the consolidated assessment and the plan. Verdict: start,
   staged. It holds the measured facts (opcode counts, AtomVM's size, what a
@@ -56,9 +58,13 @@ boot into the region the heaps share. The files:
   packs its image into `prof/image` and writes `prof/names.ogo`, the names
   the VM does not carry.
 - `ex/`: the Elixir corpus, `*.ex` compiled by `make exbeam` into committed
-  `Elixir.*.beam`; `ex/shim/` the Erlang shims of Elixir's library (`Enum`),
-  packed with an Elixir program and **never on the oracle's path**, where they
-  would hide Elixir's own. `TestElixir` runs `elixir -pa ex -e "Mod.main()"`.
+  `Elixir.*.beam`; `ex/shim/` the Erlang shims of Elixir's library (`Enum`,
+  `Map`, `elixir_erl_pass`), and `erl/shim/` of OTP's (`maps`' functions
+  that take a fun), packed as libraries (`obeam pack -lib`, by what the
+  program reaches) and **never on the oracle's path**, where they would hide
+  the real ones. `TestElixir` runs `elixir -pa ex -e "Mod.main()"`; `exUses`
+  in `vm/host_test.go` names the modules an Elixir one is packed with
+  (`Maps` with `Point`).
 - `core/`: the PASM core. **Edit `core/core.pasm`, never `core/core.spin2`**,
   which `go run ./cmd/obeam gen -vm vm -names prof` writes from it and from
   `CoreOps` in `internal/pack/tables.go`; `TestCoreGenerated` fails on a stale
@@ -100,8 +106,10 @@ boot into the region the heaps share. The files:
   `-lines=false` to drop it; the hardware API is the module `p2`, OctoGo's
   `p2` package name for name in snake_case, plus `p2:cog/0`, with no blocking
   waits. The arena was 128 KB from M4 until the room before M6b gave the
-  192 KB back (`arenaLongs` in `vm/arena.ogo`); it is the lever when the hub
-  runs short. `ogo build` says by how much a build misses the 512 KB.
+  192 KB back, and is 160 KB since M6b (`arenaLongs` in `vm/arena.ogo`); it
+  is the lever when the hub runs short. `ogo build` says by how much a build
+  misses the 512 KB, but when it misses, the size it names is of an attempt
+  with other stack slots: compare only builds that fit.
 - **The programs the VM can run come before its speed** (the user,
   2026-10-16): trade clocks for hub RAM where it buys room, and take the room
   that costs nothing first. DESIGN.md section 8 has where the bytes go.
@@ -255,14 +263,29 @@ the tree or be ahead of what this file knows; do not install over it.
   `CoreOps`, a `.op_<name>` in the template, `obeam gen`, `make image`. The
   core is not in the twin: run the demo on the board and diff it against
   `erl`, and `make prof`, after every change to it.
-- **Hub RAM**: the checked demo binary is 485,092 bytes and `main`'s stack
-  1,108, which leaves 37 KB of the 512 KB; `make budget` says so after a
+- **Hub RAM**: the checked demo binary is 512,444 bytes and `main`'s stack
+  1,108, which leaves 10.7 KB of the 512 KB; `make budget` says so after a
   change. `ogo build` says by how much a build misses; the arena
   (`arenaLongs`) and the demo's modules are the levers, and loading the image
   from the SD card the way out. DESIGN.md section 8 has where the bytes go.
 - Elixir's `inspect` is `vm/inspect.ogo`; it does not break lines at 80
   columns as Elixir's pretty printer does, so a corpus module keeps what it
-  inspects short.
+  inspects short. A struct prints in its fields' order, which the packer
+  reads from the module's `__info__(:struct)` into the image's `Structs`.
+- **Maps** (`vm/maps.ogo`) are a header, the keys in map-key order (every
+  integer before every float), then the values: `internal/pack/order.go` and
+  `cmpExact` must agree, and a map's keys compare exactly even under `==`
+  (`cmpX`, a flag per pair waiting on the comparison stack). `erl` and
+  `elixir` print a map's atom keys in their atom tables' order, and OTP a map
+  of more than 32 keys in its hash trie's: a corpus module prints such maps
+  with `~kp`, sorted, or not at all. erlc folds comparisons of literals at
+  compile time, so a test of comparison passes its operands through `id/1`.
+- **Binary matching** (`vm/match.ogo`): a match context is a header of kind
+  7, the binary and the offset in bits, moved on in place; `bs_match`'s
+  command list the packer rewrites (`emitBsMatch`). What a match takes out is
+  a copy, whole bytes at a byte's offset, and a would-be bitstring fails the
+  match. A BIF that fails with `{badmap, M}` or `{badkey, K}` uses
+  `failTagged`, and the handler's `bifRaise` builds the tuple.
 - **Measure before and after** with `make prof` and the board: the profile is
   by opcode and by BIF, on one scheduler. `vm.Dump()` prints the pool's free
   lists and the last request it failed: a `system_limit` with the pool mostly
@@ -342,7 +365,7 @@ the tree or be ahead of what this file knows; do not install over it.
   not the compiler's regrouping into `{test,is_lt,...}`, `{bif,...}` and
   `{gc_bif,...}` that `erlc -S` and beam_disasm print; `erl/oracle.escript`
   undoes that regrouping so the two can be compared.
-- `erl/` holds the corpus: eleven modules, each with a `main/0` that prints
+- `erl/` holds the corpus: twenty modules, each with a `main/0` that prints
   its result, so that the board's twin can be held to `erl` later; `blink`
   calls the board's `p2` module and does not run under `erl`. The `.beam`
   files are committed, compiled by `make beam` with `+deterministic`; commit
