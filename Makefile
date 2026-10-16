@@ -9,7 +9,7 @@ ERLCFLAGS  = +deterministic
 ERLS  = $(wildcard erl/*.erl)
 BEAMS = $(ERLS:.erl=.beam)
 
-.PHONY: all test twin beam exbeam stats generate image prof prof-run run clean
+.PHONY: all test twin beam exbeam stats generate image prof prof-run run budget clean
 
 all: test
 
@@ -30,7 +30,7 @@ twin:
 IMAGE_ENTRY   = demo:main/0
 IMAGE_MODULES = erl/demo.beam erl/fac.beam erl/fib.beam erl/lst.beam erl/tuples.beam erl/funs.beam \
 	erl/pingpong.beam erl/ring.beam erl/sieve.beam erl/counter.beam erl/exc.beam erl/links.beam \
-	erl/flt.beam erl/fmt.beam erl/cogs.beam ex/Elixir.Hello.beam ex/Elixir.Fac.beam ex/Elixir.Ping.beam \
+	erl/sup.beam erl/flt.beam erl/fmt.beam erl/cogs.beam ex/Elixir.Hello.beam ex/Elixir.Fac.beam ex/Elixir.Ping.beam \
 	ex/Elixir.Ring.beam ex/Elixir.Enums.beam ex/Elixir.Strings.beam ex/shim/Elixir.Enum.beam
 
 image: $(BEAMS)
@@ -51,6 +51,13 @@ prof: $(BEAMS)
 
 prof-run: prof
 	flock -o -w 900 /tmp/p2-board.lock ogo loadp2 -t -b 230400 prof/prof.binary
+
+# budget builds the board program, checked, and says how much of the hub's
+# 512 KB it leaves for main's stack and what comes next; ogo build refuses a
+# program whose main stack does not fit.
+budget:
+	ogo build
+	@n=$$(stat -c %s obeam.binary); echo "obeam.binary: $$n bytes, $$((524288 - n)) of the hub's 524288 left beside it"
 
 # run builds the board program and runs it on the board, under the lock the
 # ogo and p2-11 sessions share.

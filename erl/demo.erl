@@ -20,6 +20,7 @@ main() ->
     counter:main(),
     exc:main(),
     links:main(),
+    sup:main(),
     flt:main(),
     fmt:main(),
     'Elixir.Hello':main(),

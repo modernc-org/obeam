@@ -2,31 +2,26 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-// What the board gives the VM. The locks, the clocks and a pause are the P2's
-// own, through OctoGo's p2 package, whose TryLock is one instruction: a lock
-// taken through a function value cost 616 clocks a round, measured by make
-// prof, and every message takes several. The twin, scripts/twin.sh, has this
-// package import a Go shim of them instead, internal/p2twin. Where output
-// goes and the pins stay hooks, main's to set: the serial line is main's, and
-// the pins are driven from main's cog. A hook that is nil does nothing, and a
-// pin BIF then answers ok or 0.
+// What the board gives the VM: the locks, the clocks, a pause, the serial
+// line and the pins, through OctoGo's p2 package. A lock taken through a
+// function value cost 616 clocks a round, measured by make prof, and every
+// message takes several; p2's TryLock is one instruction. Nothing here is a
+// function value the VM calls: ogo sizes a goroutine's stack from the
+// backend's listing, which cannot tell where a call through one goes and
+// counts it as going to every function whose address is taken, the BIFs and
+// handlers among them, so that a BIF writing through a hook made all of them
+// one cycle whose frames the bound added up (DESIGN.md section 8). The
+// twin, scripts/twin.sh, has this package import a Go shim of p2 instead,
+// internal/p2twin, whose serial line is the test's buffer.
 
 import "p2"
 
-var (
-	Out       func(b byte)
-	PinHigh   func(pin int)
-	PinLow    func(pin int)
-	PinToggle func(pin int)
-	PinFloat  func(pin int)
-	PinIn     func(pin int) int
-	PinWrite  func(pin int, v int)
-	ClockFreq func() uint32
-	Rnd       func() uint32
-)
+// CRLF says that a newline goes out as a carriage return and a line feed, as
+// a terminal wants it; main sets it on the board.
+var CRLF bool
 
 // The VM's locks: the pool, the run queue, the table's free slots, the
-// output, and four stripes of mailboxes and process states, a process's by
+// output, the ring of the pins, and four stripes of mailboxes and process states, a process's by
 // its index. The order to take them in, where two are held, is a stripe,
 // then the run queue or the pool; the pool is taken inside the table's.
 const (
@@ -34,6 +29,7 @@ const (
 	lockRun
 	lockProcs
 	lockOut
+	lockPins
 	lockStripe // the first of four
 	nlocks     = lockStripe + 4
 )
@@ -72,10 +68,12 @@ func now() uint32 { return p2.GetMs() }
 // idle is what a scheduler does with nothing to run: a moment's wait.
 func idle() { p2.WaitUs(20) }
 
+// out writes a byte to the serial line, under lockOut.
 func out(b byte) {
-	if Out != nil {
-		Out(b)
+	if b == '\n' && CRLF {
+		p2.WriteByte('\r')
 	}
+	p2.WriteByte(b)
 }
 
 func outString(str string) {

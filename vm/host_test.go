@@ -19,6 +19,7 @@ import (
 	"testing"
 	"time"
 
+	p2 "modernc.org/obeam/internal/p2twin"
 	"modernc.org/obeam/internal/pack"
 )
 
@@ -30,7 +31,9 @@ var uses = map[string][]string{
 
 // TestErl runs the modules of the corpus the VM can run, packed in memory,
 // and holds their output to what erl prints for the same module. It runs in
-// the twin, scripts/twin.sh, which says where the corpus is.
+// the twin, scripts/twin.sh, which says where the corpus is. Each module runs
+// twice: with the general handlers alone, as on the board, and with the fast
+// ones, which are what the core is written after.
 func TestErl(t *testing.T) {
 	root := os.Getenv("OBEAM_ROOT")
 	if root == "" {
@@ -40,7 +43,7 @@ func TestErl(t *testing.T) {
 	if err != nil {
 		t.Skip("no erl on PATH")
 	}
-	for _, m := range []string{"fac", "fib", "lst", "tuples", "funs", "pingpong", "ring", "sieve", "counter", "exc", "links", "flt", "fmt", "bench"} {
+	for _, m := range []string{"fac", "fib", "lst", "tuples", "funs", "pingpong", "ring", "sieve", "counter", "exc", "links", "sup", "flt", "fmt", "bench"} {
 		t.Run(m, func(t *testing.T) {
 			var files []string
 			for _, mod := range append([]string{m}, uses[m]...) {
@@ -54,12 +57,64 @@ func TestErl(t *testing.T) {
 			if err != nil {
 				t.Fatalf("erl: %v", err)
 			}
-			got := runImage(img)
-			if !bytes.Equal(got, want) {
-				t.Errorf("the VM printed:\n%s--- erl printed:\n%s", got, want)
+			for _, fast := range []bool{false, true} {
+				useFast(fast)
+				got := runImage(img)
+				if !bytes.Equal(got, want) {
+					t.Errorf("the VM printed, fast handlers %v:\n%s--- erl printed:\n%s", fast, got, want)
+				}
 			}
 		})
 	}
+}
+
+var fastOn bool
+
+// useFast puts the fast handlers in their opcodes' places, or the general ones
+// back, while no scheduler runs. It is here, in the twin only, because a
+// function whose address the board's program takes is linked even when
+// nothing calls the function that takes it.
+func useFast(on bool) {
+	if on == fastOn {
+		return
+	}
+	fastOn = on
+	if !on {
+		for op := range slow {
+			if slow[op] != nil {
+				handlers[op] = slow[op]
+				slow[op] = nil
+			}
+		}
+		return
+	}
+	fast(opMove, fMove)
+	fast(opSwap, fSwap)
+	fast(opGetList, fGetList)
+	fast(opGetHd, fGetHd)
+	fast(opGetTl, fGetTl)
+	fast(opPutList, fPutList)
+	fast(opGetTupleElement, fGetTupleElement)
+	fast(opIsNil, fIsNil)
+	fast(opIsNonemptyList, fIsNonemptyList)
+	fast(opIsTuple, fIsTuple)
+	fast(opTestArity, fTestArity)
+	fast(opIsTaggedTuple, fIsTaggedTuple)
+	fast(opIsEqExact, fIsEqExact)
+	fast(opIsNeExact, fIsNeExact)
+	fast(opIsEq, fIsEq)
+	fast(opIsNe, fIsNe)
+	fast(opIsLt, fIsLt)
+	fast(opIsGe, fIsGe)
+	fast(opSelectVal, fSelectVal)
+	fast(opCall, fCall)
+	fast(opCallLast, fCallLast)
+	fast(opCallOnly, fCallOnly)
+	fast(opAllocate, fAllocate)
+	fast(opDeallocate, fDeallocate)
+	fast(opInitYregs, fInitYregs)
+	fast(opTestHeap, fTestHeap)
+	fast(opGcBif2, fGcBif2)
 }
 
 // The output goes into a buffer; the locks and the clocks are internal/p2twin's.
@@ -74,7 +129,7 @@ const testSchedulers = 7
 // returns what it printed. A run that takes more than a minute is given up,
 // with the process table dumped after what it printed.
 func runImage(img *pack.Image) []byte {
-	Out = testWrite
+	p2.Sink = testWrite
 	Load(img.Code, img.Literals, img.Atoms, img.Funcs, img.Funs, img.Lines, img.Files)
 	testOut = testOut[:0]
 	if !Start(img.Entry, testSchedulers) {
@@ -163,9 +218,12 @@ func TestElixir(t *testing.T) {
 			if err != nil {
 				t.Fatalf("elixir: %v", err)
 			}
-			got := runImage(img)
-			if !bytes.Equal(got, want) {
-				t.Errorf("the VM printed:\n%s--- elixir printed:\n%s", got, want)
+			for _, fast := range []bool{false, true} {
+				useFast(fast)
+				got := runImage(img)
+				if !bytes.Equal(got, want) {
+					t.Errorf("the VM printed, fast handlers %v:\n%s--- elixir printed:\n%s", fast, got, want)
+				}
 			}
 		})
 	}

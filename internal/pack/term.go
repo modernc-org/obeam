@@ -55,6 +55,11 @@ const (
 	// calling a function. Like NonValue, never a term.
 	JumpValue = 1<<6 | HdrNonValue<<3 | 7
 
+	// BifValue is what a BIF answers to have the handler call the BIF whose
+	// number it left in bifJump, with the arguments it put in bargs: apply's
+	// way of calling a BIF, so that no BIF calls one.
+	BifValue = 2<<6 | HdrNonValue<<3 | 7
+
 	// A register marker, in code only: an x register ends in 0111, a y
 	// register in 1111, the number above.
 	MarkX = 0x7

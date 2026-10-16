@@ -17,13 +17,6 @@ import (
 	"modernc.org/obeam/vm"
 )
 
-func out(b byte) {
-	if b == '\n' {
-		p2.WriteByte('\r')
-	}
-	p2.WriteByte(b)
-}
-
 // run loads the image afresh and runs it on one scheduler, and answers the
 // clocks it took and the instructions.
 func run(profile bool) (uint64, uint32) {
@@ -47,7 +40,7 @@ var (
 )
 
 func main() {
-	vm.Out = out
+	vm.CRLF = true
 	if image.TableID != vm.TableID {
 		printf("prof: the image was packed for other tables than the VM's: make prof\r\n")
 		return

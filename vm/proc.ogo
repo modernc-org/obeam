@@ -9,8 +9,7 @@
 const (
 	maxProcs   = 1 << pidIndexBits
 	maxX       = 64 // X registers
-	maxSaveX   = maxArity
-	initOrder  = 6 // a new process's block: 64 longs
+	initOrder  = 6  // a new process's block: 64 longs
 	reductions = 2000
 	maxPending = 16 // messages taken out of the mailbox and still in their fragments, before a collection is forced; sooner when the pool runs low
 	noProc     = 0xffffffff
@@ -45,19 +44,13 @@ type Proc struct {
 
 	// Links and monitors, under the stripe: the pids this process is linked
 	// to, the processes that monitor it, and the ones it monitors.
-	links    [maxLinks]uint32
-	nlinks   uint32
-	mons     [maxLinks]monitor
-	nmons    uint32
-	watching [maxLinks]monitor
-	nwatch   uint32
+	rels     uint16 // its links and monitors: the first of its records in the pool, or noRel
 	trapExit bool
 	signaled bool // an exit signal waits in the mailbox
 
 	// The X registers saved while it is not running: a call's arguments, or
 	// nothing at a receive.
-	xsave [maxSaveX]uint32
-	nsave uint32
+	nsave uint32 // the X registers its turn begins with, on its stack until it does
 
 	// The mailbox: fragments linked through their first long, and the one a
 	// receive is looking at, cur, with the one before it, prev, for taking
@@ -171,6 +164,7 @@ func procsInit() {
 		scheds[i].refs = 0
 	}
 	namesInit()
+	relsInit()
 	runHead = noProc
 	runTail = noProc
 	stopping = false
@@ -180,11 +174,11 @@ func procsInit() {
 }
 
 // spawn makes a process that begins at a code offset with nargs arguments,
-// which the caller puts in its xsave, with a block large enough for them to
-// be copied in, and returns nil when the table or the arena is full. It is
-// not queued yet.
+// which the caller copies to its heap and their roots to the top of its
+// stack, as yield saves them, with a block large enough for both, and returns
+// nil when the table or the arena is full. It is not queued yet.
 func spawn(entry, nargs, argLongs uint32) *Proc {
-	order := orderFor(argLongs + 1<<initOrder)
+	order := orderFor(argLongs + nargs + 1<<initOrder)
 	if order == 0xff {
 		return nil
 	}
@@ -218,9 +212,7 @@ func spawn(entry, nargs, argLongs uint32) *Proc {
 	p.reds = reductions
 	p.next = noProc
 	p.catches = 0
-	p.nlinks = 0
-	p.nmons = 0
-	p.nwatch = 0
+	p.rels = noRel
 	p.trapExit = false
 	p.signaled = false
 	p.nsave = nargs
@@ -355,12 +347,19 @@ func ensure(s *sched, n uint32, live int32) bool {
 }
 
 // yield ends the running process's turn at a call: its arguments, live
-// X registers, are saved, and it goes to the end of the run queue, to go on
-// at target.
+// X registers, are pushed on its stack, from where turnStart takes them
+// back, and it goes to the end of the run queue, to go on at target. One
+// whose block has no room for them even after a collection goes on instead,
+// its turn not ended.
 func yield(s *sched, target, live uint32) uint32 {
 	p := s.cur
+	if p.stop-p.htop < live && !gc(s, live, 0, live) {
+		p.reds = reductions
+		return target
+	}
+	p.stop -= live
 	for i := uint32(0); i < live; i++ {
-		p.xsave[i] = s.x[i]
+		arena[p.stop+i] = s.x[i]
 	}
 	p.nsave = live
 	p.pc = target

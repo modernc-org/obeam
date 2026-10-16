@@ -1,0 +1,78 @@
+// Copyright 2026 The obeam Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file.
+
+// The pins. A pin driven by several cogs is the OR of what they drive, so the
+// schedulers drive none: a pin BIF posts what it wants done to a ring, under
+// lockPins, and the cog that serves the ring, main's on the board, takes the
+// commands with NextPin and does them. A read waits for its answer, PinRead's,
+// with the lock held, which keeps the answer its own. Without a cog serving,
+// PinsServed false, a pin BIF does nothing and a read answers 0.
+
+// What a command asks.
+const (
+	PinHighOp = iota
+	PinLowOp
+	PinToggleOp
+	PinFloatOp
+	PinWriteOp
+	PinInOp
+)
+
+type pinCmd struct {
+	op, pin, v int
+}
+
+const pinRing = 64
+
+var (
+	PinsServed bool // a cog serves the ring
+
+	pinCmds          [pinRing]pinCmd
+	pinHead, pinTail int    // the head is the serving cog's, the tail the posters', under lockPins
+	inSeq, inDone    uint32 // a read's number, and the number of the last read answered
+	inVal            int
+)
+
+// postPin puts a command on the ring, waiting for room if it must.
+func postPin(op, pin, v int) {
+	lock(lockPins)
+	for (pinTail+1)%pinRing == pinHead {
+	}
+	pinCmds[pinTail] = pinCmd{op, pin, v}
+	pinTail = (pinTail + 1) % pinRing
+	unlock(lockPins)
+}
+
+// readPin posts a read and waits for its answer.
+func readPin(pin int) int {
+	lock(lockPins)
+	for (pinTail+1)%pinRing == pinHead {
+	}
+	seq := inSeq + 1
+	inSeq = seq
+	pinCmds[pinTail] = pinCmd{PinInOp, pin, 0}
+	pinTail = (pinTail + 1) % pinRing
+	for inDone != seq {
+	}
+	v := inVal
+	unlock(lockPins)
+	return v
+}
+
+// NextPin takes the next command off the ring for the serving cog to do, and
+// reports false when there is none. A read is answered by PinRead.
+func NextPin() (op, pin, v int, ok bool) {
+	if pinHead == pinTail {
+		return 0, 0, 0, false
+	}
+	c := pinCmds[pinHead]
+	pinHead = (pinHead + 1) % pinRing
+	return c.op, c.pin, c.v, true
+}
+
+// PinRead answers the read NextPin gave last.
+func PinRead(v int) {
+	inVal = v
+	inDone = inSeq
+}

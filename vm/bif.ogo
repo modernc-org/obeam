@@ -735,8 +735,8 @@ func bifP2PinHigh(s *sched, n uint32) uint32 {
 	if !ok {
 		return badarg(s)
 	}
-	if PinHigh != nil {
-		PinHigh(pin)
+	if PinsServed {
+		postPin(PinHighOp, pin, 0)
 	}
 	return okTerm
 }
@@ -746,8 +746,8 @@ func bifP2PinLow(s *sched, n uint32) uint32 {
 	if !ok {
 		return badarg(s)
 	}
-	if PinLow != nil {
-		PinLow(pin)
+	if PinsServed {
+		postPin(PinLowOp, pin, 0)
 	}
 	return okTerm
 }
@@ -757,8 +757,8 @@ func bifP2PinToggle(s *sched, n uint32) uint32 {
 	if !ok {
 		return badarg(s)
 	}
-	if PinToggle != nil {
-		PinToggle(pin)
+	if PinsServed {
+		postPin(PinToggleOp, pin, 0)
 	}
 	return okTerm
 }
@@ -768,8 +768,8 @@ func bifP2PinFloat(s *sched, n uint32) uint32 {
 	if !ok {
 		return badarg(s)
 	}
-	if PinFloat != nil {
-		PinFloat(pin)
+	if PinsServed {
+		postPin(PinFloatOp, pin, 0)
 	}
 	return okTerm
 }
@@ -779,10 +779,10 @@ func bifP2PinIn(s *sched, n uint32) uint32 {
 	if !ok {
 		return badarg(s)
 	}
-	if PinIn == nil {
+	if !PinsServed {
 		return mkSmall(0)
 	}
-	return mkSmall(int32(PinIn(pin)))
+	return mkSmall(int32(readPin(pin)))
 }
 
 func bifP2PinWrite(s *sched, n uint32) uint32 {
@@ -790,8 +790,8 @@ func bifP2PinWrite(s *sched, n uint32) uint32 {
 	if !ok || !isSmall(s.bargs[1]) {
 		return badarg(s)
 	}
-	if PinWrite != nil {
-		PinWrite(pin, int(smallVal(s.bargs[1])))
+	if PinsServed {
+		postPin(PinWriteOp, pin, int(smallVal(s.bargs[1])))
 	}
 	return okTerm
 }
@@ -807,17 +807,11 @@ func bifP2GetCt(s *sched, n uint32) uint32 {
 }
 
 func bifP2ClockFreq(s *sched, n uint32) uint32 {
-	if ClockFreq == nil {
-		return mkSmall(0)
-	}
-	return intResult(s, int64(ClockFreq()))
+	return intResult(s, int64(p2.ClockFreq()))
 }
 
 func bifP2Rnd(s *sched, n uint32) uint32 {
-	if Rnd == nil {
-		return mkSmall(4)
-	}
-	return intResult(s, int64(Rnd()))
+	return intResult(s, int64(p2.Rnd()))
 }
 
 // Processes: spawn, send, apply.
@@ -852,7 +846,7 @@ func listToX(s *sched, l uint32) int32 {
 }
 
 // spawnAt makes a process to run the code at entry with the n arguments in
-// x0 and up, copied to it, and queues it.
+// x0 and up, copied to its heap with their roots on its stack, and queues it.
 func spawnAt(s *sched, entry, n uint32) uint32 {
 	longs := uint32(0)
 	for i := uint32(0); i < n; i++ {
@@ -866,9 +860,10 @@ func spawnAt(s *sched, entry, n uint32) uint32 {
 	if p == nil {
 		return failAtom(s, atomSystemLimit)
 	}
+	p.stop -= n
 	for i := uint32(0); i < n; i++ {
 		root, end := copyTerm(s, s.x[i], p.htop)
-		p.xsave[i] = root
+		arena[p.stop+i] = root
 		p.htop = end
 	}
 	enqueue(p)
@@ -915,7 +910,8 @@ func bifSend(s *sched, n uint32) uint32 {
 }
 
 // bifApply3 calls a function of the image by name with a list of arguments:
-// the arguments go to x0 and up and the handler jumps. A BIF is called here.
+// the arguments go to x0 and up and the handler jumps. A BIF's go to bargs
+// and the handler calls it.
 func bifApply3(s *sched, n uint32) uint32 {
 	m, f, args := s.bargs[0], s.bargs[1], s.bargs[2]
 	if !isAtom(m) || !isAtom(f) {
@@ -942,7 +938,8 @@ func bifApply3(s *sched, n uint32) uint32 {
 			s.bargs[k] = s.x[k]
 		}
 		s.nbargs = uint32(na)
-		return bifs[i].f(s, uint32(na))
+		s.bifJump = uint32(i)
+		return bifValue
 	}
 	return failAtom(s, atomUndef)
 }
@@ -965,7 +962,8 @@ func bifApply2(s *sched, n uint32) uint32 {
 			s.bargs[k] = s.x[k]
 		}
 		s.nbargs = uint32(na)
-		return bifs[funCode(f)].f(s, uint32(na))
+		s.bifJump = funCode(f)
+		return bifValue
 	}
 	free := funFree(f)
 	i := boxIdx(f) + 1 + funHeadLongs
@@ -1008,7 +1006,8 @@ func bifRaise3(s *sched, n uint32) uint32 {
 // Links, monitors, signals and names.
 
 // bifSpawnLink1 and bifSpawnLink3 spawn as spawn does and link the new process
-// with the caller before it runs.
+// with the caller. With the pool of links out of records, which Erlang would
+// make system_limit before spawning, the new process runs unlinked.
 func bifSpawnLink1(s *sched, n uint32) uint32 {
 	pid := bifSpawn1(s, n)
 	if pid != nonValue {
@@ -1025,14 +1024,19 @@ func bifSpawnLink3(s *sched, n uint32) uint32 {
 	return pid
 }
 
-// linkBoth links the running process and another, each to the other.
-func linkBoth(s *sched, pid uint32) bool {
+// linkBoth links the running process and another, each to the other; it
+// reports whether the other lives, and whether the pool had room for both
+// ends, the link being made in full or not at all.
+func linkBoth(s *sched, pid uint32) (alive, room bool) {
 	self := s.cur.pid()
-	if !linkTo(pid, self) {
-		return false
+	alive, room = linkTo(pid, self)
+	if !alive || !room {
+		return alive, room
 	}
-	linkTo(self, pid)
-	return true
+	if _, room = linkTo(self, pid); !room {
+		unlinkFrom(pid, self)
+	}
+	return true, room
 }
 
 // bifLink links to a process; one that is gone is noproc, an error, or
@@ -1045,7 +1049,11 @@ func bifLink(s *sched, n uint32) uint32 {
 	if pid == s.cur.pid() {
 		return trueTerm
 	}
-	if linkBoth(s, pid) {
+	alive, room := linkBoth(s, pid)
+	if !room {
+		return failAtom(s, atomSystemLimit)
+	}
+	if alive {
 		return trueTerm
 	}
 	if !s.cur.trapExit {
@@ -1188,25 +1196,30 @@ func bifMonitor2(s *sched, n uint32) uint32 {
 	s.refs++
 	ref := mkRef(s.id<<24 | s.refs&0xffffff)
 	self := s.cur.pid()
+	// The watcher's end first: a process that ends between the two steps
+	// finds it, and takes it out as it sends the DOWN.
+	p := s.cur
+	lock(stripe(p))
+	room := relAdd(p, relWatch, pid, ref)
+	unlock(stripe(p))
+	if !room {
+		return failAtom(s, atomSystemLimit)
+	}
 	q := procOf(pid)
 	lock(stripe(q))
 	alive := q.alive(pid)
-	full := q.nmons == maxLinks
-	if alive && !full {
-		q.mons[q.nmons] = monitor{self, ref}
-		q.nmons++
+	if alive {
+		room = relAdd(q, relMon, self, ref)
 	}
 	unlock(stripe(q))
-	if alive && full {
+	if !alive || !room {
+		lock(stripe(p))
+		relDrop(p, relWatch, 0, ref)
+		unlock(stripe(p))
+	}
+	if !room {
 		return failAtom(s, atomSystemLimit)
 	}
-	p := s.cur
-	lock(stripe(p))
-	if p.nwatch < maxLinks {
-		p.watching[p.nwatch] = monitor{pid, ref}
-		p.nwatch++
-	}
-	unlock(stripe(p))
 	if !alive {
 		if !ensure(s, 6, s.curLive) {
 			return nonValue
@@ -1233,31 +1246,11 @@ func bifDemonitor1(s *sched, n uint32) uint32 {
 	}
 	p := s.cur
 	lock(stripe(p))
-	pid := uint32(0)
-	for i := uint32(0); i < p.nwatch; i++ {
-		if p.watching[i].ref == ref {
-			pid = p.watching[i].pid
-			p.nwatch--
-			p.watching[i] = p.watching[p.nwatch]
-			break
-		}
-	}
+	pid := relDrop(p, relWatch, 0, ref)
 	unlock(stripe(p))
-	if pid == 0 {
-		return trueTerm
+	if pid != 0 {
+		relDropFrom(pid, relMon, 0, ref)
 	}
-	q := procOf(pid)
-	lock(stripe(q))
-	if q.alive(pid) {
-		for i := uint32(0); i < q.nmons; i++ {
-			if q.mons[i].ref == ref {
-				q.nmons--
-				q.mons[i] = q.mons[q.nmons]
-				break
-			}
-		}
-	}
-	unlock(stripe(q))
 	return trueTerm
 }
 

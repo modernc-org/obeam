@@ -288,6 +288,12 @@ buddies from joining, and a pool three quarters free had no block above 256
 longs; `vm.Dump()`, now with the pool's free lists and the last request it
 failed, showed it.
 
+**Changed before M6b, for room** (section 8): a process's saved X registers
+are on its own stack between turns, and its links and monitors are records
+of a pool shared by all, a list a process; the VM calls no function value
+but the handlers and the BIFs, so that ogo's bound on a goroutine's stack is
+not a sum over every BIF; and the arena is 192 KB.
+
 ## 4. The image
 
 Little-endian longs, in sections, every section long-aligned:
@@ -653,3 +659,78 @@ stack of 12 KB leaves some 8 KB of the hub: the next addition to the VM or
 the demo is a question of room. Maps, the bit syntax's matching and Elixir's
 ranges and structs, which are maps, are M6b.
 
+
+**Room, before M6b**, 2026-10-17. M6a left some 8 KB of the hub, and the
+user put the programs the VM can run before its speed: a fast VM that cannot
+run a realistic program is of less use than a slower one that can. Where
+the checked demo build's 503,788 bytes went, by building it without each
+part, by the backend's listing and by the tables' sizes under the twin:
+
+| Part | Bytes |
+| --- | --- |
+| the arena, the processes' heaps | 131,072 |
+| code: the VM 126 KB, the C library 17 KB, ogo's runtime 8 KB, the core 5 KB | 158,020 |
+| the process table, 256 slots of 252 bytes | 64,512 |
+| the goroutines' stacks, 7 slots of 1,776 longs | 49,728 |
+| the demo's image | 40,508 |
+| the schedulers' own state, 7 of 2,900 bytes | 20,300 |
+| the rest: tables, strings, the runtime's data | about 39,600 |
+
+Four changes gave 88 KB back, the profile on the board unchanged, 655
+clocks an instruction with the core against 657:
+
+- **The process table**, 33.8 KB. A process's saved X registers had 64
+  bytes in its slot; they are pushed on its own stack when its turn ends at
+  a call, `yield`, and popped when the next begins, and a block with no room
+  for them even after a collection goes on running instead. Its links and
+  monitors had room for four of each in its slot; they are records of one
+  pool of 512, a list a process under its stripe, a link a record at each
+  end and a monitor the watcher's and the watched one's, and a process that
+  ends takes its records out of the other ends' lists, so that a monitor that
+  fired or a watcher that died leaves nothing behind. A slot is 96 bytes, and
+  a process has as many links as the pool has records, which a supervisor
+  of more than four children needed: `erl/sup.erl` links fifty workers to
+  one process and makes and ends six hundred monitors and links of each kind,
+  three times what the pool holds.
+- **The goroutines' stacks**, 30.5 KB. ogo sizes them from the backend's
+  listing, which counts a call through a function value as going to every
+  function whose address is taken. The output, the pins, the clock's
+  frequency and `rnd` were hooks, function values `main.ogo` set, and `apply`
+  called the BIF it applied through the table, so every BIF that wrote,
+  drove a pin or applied, and every handler that called a BIF, made one cycle
+  of 91 functions, whose frames the bound adds up. Now the VM writes to the
+  serial line through `p2`, a newline as `CRLF` says, the pins' ring is the
+  VM's (`vm/pins.ogo`), served by main's cog through `NextPin` and `PinRead`,
+  and `apply` answers `bifValue`, the BIF and its arguments left for the
+  handler to call (`callBif`), which also keeps a chain of applies from
+  deepening the stack. The cycle is eleven handlers, a slot 688 longs.
+- **The fast handlers on the board**, 16.8 KB. The core does their
+  instructions, and they saw only what it handed back, which they handed on.
+  A function whose address is taken is linked even when nothing calls the
+  function that takes it, so the registration is the twin's, `useFast` in
+  `vm/host_test.go`, and the twin runs every module of the corpus twice, with
+  the general handlers alone, as the board does, and with the fast ones,
+  which the core is written after. The profiler's second pass, without the
+  core, now times the general handlers: 1,150 clocks an instruction, 830
+  with the fast ones.
+- **`printf` in `main.ogo`**, 7.9 KB, its formatter and its floats: the
+  figures are written by two small functions.
+
+Two things did not pay. The profiler behind a function the board's program
+does not call kept `runProfiled` linked and made the build a kilobyte larger.
+`--no-inline` changes nothing: the VM is built without inlining already,
+its functions outgrowing a cog's registers with it. `--unchecked` saves 55 KB
+of checks, not of speed, and stays a choice of the build.
+
+With the demo's image as it was, the checked build is 413,800 bytes and the
+unchecked 370,300. The arena is 192 KB again, as section 7 decided, and with
+`sup` in the demo the checked build is 485,092 bytes and the unchecked
+440,504; `main`'s stack needs 1,108 bytes, by ogo's own report, so 37 KB of
+the hub are left (`make budget`). On the board both builds print the 91
+lines before `cogs` that `erl` and `elixir` print: 1,136,479 instructions in
+5,397 ms checked, 4,342 unchecked, 1,316 collections. The next room is the
+image's: read from the SD card at boot into the bottom of the region the
+heaps are in, so that a program and its heaps share it, and the VM's binary
+carries no program. The card is no store to run from: p2-11 measured 1,610
+microseconds to read a block of 512 bytes, about 8,000 hub reads for one
+long.

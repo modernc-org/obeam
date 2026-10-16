@@ -21,122 +21,76 @@ import (
 
 const schedulers = 7
 
-// out writes a byte of the VM's output to the serial line, a newline as the
-// terminal wants it.
-func out(b byte) {
-	if b == '\n' {
-		p2.WriteByte('\r')
-	}
-	p2.WriteByte(b)
-}
-
-func clockFreq() uint32 { return p2.ClockFreq() }
-func rnd() uint32       { return p2.Rnd() }
-
-// The pins. A scheduler cog posts what it wants done to a ring, under a lock,
-// and this cog does it, so that every pin is driven by one cog. A read waits
-// for its answer with the lock held, which keeps the answer its own.
-const (
-	pinHighOp = iota
-	pinLowOp
-	pinToggleOp
-	pinFloatOp
-	pinWriteOp
-	pinInOp
-)
-
-type pinCmd struct {
-	op, pin, v int
-}
-
-const ringSize = 64
-
-var (
-	ring               [ringSize]pinCmd
-	ringHead, ringTail int // the head is this cog's, the tail the posters', under pinLock
-	pinLock            int
-	inSeq, inDone      uint32 // a read's number, and the number of the last read answered
-	inVal              int
-)
-
-// post puts a command on the ring, waiting for room if it must.
-func post(op, pin, v int) {
-	for !p2.TryLock(pinLock) {
-	}
-	for (ringTail+1)%ringSize == ringHead {
-	}
-	ring[ringTail] = pinCmd{op, pin, v}
-	ringTail = (ringTail + 1) % ringSize
-	p2.Unlock(pinLock)
-}
-
-func pinHigh(pin int)         { post(pinHighOp, pin, 0) }
-func pinLow(pin int)          { post(pinLowOp, pin, 0) }
-func pinToggle(pin int)       { post(pinToggleOp, pin, 0) }
-func pinFloat(pin int)        { post(pinFloatOp, pin, 0) }
-func pinWrite(pin int, v int) { post(pinWriteOp, pin, v) }
-
-func pinIn(pin int) int {
-	for !p2.TryLock(pinLock) {
-	}
-	for (ringTail+1)%ringSize == ringHead {
-	}
-	seq := inSeq + 1
-	inSeq = seq
-	ring[ringTail] = pinCmd{pinInOp, pin, 0}
-	ringTail = (ringTail + 1) % ringSize
-	for inDone != seq {
-	}
-	v := inVal
-	p2.Unlock(pinLock)
-	return v
-}
-
-// servePins does what the ring holds.
+// servePins does what the VM's ring of pins holds, so that every pin is
+// driven by this cog.
 func servePins() {
-	for ringHead != ringTail {
-		c := ring[ringHead]
-		switch c.op {
-		case pinHighOp:
-			p2.PinHigh(c.pin)
-		case pinLowOp:
-			p2.PinLow(c.pin)
-		case pinToggleOp:
-			p2.PinToggle(c.pin)
-		case pinFloatOp:
-			p2.PinFloat(c.pin)
-		case pinWriteOp:
-			p2.PinWrite(c.pin, c.v)
-		case pinInOp:
-			inVal = p2.PinIn(c.pin)
-			inDone = inSeq
+	for {
+		op, pin, v, ok := vm.NextPin()
+		if !ok {
+			return
 		}
-		ringHead = (ringHead + 1) % ringSize
+		switch op {
+		case vm.PinHighOp:
+			p2.PinHigh(pin)
+		case vm.PinLowOp:
+			p2.PinLow(pin)
+		case vm.PinToggleOp:
+			p2.PinToggle(pin)
+		case vm.PinFloatOp:
+			p2.PinFloat(pin)
+		case vm.PinWriteOp:
+			p2.PinWrite(pin, v)
+		case vm.PinInOp:
+			vm.PinRead(p2.PinIn(pin))
+		}
+	}
+}
+
+// say writes a string to the serial line, and num a number. The VM's figures
+// are written with them rather than printf, whose formatter, floats and all,
+// was hub RAM the program has better uses for.
+func say(str string) {
+	for i := 0; i < len(str); i++ {
+		p2.WriteByte(str[i])
+	}
+}
+
+func num(v uint64) {
+	var d [20]byte
+	i := len(d)
+	for {
+		i--
+		d[i] = byte('0' + v%10)
+		v /= 10
+		if v == 0 {
+			break
+		}
+	}
+	for ; i < len(d); i++ {
+		p2.WriteByte(d[i])
 	}
 }
 
 func main() {
-	vm.Out = out
+	vm.CRLF = true
+	vm.PinsServed = true
 	vm.Core = core.Run
-	vm.PinHigh = pinHigh
-	vm.PinLow = pinLow
-	vm.PinToggle = pinToggle
-	vm.PinFloat = pinFloat
-	vm.PinIn = pinIn
-	vm.PinWrite = pinWrite
-	vm.ClockFreq = clockFreq
-	vm.Rnd = rnd
-	pinLock = p2.NewLock()
 
 	if image.TableID != vm.TableID {
-		printf("obeam: the image was packed for other tables than the VM's: make image\r\n")
+		say("obeam: the image was packed for other tables than the VM's: make image\r\n")
 		return
 	}
 	vm.Load(image.Code[:], image.Literals[:], image.Atoms[:], image.Funcs[:], image.Funs[:], image.Lines[:], image.Files[:])
-	printf("obeam: %s, %d longs of code, %d schedulers\r\n\r\n", image.EntryName, len(image.Code), schedulers)
+	say("obeam: ")
+	say(image.EntryName)
+	say(", ")
+	num(uint64(len(image.Code)))
+	say(" longs of code, ")
+	num(schedulers)
+	say(" schedulers\r\n\r\n")
 	t := p2.GetMs()
 	if !vm.Start(image.Entry, schedulers) {
-		printf("no room for the first process\r\n")
+		say("no room for the first process\r\n")
 		return
 	}
 	for !vm.Finished() {
@@ -146,13 +100,23 @@ func main() {
 		servePins()
 	}
 	t = p2.GetMs() - t
-	printf("\r\n%d instructions in %d ms", vm.Steps(), t)
+	say("\r\n")
+	num(uint64(vm.Steps()))
+	say(" instructions in ")
+	num(uint64(t))
+	say(" ms")
 	if t > 0 {
-		printf(", %d a second", uint64(vm.Steps())*1000/uint64(t))
+		say(", ")
+		num(uint64(vm.Steps()) * 1000 / uint64(t))
+		say(" a second")
 	}
-	printf(", %d collections, the core run %d times", vm.Collections(), vm.CoreRuns())
+	say(", ")
+	num(uint64(vm.Collections()))
+	say(" collections, the core run ")
+	num(uint64(vm.CoreRuns()))
+	say(" times")
 	if !vm.Succeeded() {
-		printf("; the process failed")
+		say("; the process failed")
 	}
-	printf("\r\n")
+	say("\r\n")
 }

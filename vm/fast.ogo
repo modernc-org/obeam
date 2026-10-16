@@ -10,7 +10,12 @@
 // cases that need more, a collection, a big integer, a structure to compare,
 // a turn that ends, answer slowPath before they change anything, which has
 // the loop call the instruction's general handler, kept in slow. The profile
-// of erl/bench.erl chose them; make prof measures them.
+// of erl/bench.erl chose them. The core does the same instructions on the
+// board, from hub RAM, and there they would see only what it hands back,
+// which they hand on: 17 KB for nothing. So nothing here registers them, the
+// board's build leaves them out as functions no one calls, and the twin's
+// tests put them in place, host_test.go's useFast, to hold them to erl: they
+// are what the core is written after.
 
 // slowPath is what a fast handler answers to have the general one do the
 // instruction: no code offset, the code being far shorter.
@@ -24,33 +29,6 @@ func init() {
 			handlers[i] = hBad
 		}
 	}
-	fast(opMove, fMove)
-	fast(opSwap, fSwap)
-	fast(opGetList, fGetList)
-	fast(opGetHd, fGetHd)
-	fast(opGetTl, fGetTl)
-	fast(opPutList, fPutList)
-	fast(opGetTupleElement, fGetTupleElement)
-	fast(opIsNil, fIsNil)
-	fast(opIsNonemptyList, fIsNonemptyList)
-	fast(opIsTuple, fIsTuple)
-	fast(opTestArity, fTestArity)
-	fast(opIsTaggedTuple, fIsTaggedTuple)
-	fast(opIsEqExact, fIsEqExact)
-	fast(opIsNeExact, fIsNeExact)
-	fast(opIsEq, fIsEq)
-	fast(opIsNe, fIsNe)
-	fast(opIsLt, fIsLt)
-	fast(opIsGe, fIsGe)
-	fast(opSelectVal, fSelectVal)
-	fast(opCall, fCall)
-	fast(opCallLast, fCallLast)
-	fast(opCallOnly, fCallOnly)
-	fast(opAllocate, fAllocate)
-	fast(opDeallocate, fDeallocate)
-	fast(opInitYregs, fInitYregs)
-	fast(opTestHeap, fTestHeap)
-	fast(opGcBif2, fGcBif2)
 }
 
 // hBad is every opcode the VM does not have: the packer refuses them, so

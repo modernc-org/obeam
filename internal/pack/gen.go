@@ -109,7 +109,7 @@ func genTags() string {
 		{"smallMin", SmallMin}, {"smallMax", SmallMax},
 		{"pidIndexBits", PidIndexBits}, {"pidGenBits", PidGenBits}, {"funHeadLongs", FunHeadLongs},
 		{"maxArity", MaxArity}, {"funLocal", FunLocal}, {"funExport", FunExport}, {"funBif", FunBif},
-		{"jumpValue", JumpValue},
+		{"jumpValue", JumpValue}, {"bifValue", BifValue},
 		{"segBinary", SegBinary}, {"segInteger", SegInteger}, {"segUTF8", SegUTF8},
 		{"segAll", SegAll}, {"segLittle", SegLittle},
 		{"markX", MarkX}, {"markY", MarkY},

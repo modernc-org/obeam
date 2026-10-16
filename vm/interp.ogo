@@ -145,8 +145,10 @@ func turnStart(s *sched, p *Proc) (uint32, bool) {
 	sig := p.signaled
 	unlock(stripe(p))
 	for i := uint32(0); i < p.nsave; i++ {
-		s.x[i] = p.xsave[i]
+		s.x[i] = arena[p.stop+i]
 	}
+	p.stop += p.nsave
+	p.nsave = 0
 	s.left = leftEnd
 	if sig && !signals(s) {
 		return 0, false
@@ -480,10 +482,14 @@ func callFun(s *sched, arity, f, next uint32) uint32 {
 		}
 		s.nbargs = arity
 		s.curLive = int32(arity)
-		r := bifs[funCode(f)].f(s, arity)
+		r := callBif(s, funCode(f), arity)
 		s.nbargs = 0
 		if r == nonValue {
 			return raise(s, mkAtom(s.bifClass), s.bifReason)
+		}
+		if r == jumpValue {
+			s.cur.cp = next
+			return jump(s, s.bifJump, s.bifLive)
 		}
 		s.x[0] = r
 		return next
@@ -516,6 +522,19 @@ func hBadrecord(s *sched, pc uint32) uint32 {
 // The BIF instructions. bif0, bif1 and bif2 may not allocate; the gc_bifs
 // say how many X registers are live, and call_bif's are its arguments.
 
+// callBif calls BIF b with its arguments in bargs, and then the BIF an apply
+// answers with bifValue, until one answers something else. apply calls no
+// BIF itself: a chain of applies does not deepen the stack, and no BIF is a
+// caller of BIFs to the bound ogo reads off the listing.
+func callBif(s *sched, b, arity uint32) uint32 {
+	r := bifs[b].f(s, arity)
+	for r == bifValue {
+		s.curLive = int32(s.nbargs)
+		r = bifs[s.bifJump].f(s, s.nbargs)
+	}
+	return r
+}
+
 func hCallBif(s *sched, pc uint32) uint32 {
 	arity, b := code[pc+1], code[pc+2]
 	for i := uint32(0); i < arity; i++ {
@@ -523,7 +542,7 @@ func hCallBif(s *sched, pc uint32) uint32 {
 	}
 	s.nbargs = arity
 	s.curLive = int32(arity)
-	r := bifs[b].f(s, arity)
+	r := callBif(s, b, arity)
 	s.nbargs = 0
 	if r == nonValue {
 		return raise(s, mkAtom(s.bifClass), s.bifReason)

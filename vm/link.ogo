@@ -3,8 +3,9 @@
 // license that can be found in the LICENSE file.
 
 // Links, monitors, exit signals and registered names. A process keeps the
-// pids it is linked to and the processes that monitor it, a few of each, under
-// its stripe's lock. When it ends, each link gets an exit signal, a message
+// pids it is linked to, the processes that monitor it and the ones it
+// monitors in a list of records of a pool shared by all, under its stripe's
+// lock. When it ends, each link gets an exit signal, a message
 // of a kind of its own, {'EXIT', Pid, Reason}, and each monitor the message
 // {'DOWN', Ref, process, Pid, Reason}. A receiver that traps exits reads a
 // signal as a message; one that does not ends with the signal's reason, unless
@@ -12,17 +13,126 @@
 // when the receiver's turn begins and when it receives.
 
 const (
-	maxLinks = 4  // links a process has at most, and monitors on it
-	maxNames = 16 // registered names
+	maxRels  = 512    // links and monitors, two records each, of all processes together
+	noRel    = 0xffff // the end of a list
+	maxNames = 16     // registered names
+
+	relLink  = 0 // a link to pid
+	relMon   = 1 // a monitor of this process, by pid, under ref
+	relWatch = 2 // a monitor of pid, by this process, under ref
 
 	kindMessage = 0 // a fragment's kind, in bits 24 and up of its order word
 	kindExit    = 1 // an exit signal, {'EXIT', From, Reason}
 )
 
-// A monitor is one process watching another: who, and by which reference.
-type monitor struct {
-	pid uint32
-	ref uint32
+// A rel is one end's record of a link or a monitor: a link between two
+// processes is a record in the list of each, and so is a monitor, the
+// watcher's relWatch and the watched one's relMon. A process's list runs
+// from its rels through next, under its stripe; the free records are a list
+// under lockPool. It was four links and four monitors each, in the process's
+// slot, until the table outgrew the hub RAM it had (DESIGN.md section 8).
+type rel struct {
+	next uint16
+	kind uint8
+	pid  uint32 // the other end
+	ref  uint32 // a monitor's reference
+}
+
+var (
+	rels    [maxRels]rel
+	relFree uint16 // under lockPool
+)
+
+func relsInit() {
+	for i := range rels {
+		rels[i].next = uint16(i + 1)
+	}
+	rels[maxRels-1].next = noRel
+	relFree = 0
+}
+
+// relAdd puts a record at the head of a process's list, under its stripe;
+// it reports false when the pool has none left.
+func relAdd(p *Proc, kind uint8, pid, ref uint32) bool {
+	lock(lockPool)
+	r := relFree
+	if r != noRel {
+		relFree = rels[r].next
+	}
+	unlock(lockPool)
+	if r == noRel {
+		return false
+	}
+	rels[r].next = p.rels
+	rels[r].kind = kind
+	rels[r].pid = pid
+	rels[r].ref = ref
+	p.rels = r
+	return true
+}
+
+// relHas reports whether a process's list has a record of a kind with a pid,
+// under its stripe.
+func relHas(p *Proc, kind uint8, pid uint32) bool {
+	for r := p.rels; r != noRel; r = rels[r].next {
+		if rels[r].kind == kind && rels[r].pid == pid {
+			return true
+		}
+	}
+	return false
+}
+
+// relDrop takes the first record of a kind out of a process's list, under
+// its stripe, a link's by its pid and a monitor's by its ref, and gives it
+// back to the pool; it answers the record's pid, or 0 when there is none.
+func relDrop(p *Proc, kind uint8, pid, ref uint32) uint32 {
+	prev := uint16(noRel)
+	for r := p.rels; r != noRel; r = rels[r].next {
+		if rels[r].kind != kind || kind == relLink && rels[r].pid != pid || kind != relLink && rels[r].ref != ref {
+			prev = r
+			continue
+		}
+		if prev == noRel {
+			p.rels = rels[r].next
+		} else {
+			rels[prev].next = rels[r].next
+		}
+		pid = rels[r].pid
+		lock(lockPool)
+		rels[r].next = relFree
+		relFree = r
+		unlock(lockPool)
+		return pid
+	}
+	return 0
+}
+
+// relDropFrom is relDrop in the list of the process a pid names, while it
+// lives, under its stripe.
+func relDropFrom(of uint32, kind uint8, pid, ref uint32) uint32 {
+	q := procOf(of)
+	lock(stripe(q))
+	r := uint32(0)
+	if q.alive(of) {
+		r = relDrop(q, kind, pid, ref)
+	}
+	unlock(stripe(q))
+	return r
+}
+
+// relRelease gives a list that no process has any more back to the pool.
+func relRelease(r uint16) {
+	if r == noRel {
+		return
+	}
+	last := r
+	for rels[last].next != noRel {
+		last = rels[last].next
+	}
+	lock(lockPool)
+	rels[last].next = relFree
+	relFree = r
+	unlock(lockPool)
 }
 
 // A name is a registered process.
@@ -163,9 +273,10 @@ func signals(s *sched) bool {
 }
 
 // endProc ends the running process with an exit reason: its links get the
-// signal, its monitors the message, its name is given up, and it is freed.
-// It is dead to a linker or a monitor from the same locked step that takes
-// the links and monitors it has, so that none is added after and never told.
+// signal, its monitors the message, the processes it monitors forget it, its
+// name is given up, and it is freed. It is dead to a linker or a monitor from
+// the same locked step that takes its list, so that none is added after and
+// never told; the list is then its own, walked without a lock.
 func endProc(s *sched, reason uint32) {
 	p := s.cur
 	state := uint8(procFailed)
@@ -174,17 +285,8 @@ func endProc(s *sched, reason uint32) {
 	}
 	lock(stripe(p))
 	p.state = state
-	var links [maxLinks]uint32
-	var mons [maxLinks]monitor
-	nl, nm := p.nlinks, p.nmons
-	for i := uint32(0); i < nl; i++ {
-		links[i] = p.links[i]
-	}
-	for i := uint32(0); i < nm; i++ {
-		mons[i] = p.mons[i]
-	}
-	p.nlinks = 0
-	p.nmons = 0
+	list := p.rels
+	p.rels = noRel
 	unlock(stripe(p))
 	self := p.pid()
 	lock(lockProcs)
@@ -194,83 +296,74 @@ func endProc(s *sched, reason uint32) {
 		}
 	}
 	unlock(lockProcs)
-	if nl > 0 || nm > 0 {
+	told := false
+	for r := list; r != noRel; r = rels[r].next {
+		if rels[r].kind != relWatch {
+			told = true
+		}
+	}
+	if told {
 		s.bargs[0] = reason
 		s.nbargs = 1
-		if !ensure(s, 4+6, 0) {
-			s.nbargs = 0
-			p.exit(state)
-			return
-		}
+		told = ensure(s, 4+6, 0)
 		reason = s.bargs[0]
 		s.nbargs = 0
+	}
+	sig, down := uint32(0), uint32(0)
+	if told {
 		i := p.htop
 		arena[i] = mkHeader(hdrTuple, 3)
 		arena[i+1] = mkAtom(atomEXIT)
 		arena[i+2] = self
 		arena[i+3] = reason
-		p.htop += 4
-		sig := mkBoxed(i)
-		for k := uint32(0); k < nl; k++ {
-			unlinkFrom(links[k], self)
-			deliver(s, links[k], sig, kindExit)
-		}
-		i = p.htop
-		arena[i] = mkHeader(hdrTuple, 5)
-		arena[i+1] = mkAtom(atomDOWN)
-		arena[i+2] = 0
-		arena[i+3] = mkAtom(atomProcess)
-		arena[i+4] = self
-		arena[i+5] = reason
-		p.htop += 6
-		for k := uint32(0); k < nm; k++ {
-			arena[i+2] = mons[k].ref
-			deliver(s, mons[k].pid, mkBoxed(i), kindMessage)
+		sig = mkBoxed(i)
+		down = i + 4
+		arena[down] = mkHeader(hdrTuple, 5)
+		arena[down+1] = mkAtom(atomDOWN)
+		arena[down+2] = 0
+		arena[down+3] = mkAtom(atomProcess)
+		arena[down+4] = self
+		arena[down+5] = reason
+		p.htop += 4 + 6
+	}
+	for r := list; r != noRel; r = rels[r].next {
+		pid, ref := rels[r].pid, rels[r].ref
+		switch rels[r].kind {
+		case relLink:
+			relDropFrom(pid, relLink, self, 0)
+			if told {
+				deliver(s, pid, sig, kindExit)
+			}
+		case relMon:
+			relDropFrom(pid, relWatch, 0, ref)
+			if told {
+				arena[down+2] = ref
+				deliver(s, pid, mkBoxed(down), kindMessage)
+			}
+		case relWatch:
+			relDropFrom(pid, relMon, 0, ref)
 		}
 	}
+	relRelease(list)
 	p.exit(state)
 }
 
 // unlinkFrom takes a pid out of another process's links.
 func unlinkFrom(of, pid uint32) {
-	q := procOf(of)
-	lock(stripe(q))
-	if q.alive(of) {
-		for i := uint32(0); i < q.nlinks; i++ {
-			if q.links[i] == pid {
-				q.nlinks--
-				q.links[i] = q.links[q.nlinks]
-				break
-			}
-		}
-	}
-	unlock(stripe(q))
+	relDropFrom(of, relLink, pid, 0)
 }
 
 // linkTo adds a pid to a process's links, under the stripe; it reports
-// false when the process is gone or has no room.
-func linkTo(of, pid uint32) bool {
+// whether the process lives, and whether there was room in the pool.
+func linkTo(of, pid uint32) (alive, room bool) {
 	q := procOf(of)
 	lock(stripe(q))
-	ok := q.alive(of)
-	if ok {
-		found := false
-		for i := uint32(0); i < q.nlinks; i++ {
-			if q.links[i] == pid {
-				found = true
-			}
-		}
-		if !found {
-			if q.nlinks == maxLinks {
-				ok = false
-			} else {
-				q.links[q.nlinks] = pid
-				q.nlinks++
-			}
-		}
+	alive, room = q.alive(of), true
+	if alive && !relHas(q, relLink, pid) {
+		room = relAdd(q, relLink, pid, 0)
 	}
 	unlock(stripe(q))
-	return ok
+	return alive, room
 }
 
 // exitReason answers what a process that raised an exception exits with:

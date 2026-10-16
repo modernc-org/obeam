@@ -11,7 +11,7 @@ scheduler on each of seven cogs. The user is the author of OctoGo (`../ogo`) and
 p2-11 (`../p2-11`); the idea came from a talk with a friend who likes Erlang on
 2026-10-16.
 
-**Status, 2026-10-16, night: M5 committed, M6a built.** The user said go that afternoon; M0
+**Status, 2026-10-17: M6a committed (3b56176), the room before M6b built.** The user said go that afternoon; M0
 (the reader, the corpus, DESIGN.md) was done by evening, DESIGN.md's open
 points decided with the user, M1 (one process on one cog, e1a384e), M2
 (processes, messages, receive with timeouts, funs and apply, 18c3c27), M3
@@ -28,8 +28,12 @@ cog as the user chose, run from hub: it does 88% of the instructions, and
 the demo runs twice as fast as at the end of M4 (bba5a36; the user put the
 runtime around the core off for later). M6a, Elixir: six Elixir modules run
 and print what `elixir` prints, through `bs_create_bin`, run-time binaries,
-`IO`/`Kernel.inspect`/`String.Chars` BIFs and an `Enum` shim. M6b, maps and
-binary matching, is next in the plan. The files:
+`IO`/`Kernel.inspect`/`String.Chars` BIFs and an `Enum` shim. Then room, at
+the user's word that the programs the VM can run come before its speed: 88
+KB of the checked build given back at no cost in speed (DESIGN.md section
+8), the arena back to 192 KB, 37 KB of the hub left. M6b, maps and binary
+matching, is next in the plan, and then the image read from the SD card at
+boot into the region the heaps share. The files:
 
 - `ASSESSMENT.md`: the consolidated assessment and the plan. Verdict: start,
   staged. It holds the measured facts (opcode counts, AtomVM's size, what a
@@ -95,9 +99,12 @@ binary matching, is next in the plan. The files:
   process starting with 64 longs; line numbers in a side table on the board,
   `-lines=false` to drop it; the hardware API is the module `p2`, OctoGo's
   `p2` package name for name in snake_case, plus `p2:cog/0`, with no blocking
-  waits. **The arena is 128 KB since M4** (`arenaLongs` in `vm/arena.ogo`):
-  the checked build did not fit the hub beside more; a leaner VM gives it
-  back. `ogo build` says by how much a build misses the 512 KB.
+  waits. The arena was 128 KB from M4 until the room before M6b gave the
+  192 KB back (`arenaLongs` in `vm/arena.ogo`); it is the lever when the hub
+  runs short. `ogo build` says by how much a build misses the 512 KB.
+- **The programs the VM can run come before its speed** (the user,
+  2026-10-16): trade clocks for hub RAM where it buys room, and take the room
+  that costs nothing first. DESIGN.md section 8 has where the bytes go.
 
 ## The neighbours and the board
 
@@ -159,6 +166,7 @@ make image                       # regenerate image/image.ogo from the corpus (I
                                  # after ANY change to internal/pack/tables.go: `go run ./cmd/obeam gen -vm vm && make image`;
                                  # the board refuses an image whose TableID is not the VM's
 make run                         # ogo run on the board, under the shared lock
+make budget                      # build the board binary and say how much of the hub it leaves
 make prof                        # the profiler, prof/prof.binary, over erl/bench.erl (pack, names, build)
 make prof-run                    # and run it on the board, under the shared lock
 make beam                        # recompile the corpus (erlc +deterministic, OTP 27) after a .erl edit
@@ -185,15 +193,27 @@ the tree or be ahead of what this file knows; do not install over it.
 ## The VM
 
 - `vm/` is OctoGo that is also Go: no `print` builtins, no `Builder`. It
-  imports `p2` for the locks, the clocks and a pause only (`vm/hooks.ogo`,
-  `vm/profile.ogo`, `vm/bif.ogo`), and `scripts/twin.sh` rewrites that import
-  to `internal/p2twin`, a Go shim of those six functions; the output and the
-  pins are hooks `main.ogo` sets. The twin adds the package clauses, skips
+  imports `p2` for the locks, the clocks, a pause, the serial line, the
+  clock's frequency and `rnd` (`vm/hooks.ogo`, `vm/profile.ogo`, `vm/bif.ogo`,
+  `vm/core.ogo`), and `scripts/twin.sh` rewrites that import to
+  `internal/p2twin`, a Go shim of them whose serial line is the test's buffer,
+  `Sink`. `main.ogo` sets `CRLF` and `PinsServed` and serves the pins' ring.
+  The twin adds the package clauses, skips
   any directory with a `func main()`, and runs under `GOARCH=386` with the
   build tag `twin`, which `vm/host_test.go` is compiled under and nothing
   else; at the repository root that file is excluded, so plain `go vet ./...`
   and `go test ./...` do not see it. A lock through a hook cost 616 clocks a
   round and through `p2` costs 107: keep the locks direct.
+- **The VM calls no function value but the handlers and the BIFs** (`run`,
+  the BIF handlers, `callBif`; `Core` from `coreRun`). ogo sizes a
+  goroutine's stack from the backend's listing, which counts a call through a
+  function value as going to every function whose address is taken: a hook
+  called from a BIF made every BIF and handler one cycle whose frames the
+  bound added up, 1,776 longs a slot, 688 since. So nothing a BIF calls goes
+  through a function value, and `apply` answers `bifValue` with the BIF in
+  `bifJump` and its arguments in `bargs`, for `callBif` to call, rather than
+  calling it. And a function whose address is taken is linked even when
+  nothing calls the function that takes it.
 - **Nothing in `vm/` recurses** (a scheduler is a goroutine from M3 on, and a
   goroutine's stack is sized by the build): the collector is Cheney's, and
   comparison and the term writer keep their pending parts on stacks of their
@@ -212,13 +232,17 @@ the tree or be ahead of what this file knows; do not install over it.
 - A handler answers the next pc, or 0 to stop; `run` sets `cur.pc` before
   each so that a report knows where it was. `raise*` ends the process: a
   handler that raised returns 0 and nothing after it runs.
-- **A hot handler calls nothing** (`vm/fast.ogo`): a call makes it a non-leaf,
+- **The fast handlers are the twin's only** (`vm/fast.ogo`): on the board the
+  core does their instructions, so the board's build leaves them out, 16.8
+  KB, and `useFast` in `vm/host_test.go` registers them, where it must stay;
+  `TestErl` and `TestElixir` run every module with and without them.
+  A hot handler calls nothing: a call makes it a non-leaf,
   and the backend saves every register at its entry, ~150 clocks, even on a
   path that never calls. The operand decoding is written out in each, not
   `src`/`store`. A case it does not do it answers `slowPath` with nothing
   changed, and the loop calls the general handler, which `fast()` keeps in
-  `slow`. A new fast handler is registered in `fast.ogo`'s `init`; every empty
-  slot of `handlers` is `hBad`, so the loop has no nil test.
+  `slow`. A new fast handler is registered in `useFast`; every empty slot of
+  `handlers` is `hBad`, so the loop has no nil test.
 - **The core** (`core/core.pasm`): flexspin's inline assembly allows no
   `call` and no `ret` (a `ret` becomes a jump to the block's end and holds the
   block to the cog cache's size), must not touch `ptra`, and its `tjz`/`tjnz`/
@@ -231,10 +255,11 @@ the tree or be ahead of what this file knows; do not install over it.
   `CoreOps`, a `.op_<name>` in the template, `obeam gen`, `make image`. The
   core is not in the twin: run the demo on the board and diff it against
   `erl`, and `make prof`, after every change to it.
-- **Hub RAM is nearly full**: the checked demo binary is 503,788 bytes and
-  `main`'s stack 12 KB, some 8 KB short of 512 KB. `ogo build` says by how
-  much a build misses; the arena (`arenaLongs`) and the demo's modules are the
-  levers, and loading the image from the SD card the way out.
+- **Hub RAM**: the checked demo binary is 485,092 bytes and `main`'s stack
+  1,108, which leaves 37 KB of the 512 KB; `make budget` says so after a
+  change. `ogo build` says by how much a build misses; the arena
+  (`arenaLongs`) and the demo's modules are the levers, and loading the image
+  from the SD card the way out. DESIGN.md section 8 has where the bytes go.
 - Elixir's `inspect` is `vm/inspect.ogo`; it does not break lines at 80
   columns as Elixir's pretty printer does, so a corpus module keeps what it
   inspects short.
@@ -255,7 +280,11 @@ the tree or be ahead of what this file knows; do not install over it.
   compiler in a subshell, `(ulimit -v 4000000; ogo build .)`, and nothing
   else. Found 2026-10-16, twice, before the crash dump said why.
 - A process's turn ends only at a call (`jump`) or a `receive` that waits;
-  what is saved is the call's arguments, `maxArity` of them. A message lives
+  what is saved is the call's arguments, `maxArity` of them, pushed on the
+  process's own stack by `yield` and popped by `turnStart`. Its links and
+  monitors are records of the pool in `vm/link.ogo`, 512 for all, a list a
+  process under its stripe, the free list under `lockPool`; an end that dies
+  takes its records out of the other ends' lists. A message lives
   in a fragment of the pool until the receiver's next collection; `inFrom`
   counts the pending fragments as from-space. The timers are `Millis`'s
   milliseconds; without the hook `now()` ticks once a reading, so a timeout
@@ -275,8 +304,9 @@ the tree or be ahead of what this file knows; do not install over it.
   `cd build/twin && OBEAM_ROOT=$PWD/../.. go test -race -tags twin -run TestErl ./vm`
   (native arch; `GOARCH=386` has no race detector). It was clean at the end
   of M3 and should stay so.
-- The scheduler cogs drive no pin: `main.ogo` posts pin BIFs to a ring and
-  does them on main's cog, since several cogs' drives on a pin OR together.
+- The scheduler cogs drive no pin: a pin BIF posts to the VM's ring
+  (`vm/pins.ogo`, under `lockPins`), which main's cog serves with `NextPin`
+  and `PinRead`, since several cogs' drives on a pin OR together.
   `p2:cog/0` is the scheduler's number, not the cog's.
 - **A verdict about a process and the change it leads to are one step under
   the process's stripe** (`wakeExpired`'s removal of a timer entry, `sleep`'s
@@ -289,8 +319,8 @@ the tree or be ahead of what this file knows; do not install over it.
   never `raise(...); return 0`. A catch is a `1111` word in a y register, a
   continuation a `0111` word; `hReturn` clears the continuation register.
 - Every writer takes the scheduler and goes through `emit`, so that a
-  directive with a width can be captured and padded; `out` is the raw hook
-  for `main.ogo`'s own use. Erlang's rule for writing a float is the shorter
+  directive with a width can be captured and padded; `out` is the raw serial
+  line, under `lockOut`. Erlang's rule for writing a float is the shorter
   of the plain and the exponent form, plain on a tie.
 - Erlang logs a crash of a spawned process (error, throw) and not an exit, so
   a corpus module's workers end with `exit/1` when the test must compare
