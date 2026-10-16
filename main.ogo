@@ -14,6 +14,7 @@
 import (
 	"p2"
 
+	"modernc.org/obeam/core"
 	"modernc.org/obeam/image"
 	"modernc.org/obeam/vm"
 )
@@ -29,14 +30,8 @@ func out(b byte) {
 	p2.WriteByte(b)
 }
 
-func millis() uint32     { return p2.GetMs() }
-func newLock() int       { return p2.NewLock() }
-func tryLock(l int) bool { return p2.TryLock(l) }
-func release(l int)      { p2.Unlock(l) }
-func idle()              { p2.WaitUs(20) }
-func getCt() uint32      { return p2.GetCt() }
-func clockFreq() uint32  { return p2.ClockFreq() }
-func rnd() uint32        { return p2.Rnd() }
+func clockFreq() uint32 { return p2.ClockFreq() }
+func rnd() uint32       { return p2.Rnd() }
 
 // The pins. A scheduler cog posts what it wants done to a ring, under a lock,
 // and this cog does it, so that every pin is driven by one cog. A read waits
@@ -122,18 +117,13 @@ func servePins() {
 
 func main() {
 	vm.Out = out
-	vm.Millis = millis
-	vm.NewLock = newLock
-	vm.TryLock = tryLock
-	vm.Unlock = release
-	vm.Idle = idle
+	vm.Core = core.Run
 	vm.PinHigh = pinHigh
 	vm.PinLow = pinLow
 	vm.PinToggle = pinToggle
 	vm.PinFloat = pinFloat
 	vm.PinIn = pinIn
 	vm.PinWrite = pinWrite
-	vm.GetCt = getCt
 	vm.ClockFreq = clockFreq
 	vm.Rnd = rnd
 	pinLock = p2.NewLock()
@@ -160,7 +150,7 @@ func main() {
 	if t > 0 {
 		printf(", %d a second", uint64(vm.Steps())*1000/uint64(t))
 	}
-	printf(", %d collections", vm.Collections())
+	printf(", %d collections, the core run %d times", vm.Collections(), vm.CoreRuns())
 	if !vm.Succeeded() {
 		printf("; the process failed")
 	}

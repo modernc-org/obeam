@@ -22,6 +22,8 @@ var (
 	freeMap   [arenaLongs / minBlock / 32]uint32 // a bit per smallest block: it begins a free block
 	arenaLow  uint32                             // where the allocator's part begins
 	freeLongs uint32                             // how many longs are free
+
+	failedOrder, failedFree uint32 // the last request the pool could not meet, for Dump
 )
 
 func freeBit(i uint32) bool {
@@ -103,14 +105,25 @@ func orderFor(n uint32) uint32 {
 // allocBlock takes a block of an order, splitting a larger one if it must. It
 // returns noBlock when there is none. The pool's lock is taken for it.
 func allocBlock(order uint32) uint32 {
+	b, _ := allocBlockLow(order)
+	return b
+}
+
+// lowLongs is where the pool runs low: a quarter of the arena free.
+const lowLongs = arenaLongs / 4
+
+// allocBlockLow is allocBlock that also says whether the pool has run low.
+func allocBlockLow(order uint32) (uint32, bool) {
 	lock(lockPool)
 	o := order
 	for o <= maxOrder && freeHead[o-minOrder] == noBlock {
 		o++
 	}
 	if o > maxOrder {
+		failedOrder = order
+		failedFree = freeLongs
 		unlock(lockPool)
-		return noBlock
+		return noBlock, true
 	}
 	i := freeHead[o-minOrder]
 	unlinkFree(i, o)
@@ -118,8 +131,9 @@ func allocBlock(order uint32) uint32 {
 		o--
 		pushFree(i+1<<o, o)
 	}
+	low := freeLongs < lowLongs
 	unlock(lockPool)
-	return i
+	return i, low
 }
 
 // freeBlock gives a block back, joining it with its buddy while the buddy is

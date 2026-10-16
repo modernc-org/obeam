@@ -16,12 +16,17 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
 	"modernc.org/obeam/internal/pack"
 )
+
+// uses names the modules a module of the corpus calls, which are packed with
+// it.
+var uses = map[string][]string{
+	"bench": {"fib", "lst", "tuples", "pingpong", "ring", "sieve"},
+}
 
 // TestErl runs the modules of the corpus the VM can run, packed in memory,
 // and holds their output to what erl prints for the same module. It runs in
@@ -35,9 +40,13 @@ func TestErl(t *testing.T) {
 	if err != nil {
 		t.Skip("no erl on PATH")
 	}
-	for _, m := range []string{"fac", "fib", "lst", "tuples", "funs", "pingpong", "ring", "sieve", "counter", "exc", "links", "flt", "fmt"} {
+	for _, m := range []string{"fac", "fib", "lst", "tuples", "funs", "pingpong", "ring", "sieve", "counter", "exc", "links", "flt", "fmt", "bench"} {
 		t.Run(m, func(t *testing.T) {
-			img, err := pack.Pack([]string{filepath.Join(root, "erl", m+".beam")}, pack.Options{Lines: true})
+			var files []string
+			for _, mod := range append([]string{m}, uses[m]...) {
+				files = append(files, filepath.Join(root, "erl", mod+".beam"))
+			}
+			img, err := pack.Pack(files, pack.Options{Lines: true})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -53,26 +62,10 @@ func TestErl(t *testing.T) {
 	}
 }
 
-// The host's hooks: the output into a buffer, the clock, the locks as
-// mutexes with TryLock, and a pause that lets another goroutine run.
-var (
-	testOut   []byte
-	testStart = time.Now()
-	testMus   [16]sync.Mutex
-	testLocks int
-)
+// The output goes into a buffer; the locks and the clocks are internal/p2twin's.
+var testOut []byte
 
-func testWrite(b byte)       { testOut = append(testOut, b) }
-func testMillis() uint32     { return uint32(time.Since(testStart).Milliseconds()) }
-func testIdle()              { runtime.Gosched() }
-func testTryLock(l int) bool { return testMus[l].TryLock() }
-func testUnlock(l int)       { testMus[l].Unlock() }
-
-func testNewLock() int {
-	l := testLocks
-	testLocks++
-	return l
-}
+func testWrite(b byte) { testOut = append(testOut, b) }
 
 // The schedulers the tests run on: as many as the board has.
 const testSchedulers = 7
@@ -82,11 +75,6 @@ const testSchedulers = 7
 // with the process table dumped after what it printed.
 func runImage(img *pack.Image) []byte {
 	Out = testWrite
-	Millis = testMillis
-	Idle = testIdle
-	NewLock = testNewLock
-	TryLock = testTryLock
-	Unlock = testUnlock
 	Load(img.Code, img.Literals, img.Atoms, img.Funcs, img.Funs, img.Lines, img.Files)
 	testOut = testOut[:0]
 	if !Start(img.Entry, testSchedulers) {

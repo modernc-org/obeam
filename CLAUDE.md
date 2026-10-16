@@ -11,7 +11,7 @@ scheduler on each of seven cogs. The user is the author of OctoGo (`../ogo`) and
 p2-11 (`../p2-11`); the idea came from a talk with a friend who likes Erlang on
 2026-10-16.
 
-**Status, 2026-10-16, night: M4 built.** The user said go that afternoon; M0
+**Status, 2026-10-16, night: M4 built, M5 begun.** The user said go that afternoon; M0
 (the reader, the corpus, DESIGN.md) was done by evening, DESIGN.md's open
 points decided with the user, M1 (one process on one cog, e1a384e), M2
 (processes, messages, receive with timeouts, funs and apply, 18c3c27), M3
@@ -21,9 +21,13 @@ widths and precisions) built the same night: thirteen modules of the corpus
 run under the Go twin on seven goroutines with the bytes `erl` prints, clean
 under the race detector, and the board prints the same lines on seven cogs.
 Left for later: loading an image from the SD card (the VM's atom names would
-have to become bytes), bit syntax, maps, bignums, `~p`'s line breaking. Next
-in the plan: M5, a PASM core for the hot instructions, and before it a
-profile of where the clocks go. The files:
+have to become bytes), bit syntax, maps, bignums, `~p`'s line breaking. M5's
+OctoGo part is done (a profiler, leaf fast handlers, the P2's locks directly,
+collections sized by what lives) and the PASM core, on each scheduler's own
+cog as the user chose, run from hub: it does 88% of the instructions, and
+the demo runs twice as fast as at the end of M4. What is left of M5 is the
+runtime around the core: sends, receives, collections, scheduling (DESIGN.md
+section 8, the end). The files:
 
 - `ASSESSMENT.md`: the consolidated assessment and the plan. Verdict: start,
   staged. It holds the measured facts (opcode counts, AtomVM's size, what a
@@ -42,6 +46,13 @@ profile of where the clocks go. The files:
   image` from `erl/demo.beam` and the four modules it calls, and committed as
   p2-11 commits its generated sources.
 - `scripts/twin.sh`: runs `vm/` under Go; `make test` runs it last.
+- `prof/`: the profiler, a board program over `erl/bench.erl`; `make prof`
+  packs its image into `prof/image` and writes `prof/names.ogo`, the names
+  the VM does not carry.
+- `core/`: the PASM core. **Edit `core/core.pasm`, never `core/core.spin2`**,
+  which `go run ./cmd/obeam gen -vm vm -names prof` writes from it and from
+  `CoreOps` in `internal/pack/tables.go`; `TestCoreGenerated` fails on a stale
+  one.
 
 ## Decisions taken (change them only with the user)
 
@@ -142,6 +153,8 @@ make image                       # regenerate image/image.ogo from the corpus (I
                                  # after ANY change to internal/pack/tables.go: `go run ./cmd/obeam gen -vm vm && make image`;
                                  # the board refuses an image whose TableID is not the VM's
 make run                         # ogo run on the board, under the shared lock
+make prof                        # the profiler, prof/prof.binary, over erl/bench.erl (pack, names, build)
+make prof-run                    # and run it on the board, under the shared lock
 make beam                        # recompile the corpus (erlc +deterministic, OTP 27) after a .erl edit
 make stats                       # regenerate erl/stats.txt
 make generate                    # regenerate internal/beam/opcodes.go and vm/{opcodes,tags,atoms,biftab}.ogo
@@ -164,13 +177,16 @@ the tree or be ahead of what this file knows; do not install over it.
 
 ## The VM
 
-- `vm/` is OctoGo that is also Go: no `p2` import, no `print` builtins, no
-  `Builder`; what the board gives it comes through the function variables of
-  `vm/hooks.ogo` (`Out`, `Millis`, the pins), which `main.ogo` sets and the
-  host test sets to its own. `scripts/twin.sh` adds the package clauses and
-  runs it under `GOARCH=386` with the build tag `twin`, which `vm/host_test.go`
-  is compiled under and nothing else; at the repository root that file is
-  excluded, so plain `go vet ./...` and `go test ./...` do not see it.
+- `vm/` is OctoGo that is also Go: no `print` builtins, no `Builder`. It
+  imports `p2` for the locks, the clocks and a pause only (`vm/hooks.ogo`,
+  `vm/profile.ogo`, `vm/bif.ogo`), and `scripts/twin.sh` rewrites that import
+  to `internal/p2twin`, a Go shim of those six functions; the output and the
+  pins are hooks `main.ogo` sets. The twin adds the package clauses, skips
+  any directory with a `func main()`, and runs under `GOARCH=386` with the
+  build tag `twin`, which `vm/host_test.go` is compiled under and nothing
+  else; at the repository root that file is excluded, so plain `go vet ./...`
+  and `go test ./...` do not see it. A lock through a hook cost 616 clocks a
+  round and through `p2` costs 107: keep the locks direct.
 - **Nothing in `vm/` recurses** (a scheduler is a goroutine from M3 on, and a
   goroutine's stack is sized by the build): the collector is Cheney's, and
   comparison and the term writer keep their pending parts on stacks of their
@@ -189,10 +205,35 @@ the tree or be ahead of what this file knows; do not install over it.
 - A handler answers the next pc, or 0 to stop; `run` sets `cur.pc` before
   each so that a report knows where it was. `raise*` ends the process: a
   handler that raised returns 0 and nothing after it runs.
+- **A hot handler calls nothing** (`vm/fast.ogo`): a call makes it a non-leaf,
+  and the backend saves every register at its entry, ~150 clocks, even on a
+  path that never calls. The operand decoding is written out in each, not
+  `src`/`store`. A case it does not do it answers `slowPath` with nothing
+  changed, and the loop calls the general handler, which `fast()` keeps in
+  `slow`. A new fast handler is registered in `fast.ogo`'s `init`; every empty
+  slot of `handlers` is `hBad`, so the loop has no nil test.
+- **The core** (`core/core.pasm`): flexspin's inline assembly allows no
+  `call` and no `ret` (a `ret` becomes a jump to the block's end and holds the
+  block to the cog cache's size), must not touch `ptra`, and its `tjz`/`tjnz`/
+  `tjs` reach 256 instructions only. So operands are read and written by the
+  macros `@src X`, `@dst`, `@one`, `@two`, `@kinds`, runs of instructions
+  with no branch; a handler ends with `@pass N` (N longs, then the dispatch)
+  or jumps to `.jump`/`.fail`/`.back`; `ptrb` is the code pointer. A handler
+  must do exactly what `vm/fast.ogo`'s does, and answer `.back`, with nothing
+  changed, for a case it does not do. A new instruction is a line in
+  `CoreOps`, a `.op_<name>` in the template, `obeam gen`, `make image`. The
+  core is not in the twin: run the demo on the board and diff it against
+  `erl`, and `make prof`, after every change to it.
+- **Measure before and after** with `make prof` and the board: the profile is
+  by opcode and by BIF, on one scheduler. `vm.Dump()` prints the pool's free
+  lists and the last request it failed: a `system_limit` with the pool mostly
+  free is fragmentation.
 - The frame: `arena[stop]` is the continuation, `y(i)` is `arena[stop+1+i]`.
   `allocate` zeroes the slots so the collector reads only terms.
 - Check a change three ways: `ogo build ./vm` (the OctoGo checker, seconds),
-  `make twin` (Go, and the oracle against `erl`), and the board.
+  `make twin` (Go, and the oracle against `erl`), and the board; a change to
+  the synchronization also under the race detector, and a change for speed
+  with `make prof`.
 - **Never run the twin, or `make test`, in a shell that has `ulimit -v
   4000000` set for the compiler cap**: `erl` reserves more virtual memory
   than that at boot and dies with `load_failed` of its own kernel modules,

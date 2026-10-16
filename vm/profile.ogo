@@ -1,0 +1,137 @@
+// Copyright 2026 The obeam Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file.
+
+import "p2"
+
+// Profiling. With Profile set, a scheduler runs each turn through
+// runProfiled, which reads the cycle counter, p2.GetCt, before and
+// after every instruction's handler and adds the difference, less what the
+// reading costs, to the instruction's opcode, and to its BIF's for the
+// instructions that call one. The tables are the package's, written by
+// whichever scheduler runs: profile on one. The clocks of a handler include
+// its call through the handler table; what the loop around it costs is the
+// difference between a run's clocks an instruction without the profile and
+// the handlers' with it.
+
+var (
+	Profile       bool
+	ProfCount     [256]uint32
+	ProfClocks    [256]uint64
+	ProfBifCount  [nBifs]uint32
+	ProfBifClocks [nBifs]uint64
+	ProfOverhead  uint32 // what two readings of the counter cost, ProfCalibrate's
+)
+
+// ProfReset clears the tables and measures what a reading of the counter
+// costs: the least of a thousand pairs.
+func ProfReset() {
+	for i := range ProfCount {
+		ProfCount[i] = 0
+		ProfClocks[i] = 0
+	}
+	for i := range ProfBifCount {
+		ProfBifCount[i] = 0
+		ProfBifClocks[i] = 0
+	}
+	ProfOverhead = 0xffffffff
+	for i := 0; i < 1000; i++ {
+		t0 := p2.GetCt()
+		t1 := p2.GetCt()
+		if t1-t0 < ProfOverhead {
+			ProfOverhead = t1 - t0
+		}
+	}
+}
+
+// bifAt answers the BIF an instruction calls, or nBifs for none.
+func bifAt(pc, op uint32) uint32 {
+	switch op {
+	case opCallBif, opBif1, opBif2:
+		return code[pc+2]
+	case opBif0:
+		return code[pc+1]
+	case opGcBif1, opGcBif2, opGcBif3:
+		return code[pc+3]
+	}
+	return nBifs
+}
+
+// runProfiled is run, timing every instruction.
+func runProfiled(s *sched, p *Proc) bool {
+	pc, ok := turnStart(s, p)
+	if !ok {
+		return true
+	}
+	for pc != 0 {
+		op := code[pc] & 0xff
+		h := handlers[op]
+		p.pc = pc
+		b := bifAt(pc, op)
+		t0 := p2.GetCt()
+		pc = h(s, pc)
+		if pc == slowPath {
+			pc = slow[op](s, p.pc)
+		}
+		t := p2.GetCt() - t0 - ProfOverhead
+		ProfCount[op]++
+		ProfClocks[op] += uint64(t)
+		if b < nBifs {
+			ProfBifCount[b]++
+			ProfBifClocks[b] += uint64(t)
+		}
+		s.steps++
+	}
+	return turnEnd(s, p)
+}
+
+// LockClocks answers what a lock and its unlock cost, the least of a hundred.
+func LockClocks() uint32 {
+	best := uint32(0xffffffff)
+	for i := 0; i < 100; i++ {
+		t0 := p2.GetCt()
+		lock(lockOut)
+		unlock(lockOut)
+		if t := p2.GetCt() - t0 - ProfOverhead; t < best {
+			best = t
+		}
+	}
+	return best
+}
+
+// Forced answers how many collections the pending messages forced.
+func Forced() uint32 {
+	n := uint32(0)
+	for i := range scheds {
+		n += scheds[i].forced
+	}
+	return n
+}
+
+// CoreRuns answers how many times the core was run, which is how many times
+// it handed an instruction back.
+func CoreRuns() uint32 {
+	n := uint32(0)
+	for i := range scheds {
+		n += scheds[i].coreRuns
+	}
+	return n
+}
+
+// CoreSteps answers how many instructions the core did, and CoreClocks the
+// clocks it took, its calls and returns among them.
+func CoreSteps() uint32 {
+	n := uint32(0)
+	for i := range scheds {
+		n += scheds[i].coreSteps
+	}
+	return n
+}
+
+func CoreClocks() uint64 {
+	n := uint64(0)
+	for i := range scheds {
+		n += scheds[i].coreClocks
+	}
+	return n
+}

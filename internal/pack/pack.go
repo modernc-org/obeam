@@ -468,7 +468,7 @@ func (p *packer) emitFunction(fn *function) {
 		case beam.OpIntCodeEnd:
 			continue
 		case beam.OpFuncInfo:
-			p.emit(uint32(beam.OpFuncInfo), Atom(p.atom(fn.key.module)), Atom(p.atom(fn.key.name)), uint32(fn.key.arity))
+			p.emit(opw(beam.OpFuncInfo), Atom(p.atom(fn.key.module)), Atom(p.atom(fn.key.name)), uint32(fn.key.arity))
 			continue
 		case beam.OpCallExt, beam.OpCallExtLast, beam.OpCallExtOnly:
 			m, ok := f.Import(in)
@@ -478,12 +478,12 @@ func (p *packer) emitFunction(fn *function) {
 			}
 			arity := uint32(in.Args[0].Val)
 			if bif, ok := bifIndex(m); ok {
-				p.emit(uint32(OpCallBif), arity, uint32(bif))
+				p.emit(opw(OpCallBif), arity, uint32(bif))
 				switch in.Op {
 				case beam.OpCallExtLast:
-					p.emit(uint32(beam.OpDeallocate), uint32(in.Args[2].Val), uint32(beam.OpReturn))
+					p.emit(opw(beam.OpDeallocate), uint32(in.Args[2].Val), opw(beam.OpReturn))
 				case beam.OpCallExtOnly:
-					p.emit(uint32(beam.OpReturn))
+					p.emit(opw(beam.OpReturn))
 				}
 				continue
 			}
@@ -494,14 +494,14 @@ func (p *packer) emitFunction(fn *function) {
 			}
 			switch in.Op {
 			case beam.OpCallExt:
-				p.emit(uint32(beam.OpCall), arity)
+				p.emit(opw(beam.OpCall), arity)
 				p.emitTarget(target)
 			case beam.OpCallExtLast:
-				p.emit(uint32(beam.OpCallLast), arity)
+				p.emit(opw(beam.OpCallLast), arity)
 				p.emitTarget(target)
 				p.emit(uint32(in.Args[2].Val))
 			case beam.OpCallExtOnly:
-				p.emit(uint32(beam.OpCallOnly), arity)
+				p.emit(opw(beam.OpCallOnly), arity)
 				p.emitTarget(target)
 			}
 			continue
@@ -523,7 +523,7 @@ func (p *packer) emitFunction(fn *function) {
 			if in.Op == beam.OpGcBif1 || in.Op == beam.OpGcBif2 || in.Op == beam.OpGcBif3 {
 				imp = 2
 			}
-			p.emit(uint32(in.Op))
+			p.emit(opw(in.Op))
 			for j, a := range in.Args {
 				if j == imp {
 					p.emit(uint32(bif))
@@ -538,7 +538,7 @@ func (p *packer) emitFunction(fn *function) {
 				p.errorf("%s: fun %d of %d", where(in), idx, len(f.Funs))
 				continue
 			}
-			p.emit(uint32(beam.OpMakeFun3), uint32(p.funIndex(f, idx)))
+			p.emit(opw(beam.OpMakeFun3), uint32(p.funIndex(f, idx)))
 			p.emitArg(f, in.Args[1], where(in))
 			p.emitArg(f, in.Args[2], where(in))
 			continue
@@ -547,7 +547,7 @@ func (p *packer) emitFunction(fn *function) {
 			p.errorf("%s: an instruction the VM does not have", where(in))
 			continue
 		}
-		p.emit(uint32(in.Op))
+		p.emit(opw(in.Op))
 		for _, a := range in.Args {
 			p.emitArg(f, a, where(in))
 		}

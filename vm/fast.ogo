@@ -1,0 +1,640 @@
+// Copyright 2026 The obeam Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file.
+
+// The fast handlers. A handler that calls anything is no leaf, and the
+// backend saves every register it has at the call into it and restores them
+// at the return, some 150 clocks, more than most instructions' work. So the
+// hot instructions have handlers here that call nothing: an operand is read
+// and written in the handler itself, src and store written out, and the
+// cases that need more, a collection, a big integer, a structure to compare,
+// a turn that ends, answer slowPath before they change anything, which has
+// the loop call the instruction's general handler, kept in slow. The profile
+// of erl/bench.erl chose them; make prof measures them.
+
+// slowPath is what a fast handler answers to have the general one do the
+// instruction: no code offset, the code being far shorter.
+const slowPath = 0xffffffff
+
+var slow [256]handler
+
+func init() {
+	for i := range handlers {
+		if handlers[i] == nil {
+			handlers[i] = hBad
+		}
+	}
+	fast(opMove, fMove)
+	fast(opSwap, fSwap)
+	fast(opGetList, fGetList)
+	fast(opGetHd, fGetHd)
+	fast(opGetTl, fGetTl)
+	fast(opPutList, fPutList)
+	fast(opGetTupleElement, fGetTupleElement)
+	fast(opIsNil, fIsNil)
+	fast(opIsNonemptyList, fIsNonemptyList)
+	fast(opIsTuple, fIsTuple)
+	fast(opTestArity, fTestArity)
+	fast(opIsTaggedTuple, fIsTaggedTuple)
+	fast(opIsEqExact, fIsEqExact)
+	fast(opIsNeExact, fIsNeExact)
+	fast(opIsEq, fIsEq)
+	fast(opIsNe, fIsNe)
+	fast(opIsLt, fIsLt)
+	fast(opIsGe, fIsGe)
+	fast(opSelectVal, fSelectVal)
+	fast(opCall, fCall)
+	fast(opCallLast, fCallLast)
+	fast(opCallOnly, fCallOnly)
+	fast(opAllocate, fAllocate)
+	fast(opDeallocate, fDeallocate)
+	fast(opInitYregs, fInitYregs)
+	fast(opTestHeap, fTestHeap)
+	fast(opGcBif2, fGcBif2)
+}
+
+// hBad is every opcode the VM does not have: the packer refuses them, so
+// reaching one is a fault of the VM's.
+func hBad(s *sched, pc uint32) uint32 {
+	panic("vm: an instruction the VM does not have")
+}
+
+func fast(op int, f handler) {
+	slow[op] = handlers[op]
+	handlers[op] = f
+}
+
+// A source operand, written out: a term as it is, or the register a marker
+// names; and a destination:
+//
+//	v := code[pc+k]
+//	if v&7 == 7 {
+//		if v&8 == 0 {
+//			v = s.x[v>>4]
+//		} else {
+//			v = arena[s.cur.stop+1+v>>4]
+//		}
+//	}
+//
+//	if d&8 == 0 {
+//		s.x[d>>4] = v
+//	} else {
+//		arena[s.cur.stop+1+d>>4] = v
+//	}
+
+func fMove(s *sched, pc uint32) uint32 {
+	v := code[pc+1]
+	if v&7 == 7 {
+		if v&8 == 0 {
+			v = s.x[v>>4]
+		} else {
+			v = arena[s.cur.stop+1+v>>4]
+		}
+	}
+	d := code[pc+2]
+	if d&8 == 0 {
+		s.x[d>>4] = v
+	} else {
+		arena[s.cur.stop+1+d>>4] = v
+	}
+	return pc + 3
+}
+
+func fSwap(s *sched, pc uint32) uint32 {
+	a, b := code[pc+1], code[pc+2]
+	stop := s.cur.stop + 1
+	var va, vb uint32
+	if a&8 == 0 {
+		va = s.x[a>>4]
+	} else {
+		va = arena[stop+a>>4]
+	}
+	if b&8 == 0 {
+		vb = s.x[b>>4]
+	} else {
+		vb = arena[stop+b>>4]
+	}
+	if a&8 == 0 {
+		s.x[a>>4] = vb
+	} else {
+		arena[stop+a>>4] = vb
+	}
+	if b&8 == 0 {
+		s.x[b>>4] = va
+	} else {
+		arena[stop+b>>4] = va
+	}
+	return pc + 3
+}
+
+func fGetList(s *sched, pc uint32) uint32 {
+	v := code[pc+1]
+	if v&7 == 7 {
+		if v&8 == 0 {
+			v = s.x[v>>4]
+		} else {
+			v = arena[s.cur.stop+1+v>>4]
+		}
+	}
+	h, t := arena[v>>2], arena[v>>2+1]
+	d := code[pc+2]
+	if d&8 == 0 {
+		s.x[d>>4] = h
+	} else {
+		arena[s.cur.stop+1+d>>4] = h
+	}
+	d = code[pc+3]
+	if d&8 == 0 {
+		s.x[d>>4] = t
+	} else {
+		arena[s.cur.stop+1+d>>4] = t
+	}
+	return pc + 4
+}
+
+func fGetHd(s *sched, pc uint32) uint32 {
+	v := code[pc+1]
+	if v&7 == 7 {
+		if v&8 == 0 {
+			v = s.x[v>>4]
+		} else {
+			v = arena[s.cur.stop+1+v>>4]
+		}
+	}
+	v = arena[v>>2]
+	d := code[pc+2]
+	if d&8 == 0 {
+		s.x[d>>4] = v
+	} else {
+		arena[s.cur.stop+1+d>>4] = v
+	}
+	return pc + 3
+}
+
+func fGetTl(s *sched, pc uint32) uint32 {
+	v := code[pc+1]
+	if v&7 == 7 {
+		if v&8 == 0 {
+			v = s.x[v>>4]
+		} else {
+			v = arena[s.cur.stop+1+v>>4]
+		}
+	}
+	v = arena[v>>2+1]
+	d := code[pc+2]
+	if d&8 == 0 {
+		s.x[d>>4] = v
+	} else {
+		arena[s.cur.stop+1+d>>4] = v
+	}
+	return pc + 3
+}
+
+func fPutList(s *sched, pc uint32) uint32 {
+	p := s.cur
+	h := code[pc+1]
+	if h&7 == 7 {
+		if h&8 == 0 {
+			h = s.x[h>>4]
+		} else {
+			h = arena[p.stop+1+h>>4]
+		}
+	}
+	t := code[pc+2]
+	if t&7 == 7 {
+		if t&8 == 0 {
+			t = s.x[t>>4]
+		} else {
+			t = arena[p.stop+1+t>>4]
+		}
+	}
+	i := p.htop
+	arena[i] = h
+	arena[i+1] = t
+	p.htop = i + 2
+	d := code[pc+3]
+	if d&8 == 0 {
+		s.x[d>>4] = i<<2 | tagList
+	} else {
+		arena[p.stop+1+d>>4] = i<<2 | tagList
+	}
+	return pc + 4
+}
+
+func fGetTupleElement(s *sched, pc uint32) uint32 {
+	v := code[pc+1]
+	if v&7 == 7 {
+		if v&8 == 0 {
+			v = s.x[v>>4]
+		} else {
+			v = arena[s.cur.stop+1+v>>4]
+		}
+	}
+	v = arena[v>>2+1+code[pc+2]]
+	d := code[pc+3]
+	if d&8 == 0 {
+		s.x[d>>4] = v
+	} else {
+		arena[s.cur.stop+1+d>>4] = v
+	}
+	return pc + 4
+}
+
+// The tests: Fail and the operands; on past them if the test holds, to Fail
+// if not.
+
+func fIsNil(s *sched, pc uint32) uint32 {
+	v := code[pc+2]
+	if v&7 == 7 {
+		if v&8 == 0 {
+			v = s.x[v>>4]
+		} else {
+			v = arena[s.cur.stop+1+v>>4]
+		}
+	}
+	if v == nilTerm {
+		return pc + 3
+	}
+	return code[pc+1]
+}
+
+func fIsNonemptyList(s *sched, pc uint32) uint32 {
+	v := code[pc+2]
+	if v&7 == 7 {
+		if v&8 == 0 {
+			v = s.x[v>>4]
+		} else {
+			v = arena[s.cur.stop+1+v>>4]
+		}
+	}
+	if v&3 == tagList {
+		return pc + 3
+	}
+	return code[pc+1]
+}
+
+// A tuple's header is its arity above 000111.
+
+func fIsTuple(s *sched, pc uint32) uint32 {
+	v := code[pc+2]
+	if v&7 == 7 {
+		if v&8 == 0 {
+			v = s.x[v>>4]
+		} else {
+			v = arena[s.cur.stop+1+v>>4]
+		}
+	}
+	if v&3 == tagBoxed && arena[v>>2]&0x3f == 7 {
+		return pc + 3
+	}
+	return code[pc+1]
+}
+
+func fTestArity(s *sched, pc uint32) uint32 {
+	v := code[pc+2]
+	if v&7 == 7 {
+		if v&8 == 0 {
+			v = s.x[v>>4]
+		} else {
+			v = arena[s.cur.stop+1+v>>4]
+		}
+	}
+	if v&3 == tagBoxed && arena[v>>2] == code[pc+3]<<6|7 {
+		return pc + 4
+	}
+	return code[pc+1]
+}
+
+func fIsTaggedTuple(s *sched, pc uint32) uint32 {
+	v := code[pc+2]
+	if v&7 == 7 {
+		if v&8 == 0 {
+			v = s.x[v>>4]
+		} else {
+			v = arena[s.cur.stop+1+v>>4]
+		}
+	}
+	if v&3 == tagBoxed && arena[v>>2] == code[pc+3]<<6|7 && arena[v>>2+1] == code[pc+4] {
+		return pc + 5
+	}
+	return code[pc+1]
+}
+
+// Two operands of a test, read for the comparisons below.
+func fIsEqExact(s *sched, pc uint32) uint32 {
+	a, b := code[pc+2], code[pc+3]
+	if a&7 == 7 {
+		if a&8 == 0 {
+			a = s.x[a>>4]
+		} else {
+			a = arena[s.cur.stop+1+a>>4]
+		}
+	}
+	if b&7 == 7 {
+		if b&8 == 0 {
+			b = s.x[b>>4]
+		} else {
+			b = arena[s.cur.stop+1+b>>4]
+		}
+	}
+	if a == b {
+		return pc + 4
+	}
+	// Different words are different terms unless both point to structures,
+	// of one kind.
+	if t := a & 3; t != b&3 || t == tagSmall || t == tagImm {
+		return code[pc+1]
+	}
+	return slowPath
+}
+
+func fIsNeExact(s *sched, pc uint32) uint32 {
+	a, b := code[pc+2], code[pc+3]
+	if a&7 == 7 {
+		if a&8 == 0 {
+			a = s.x[a>>4]
+		} else {
+			a = arena[s.cur.stop+1+a>>4]
+		}
+	}
+	if b&7 == 7 {
+		if b&8 == 0 {
+			b = s.x[b>>4]
+		} else {
+			b = arena[s.cur.stop+1+b>>4]
+		}
+	}
+	if a == b {
+		return code[pc+1]
+	}
+	if t := a & 3; t != b&3 || t == tagSmall || t == tagImm {
+		return pc + 4
+	}
+	return slowPath
+}
+
+// The comparisons by value take two small integers here: tagged 00, they
+// compare as the integers do.
+
+func fIsEq(s *sched, pc uint32) uint32 {
+	a, b := code[pc+2], code[pc+3]
+	if a&7 == 7 {
+		if a&8 == 0 {
+			a = s.x[a>>4]
+		} else {
+			a = arena[s.cur.stop+1+a>>4]
+		}
+	}
+	if b&7 == 7 {
+		if b&8 == 0 {
+			b = s.x[b>>4]
+		} else {
+			b = arena[s.cur.stop+1+b>>4]
+		}
+	}
+	if a&3 != 0 || b&3 != 0 {
+		return slowPath
+	}
+	if a == b {
+		return pc + 4
+	}
+	return code[pc+1]
+}
+
+func fIsNe(s *sched, pc uint32) uint32 {
+	a, b := code[pc+2], code[pc+3]
+	if a&7 == 7 {
+		if a&8 == 0 {
+			a = s.x[a>>4]
+		} else {
+			a = arena[s.cur.stop+1+a>>4]
+		}
+	}
+	if b&7 == 7 {
+		if b&8 == 0 {
+			b = s.x[b>>4]
+		} else {
+			b = arena[s.cur.stop+1+b>>4]
+		}
+	}
+	if a&3 != 0 || b&3 != 0 {
+		return slowPath
+	}
+	if a != b {
+		return pc + 4
+	}
+	return code[pc+1]
+}
+
+func fIsLt(s *sched, pc uint32) uint32 {
+	a, b := code[pc+2], code[pc+3]
+	if a&7 == 7 {
+		if a&8 == 0 {
+			a = s.x[a>>4]
+		} else {
+			a = arena[s.cur.stop+1+a>>4]
+		}
+	}
+	if b&7 == 7 {
+		if b&8 == 0 {
+			b = s.x[b>>4]
+		} else {
+			b = arena[s.cur.stop+1+b>>4]
+		}
+	}
+	if a&3 != 0 || b&3 != 0 {
+		return slowPath
+	}
+	if int32(a) < int32(b) {
+		return pc + 4
+	}
+	return code[pc+1]
+}
+
+func fIsGe(s *sched, pc uint32) uint32 {
+	a, b := code[pc+2], code[pc+3]
+	if a&7 == 7 {
+		if a&8 == 0 {
+			a = s.x[a>>4]
+		} else {
+			a = arena[s.cur.stop+1+a>>4]
+		}
+	}
+	if b&7 == 7 {
+		if b&8 == 0 {
+			b = s.x[b>>4]
+		} else {
+			b = arena[s.cur.stop+1+b>>4]
+		}
+	}
+	if a&3 != 0 || b&3 != 0 {
+		return slowPath
+	}
+	if int32(a) >= int32(b) {
+		return pc + 4
+	}
+	return code[pc+1]
+}
+
+// fSelectVal takes a value that is no structure: it equals a case's value
+// only if it is the same word.
+func fSelectVal(s *sched, pc uint32) uint32 {
+	v := code[pc+1]
+	if v&7 == 7 {
+		if v&8 == 0 {
+			v = s.x[v>>4]
+		} else {
+			v = arena[s.cur.stop+1+v>>4]
+		}
+	}
+	if v&3 == tagList || v&3 == tagBoxed {
+		return slowPath
+	}
+	n := code[pc+3]
+	for i := uint32(0); i < n; i += 2 {
+		if code[pc+4+i] == v {
+			return code[pc+5+i]
+		}
+	}
+	return code[pc+2]
+}
+
+// The calls: a reduction each, and the turn's end, which saves the arguments,
+// is the general handler's.
+
+func fCall(s *sched, pc uint32) uint32 {
+	p := s.cur
+	if p.reds <= 1 {
+		return slowPath
+	}
+	p.reds--
+	p.cp = pc + 3
+	return code[pc+2]
+}
+
+func fCallLast(s *sched, pc uint32) uint32 {
+	p := s.cur
+	if p.reds <= 1 {
+		return slowPath
+	}
+	p.reds--
+	p.cp = arena[p.stop] >> 4
+	p.stop += code[pc+3] + 1
+	return code[pc+2]
+}
+
+func fCallOnly(s *sched, pc uint32) uint32 {
+	p := s.cur
+	if p.reds <= 1 {
+		return slowPath
+	}
+	p.reds--
+	return code[pc+2]
+}
+
+// The frame: the continuation, 0111 under its offset, and the y registers
+// above it, zeroed for the collector.
+
+func fAllocate(s *sched, pc uint32) uint32 {
+	p := s.cur
+	n := code[pc+1]
+	if p.stop-(n+1) < p.htop {
+		return slowPath
+	}
+	p.stop -= n + 1
+	arena[p.stop] = p.cp<<4 | 7
+	for i := uint32(1); i <= n; i++ {
+		arena[p.stop+i] = 0
+	}
+	return pc + 3
+}
+
+func fDeallocate(s *sched, pc uint32) uint32 {
+	p := s.cur
+	p.cp = arena[p.stop] >> 4
+	p.stop += code[pc+1] + 1
+	return pc + 2
+}
+
+func fInitYregs(s *sched, pc uint32) uint32 {
+	n := code[pc+1]
+	stop := s.cur.stop + 1
+	for i := uint32(0); i < n; i++ {
+		arena[stop+code[pc+2+i]>>4] = nilTerm
+	}
+	return pc + 2 + n
+}
+
+func fTestHeap(s *sched, pc uint32) uint32 {
+	p := s.cur
+	if p.htop+code[pc+1] > p.stop || p.forceGC {
+		return slowPath
+	}
+	return pc + 3
+}
+
+// fGcBif2 does +, -, *, div and rem of two small integers whose result is a
+// small integer; anything else, another BIF among them, is the BIF's.
+func fGcBif2(s *sched, pc uint32) uint32 {
+	op := code[pc+3]
+	if op > bixRem {
+		return slowPath
+	}
+	a, b := code[pc+4], code[pc+5]
+	if a&7 == 7 {
+		if a&8 == 0 {
+			a = s.x[a>>4]
+		} else {
+			a = arena[s.cur.stop+1+a>>4]
+		}
+	}
+	if b&7 == 7 {
+		if b&8 == 0 {
+			b = s.x[b>>4]
+		} else {
+			b = arena[s.cur.stop+1+b>>4]
+		}
+	}
+	if a&3 != 0 || b&3 != 0 {
+		return slowPath
+	}
+	var r uint32
+	switch op {
+	case bixAdd:
+		r = a + b
+		if int32((a^r)&(b^r)) < 0 {
+			return slowPath
+		}
+	case bixSub:
+		r = a - b
+		if int32((a^b)&(a^r)) < 0 {
+			return slowPath
+		}
+	default:
+		x, y := int32(a)>>2, int32(b)>>2
+		switch op {
+		case bixMul:
+			if x >= 1<<14 || x <= -1<<14 || y >= 1<<14 || y <= -1<<14 {
+				return slowPath
+			}
+			r = uint32(x*y) << 2
+		case bixDiv:
+			if y == 0 || y == -1 {
+				return slowPath
+			}
+			r = uint32(x/y) << 2
+		default:
+			if y == 0 || y == -1 {
+				return slowPath
+			}
+			r = uint32(x%y) << 2
+		}
+	}
+	d := code[pc+6]
+	if d&8 == 0 {
+		s.x[d>>4] = r
+	} else {
+		arena[s.cur.stop+1+d>>4] = r
+	}
+	return pc + 7
+}

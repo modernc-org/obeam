@@ -9,7 +9,7 @@ ERLCFLAGS  = +deterministic
 ERLS  = $(wildcard erl/*.erl)
 BEAMS = $(ERLS:.erl=.beam)
 
-.PHONY: all test twin beam stats generate image run clean
+.PHONY: all test twin beam stats generate image prof prof-run run clean
 
 all: test
 
@@ -35,6 +35,21 @@ IMAGE_MODULES = erl/demo.beam erl/fac.beam erl/fib.beam erl/lst.beam erl/tuples.
 image: $(BEAMS)
 	mkdir -p image
 	go run ./cmd/obeam pack -o image/image.ogo -entry $(IMAGE_ENTRY) $(IMAGE_MODULES)
+
+# prof packs erl/bench.erl into prof/image, writes the names the profiler
+# prints, and builds the profiler, prof/prof.binary; prof-run runs it on the
+# board under the shared lock.
+PROF_MODULES = erl/bench.beam erl/fib.beam erl/lst.beam erl/tuples.beam erl/pingpong.beam \
+	erl/ring.beam erl/sieve.beam
+
+prof: $(BEAMS)
+	mkdir -p prof/image
+	go run ./cmd/obeam pack -o prof/image/image.ogo -entry bench:main/0 $(PROF_MODULES)
+	go run ./cmd/obeam gen -vm vm -names prof
+	ogo build --unchecked -o prof/prof.binary ./prof
+
+prof-run: prof
+	flock -o -w 900 /tmp/p2-board.lock ogo loadp2 -t -b 230400 prof/prof.binary
 
 # run builds the board program and runs it on the board, under the lock the
 # ogo and p2-11 sessions share.

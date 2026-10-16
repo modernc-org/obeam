@@ -36,12 +36,17 @@ modules compiled by `erlc`.
   then:
 
   ```
-  913276 instructions in 5662 ms, 161299 a second, 2515 collections
+  913088 instructions in 3101 ms, 294449 a second, 619 collections, the core run 33118 times
   ```
 
   which is the checked build at 160 MHz, a second of it the demo's own
   waiting. DESIGN.md section 8 has the figures of each milestone.
-- `erl/`: the corpus, sixteen small Erlang modules from `fac` to a process
+- `core/`: the hot instructions in PASM, run on each scheduler's own cog from
+  hub RAM. It does 88% of the instructions of the profiler's workload, at 231
+  clocks each against 800 in OctoGo.
+- `prof/`: the profiler, which times every instruction of a workload on the
+  board, by opcode and by BIF: `make prof-run`.
+- `erl/`: the corpus, seventeen small Erlang modules from `fac` to a process
   ring, a concurrent prime sieve, linked workers and floats, compiled with
   OTP 27 and committed; `erl/stats.txt` is the opcode and call histogram M0
   measured over the first eleven.

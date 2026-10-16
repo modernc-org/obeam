@@ -44,15 +44,13 @@ printf 'module %s\n\ngo 1.26\n' "$module" > "$twin/go.mod"
 cd "$root"
 find . -name '*.ogo' -not -path './build/*' -printf '%h\n' | sort -u |
 	while read -r dir; do
-		# A package that imports p2, or carries a Spin2 object, is for the
-		# board only.
-		if grep -q -s -E '^(import)?[[:space:]]*"p2"' "$dir"/*.ogo; then
+		# A program, or a package carrying a Spin2 object, is for the board
+		# only. A package that imports p2 gets internal/p2twin, which is the
+		# part of p2 the VM uses, in Go.
+		if grep -q -s -E '^func main\(\)' "$dir"/*.ogo; then
 			continue
 		fi
 		if compgen -G "$dir/*.spin2" > /dev/null; then
-			continue
-		fi
-		if [ "$dir" = . ]; then
 			continue
 		fi
 		package=$(basename "$dir")
@@ -61,7 +59,7 @@ find . -name '*.ogo' -not -path './build/*' -printf '%h\n' | sort -u |
 			out="$twin/${f%.ogo}.go"
 			{
 				printf 'package %s\n\n' "$package"
-				cat "$f"
+				sed -E 's#^(import)?([[:space:]]*)"p2"$#\1\2"modernc.org/obeam/internal/p2twin"#' "$f"
 			} > "$out"
 		done
 		for f in "$dir"/*.go; do

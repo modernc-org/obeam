@@ -26,6 +26,35 @@ var vmOpcodes = []struct {
 	{"call_bif", OpCallBif},
 }
 
+// CoreOps are the instructions the PASM core, core/core.spin2, does, in the
+// order of its dispatch table: the packer writes an instruction's index here,
+// counted from 1, in bits 8-15 of its opcode long, which the OctoGo loop
+// masks off and the core dispatches on; 0 is an instruction the core leaves
+// to OctoGo. obeam gen writes the core's table from this list.
+var CoreOps = []beam.Opcode{
+	beam.OpMove, beam.OpSwap, beam.OpCall, beam.OpCallLast, beam.OpCallOnly, beam.OpReturn,
+	beam.OpJump, beam.OpAllocate, beam.OpAllocateHeap, beam.OpDeallocate, beam.OpInitYregs,
+	beam.OpTrim, beam.OpTestHeap, beam.OpGcBif2, beam.OpIsLt, beam.OpIsGe, beam.OpIsEq,
+	beam.OpIsNe, beam.OpIsEqExact, beam.OpIsNeExact, beam.OpSelectVal, beam.OpIsNonemptyList,
+	beam.OpIsNil, beam.OpIsList, beam.OpIsAtom, beam.OpIsInteger, beam.OpIsTuple, beam.OpTestArity,
+	beam.OpIsTaggedTuple, beam.OpGetList, beam.OpGetHd, beam.OpGetTl, beam.OpPutList,
+	beam.OpPutTuple2, beam.OpGetTupleElement,
+}
+
+// coreIndex answers an instruction's index in CoreOps, from 1, or 0.
+func coreIndex(op beam.Opcode) uint32 {
+	for i, o := range CoreOps {
+		if o == op {
+			return uint32(i + 1)
+		}
+	}
+	return 0
+}
+
+// opw is the opcode long of an instruction: the opcode, and its core index
+// above it.
+func opw(op beam.Opcode) uint32 { return uint32(op) | coreIndex(op)<<8 }
+
 // WellKnownAtoms are the atoms the VM names in its own code. They come first
 // in every image's atom table, in this order, so that the VM's constants hold.
 var WellKnownAtoms = []string{
@@ -185,8 +214,9 @@ func bifIndex(m beam.MFA) (int, bool) {
 }
 
 // TableID is a fingerprint of what an image and the VM must agree on: the
-// well-known atoms, which the image numbers first, and the BIFs, which a call
-// in the image names by number. obeam gen writes it into the VM and obeam
+// well-known atoms, which the image numbers first, the BIFs, which a call in
+// the image names by number, and the core's instructions, which an opcode
+// long names by index. obeam gen writes it into the VM and obeam
 // pack into the image, and the board program refuses an image whose
 // fingerprint is not the VM's, which is an image packed before the tables
 // changed.
@@ -205,6 +235,9 @@ func TableID() uint32 {
 	}
 	for _, b := range Bifs {
 		add(fmt.Sprintf("%s:%s/%d", b.Module, b.Function, b.Arity))
+	}
+	for _, o := range CoreOps {
+		add(o.String())
 	}
 	return h
 }

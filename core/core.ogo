@@ -1,0 +1,13 @@
+// Copyright 2026 The obeam Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file.
+
+// Package core is the VM's hot instructions in PASM, core.spin2, executed on
+// the cog of the scheduler that calls it. The board program hands Run to the
+// VM as vm.Core; the twin, which cannot run PASM, leaves the package out, and
+// the VM then does every instruction itself.
+
+// Run does instructions from the pc in the block at blk until one it leaves
+// to the VM, and answers that one's index. core.spin2 says what the block
+// holds.
+func Run(blk uint32) uint32

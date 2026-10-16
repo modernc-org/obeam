@@ -41,6 +41,7 @@ func Load(c, literals []uint32, a []string, fc, fn, ln []uint32, fl []string) {
 	makeLocks()
 	arenaInit((litEnd + minBlock - 1) &^ (minBlock - 1))
 	procsInit()
+	coreAddrs()
 	entryProc = nil
 }
 
@@ -105,21 +106,17 @@ func Collections() uint32 {
 	return n
 }
 
-// Run starts the entry on n schedulers and waits for it to end, idling as
-// the Idle hook says; it reports whether it ended normally.
+// Run starts the entry on n schedulers and waits for it to end; it reports
+// whether it ended normally.
 func Run(entry uint32, n int) bool {
 	if !Start(entry, n) {
 		return false
 	}
 	for !Finished() {
-		if Idle != nil {
-			Idle()
-		}
+		idle()
 	}
 	for Running() > 0 {
-		if Idle != nil {
-			Idle()
-		}
+		idle()
 	}
 	return Succeeded()
 }
@@ -135,12 +132,15 @@ func schedule(id int) {
 			break
 		}
 		if p == nil {
-			if Idle != nil {
-				Idle()
-			}
+			idle()
 			continue
 		}
-		ended := run(s, p)
+		var ended bool
+		if Profile {
+			ended = runProfiled(s, p)
+		} else {
+			ended = run(s, p)
+		}
 		if ended && p == entryProc {
 			lock(lockRun)
 			stopping = true

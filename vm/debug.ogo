@@ -24,6 +24,31 @@ func Dump() {
 		writeInt(s, int64(timers[i]))
 	}
 	unlock(lockRun)
+	lock(lockPool)
+	emits(s, ", pool free ")
+	writeInt(s, int64(freeLongs))
+	emits(s, " of ")
+	writeInt(s, int64(arenaLongs-arenaLow))
+	for o := uint32(minOrder); o <= maxOrder; o++ {
+		n := 0
+		for b := freeHead[o-minOrder]; b != noBlock; b = arena[b] {
+			n++
+		}
+		if n > 0 {
+			emits(s, ", ")
+			writeInt(s, int64(n))
+			emit(s, 'x')
+			writeInt(s, int64(1)<<o)
+		}
+	}
+	if failedOrder != 0 {
+		emits(s, "; it failed a block of ")
+		writeInt(s, int64(1)<<failedOrder)
+		emits(s, " with ")
+		writeInt(s, int64(failedFree))
+		emits(s, " free")
+	}
+	unlock(lockPool)
 	emit(s, '\n')
 	for i := range procs {
 		p := &procs[i]
@@ -38,7 +63,7 @@ func Dump() {
 		for b := p.mboxHead; b != noBlock; b = arena[b] {
 			nm++
 		}
-		np, timed, deadline, cur := p.npending, p.timed, p.deadline, p.mboxCur
+		np, timed, deadline, cur, order := p.npending, p.timed, p.deadline, p.mboxCur, p.order
 		unlock(stripe(p))
 		emits(s, "   ")
 		writeInt(s, int64(i))
@@ -64,6 +89,8 @@ func Dump() {
 		}
 		emits(s, ", pending ")
 		writeInt(s, int64(np))
+		emits(s, ", block ")
+		writeInt(s, int64(1)<<order)
 		if timed {
 			emits(s, ", timeout at ")
 			writeInt(s, int64(deadline))

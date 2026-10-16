@@ -10,9 +10,9 @@ and how to run it.
 2026-10-16; section 7 records the decisions. M1, one process on one cog, M2,
 processes and messages on that cog, M3, seven scheduler cogs, and M4,
 exceptions caught, links and monitors, floats and the rest of io:format, were
-built the same evening and night: sections 3 and 4 say where what is built
-differs from what was proposed.** What M0 measured is in section 6 and in
-`erl/stats.txt`; what M1 to M4 measured is in section 8.
+built the same evening and night, and M5, speed, begun: sections 3 and 4 say
+where what is built differs from what was proposed.** What M0 measured is in
+section 6 and in `erl/stats.txt`; what M1 to M5 measured is in section 8.
 
 ## 1. The pieces
 
@@ -261,6 +261,32 @@ Dispatch is through an array of function values until OctoGo emits a dense
 constant `switch` as a C `switch`, when the backend's `jmprel` table takes
 over (ASSESSMENT.md, section 4).
 
+**As built in M5, the OctoGo part.** A handler that calls anything is no leaf,
+and the backend saves all its registers on the way in and restores them on
+the way out, some 150 clocks, more than most instructions' work. So the hot
+instructions have handlers in `vm/fast.ogo` that call nothing, the operand
+decoding written out in each: `move`, `swap`, the list and tuple accessors,
+the type tests, the comparisons and `select_val` on what is no structure,
+the calls while reductions last, `allocate` and `test_heap` while there is
+room, and `gc_bif2` for `+`, `-`, `*`, `div` and `rem` of small integers in
+32 bits, where the BIF had computed in software 64-bit arithmetic at 5,600
+clocks. Where a fast handler meets what is not its case it answers
+`slowPath` before it changes anything, and the loop calls the general
+handler, kept in `slow`. The VM takes the P2's locks and clocks through
+OctoGo's `p2` package, whose `TryLock` is one instruction: through hooks a
+lock and its unlock cost 616 clocks, now 107. A collection sizes its new
+block by the heap and by what pending messages hold, the size kept in each
+fragment's header, not by their blocks, and shrinks the block to twice what
+lives afterwards, halving it and moving the stack down while that fits: a
+block only grew before, and a hundred processes of a ring held 256 longs
+each for a few that lived. A collection is forced after sixteen pending
+messages again, or at once when a message to the process found the pool
+below a quarter free. A cache of free fragment blocks per scheduler was tried
+and taken out: the blocks it held, scattered through the arena, kept their
+buddies from joining, and a pool three quarters free had no block above 256
+longs; `vm.Dump()`, now with the pool's free lists and the last request it
+failed, showed it.
+
 ## 4. The image
 
 Little-endian longs, in sections, every section long-aligned:
@@ -475,6 +501,13 @@ sieve's processes have anything to run beside each other. The single
 scheduler's 117,774 a second is below M2's 128,000 by the locks, which it
 takes as the seven do.
 
+`cogs` printed `[{1,20000,3},{2,20000,4},{3,20000,3},{4,20000,6},{5,20000,1},{6,20000,1},{7,20000,6}]`
+on one run and a different spread on the next: the seven workers on four or
+five of the seven schedulers at a time, which is the picture the project was
+started for. The count of instructions varies by a few dozen from run to run,
+a receive that looks and finds nothing costing an instruction or two more or
+less. 604 collections.
+
 **M4**, the same night: `vm/except.ogo` rewritten for catching,
 `vm/link.ogo`, `vm/float.ogo`, `vm/format.ogo` rewritten for widths, and
 `vm/debug.ogo`, a dump of the process table that found the timer list's
@@ -493,9 +526,89 @@ modules, in both builds:
 With 2,515 collections, against 604 in M3: four pending messages force one
 where sixteen did. The demo's waits are about 1,050 ms of it.
 
-`cogs` printed `[{1,20000,3},{2,20000,4},{3,20000,3},{4,20000,6},{5,20000,1},{6,20000,1},{7,20000,6}]`
-on one run and a different spread on the next: the seven workers on four or
-five of the seven schedulers at a time, which is the picture the project was
-started for. The count of instructions varies by a few dozen from run to run,
-a receive that looks and finds nothing costing an instruction or two more or
-less. 604 collections.
+**M5, the OctoGo part**, the same night: `make prof` builds `prof/`, a board
+program that runs `erl/bench.erl`, a workload of the corpus's modules with
+one line of output, on one scheduler, first plainly and then with every
+instruction timed by the cycle counter, by opcode and by BIF. It found, in
+this order: that a call into any handler costs more than the work of most;
+that a lock taken through a hook cost 616 clocks; that 519 of 527
+collections were forced by pending messages; and a fault, a process whose
+block was the largest failing with `system_limit` because the collector
+asked for a block larger than the largest. The workload, unchecked at 160 MHz
+on one scheduler, in clocks an instruction:
+
+| | Clocks an instruction |
+| --- | --- |
+| at the end of M4 | 1,267 |
+| leaf fast handlers | 908 |
+| the locks through `p2` | 808 |
+| the collections sized by what lives | 809 |
+
+And the demo on seven schedulers, both builds still printing what `erl`
+prints line for line:
+
+| Build, 160 MHz, 7 schedulers | 913,200 instructions in | a second |
+| --- | --- | --- |
+| checked | 4,139 ms | 220,632 |
+| `--unchecked` | 3,148 ms | 290,095 |
+
+Net of the demo's waits the unchecked build computes 1.57 times as fast as
+at the end of M4. What is left is the dispatch: the profile's handlers take
+617 clocks an instruction and the loop around them 192, and the backend's
+code for the fast `move` is some forty instructions with six hub accesses and
+three taken jumps, executed from hub RAM. A probe measured the same `move`,
+a thousand in a row: 70 clocks in PASM that flexspin copies into the cog
+(`org`), 100 in PASM run from hub (`orgh`), 110 in an OctoGo loop the backend
+copies into the cog itself, against some 530 in the VM, handler and loop.
+Flexspin copies an inline `org` block of up to about 250 longs and refuses
+300 ("Inline assembly too large to fit in fcache"). Where a core is to run was
+put to the user, who chose each scheduler's own cog.
+
+**M5, the core**, the same night: `core/`, the hot instructions in PASM run
+from hub on the scheduler's cog, a Spin2 method whose locals are its
+registers. An `org` block copied into the cog was measured first and given
+up: flexspin copies it at every entry, some 260 clocks, and 250 longs hold
+too few instructions, so every other instruction would be a hand-back with a
+reload. From hub there is no limit and no reload; what costs there is a taken
+jump, which refills the instruction FIFO. What flexspin's inline assembly
+allows decided the rest, found in its `inlineasm.c` and docs: no `call`, a
+`ret` made a jump to the block's end (and the block then held to the cache's
+size, whence the first "too large" for a block that was never to be copied),
+`ptra` untouched, and `tjz` and its kin reaching 256 instructions. So the
+source is a template, `core/core.pasm`, whose macros `obeam gen` expands into
+`core/core.spin2`: an operand is read and written by runs of instructions with
+no branch, conditions doing what a branch would; `ptrb` is the code pointer;
+every handler ends with its own dispatch, which reads the table's entry, a
+`jmp #\label`, and jumps to its address field. The packer writes each
+instruction's index among the core's in bits 8-15 of its opcode long, which
+OctoGo's loop masks off; the loop hands the core a block of the process's
+state at the first such instruction, and the core runs until one it does not
+do, or cannot do now, which the loop then does. The core does 35 instructions,
+and `+`, `-`, `*`, `div` and `rem` of small integers with MULS and the CORDIC
+divider; it takes no lock and raises nothing. It is in the board program and
+the profiler, and not in the twin, which cannot run PASM; `TestCoreGenerated`
+holds `core.spin2` to its template, the image's fingerprint covers the core's
+list, and the board, against `erl`, is the core's test.
+
+On the workload, unchecked at 160 MHz on one scheduler:
+
+| | Clocks an instruction |
+| --- | --- |
+| without the core | 819 to 832 (the build's layout) |
+| with the core, its first form | 689 |
+| threaded dispatch, `*` `div` `rem` | 645 to 653 |
+
+The core does 206,132 of the 233,676 instructions, 88%, at 231 clocks each
+with its entries and exits (21,855 of them); the other 12%, the sends,
+receives, BIF calls, collections and the scheduling between turns, take 69%
+of the time, 3,800 clocks each. That is where M5 goes on: the core has done
+what it can until the runtime around it is cheaper. On the demo, seven
+schedulers, both builds printing what `erl` prints line for line:
+
+| Build, 160 MHz, 7 schedulers | 913,200 instructions in | a second |
+| --- | --- | --- |
+| checked | 3,101 ms | 294,449 |
+| `--unchecked` | 2,660 ms | 343,321 |
+
+Net of the demo's waits, the unchecked build computes about twice as fast as
+at the end of M4.

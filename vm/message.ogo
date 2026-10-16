@@ -146,11 +146,25 @@ func sendMsg(s *sched, to, msg uint32) bool {
 	return true
 }
 
-// freeFragments returns a list of fragments to the pool.
-func freeFragments(b uint32) {
+// fragAlloc takes a block for a fragment; it also says whether the pool has
+// run low. A cache of the smallest blocks, one per scheduler, was tried and
+// taken out: the blocks it held, scattered through the arena, kept their
+// buddies from joining, and the pool, nearly three quarters free, had no
+// block above 256 longs left.
+func fragAlloc(s *sched, order uint32) (uint32, bool) {
+	return allocBlockLow(order)
+}
+
+// fragFree gives a fragment's block back to the pool.
+func fragFree(s *sched, b, order uint32) {
+	freeBlock(b, order)
+}
+
+// freeFragments gives a list of fragments back to the pool.
+func freeFragments(s *sched, b uint32) {
 	for b != noBlock {
 		next := arena[b]
-		freeBlock(b, fragOrder(b))
+		fragFree(s, b, fragOrder(b))
 		b = next
 	}
 }
@@ -174,11 +188,13 @@ func takeMessage(s *sched) {
 	p.mboxCur = p.mboxHead
 	p.mboxPrev = noBlock
 	p.timed = false
+	low := p.lowMem
+	p.lowMem = false
 	unlock(stripe(p))
 	arena[c] = p.pending
 	p.pending = c
 	p.npending++
-	if p.npending >= maxPending {
+	if p.npending >= maxPending || low {
 		p.forceGC = true
 	}
 }

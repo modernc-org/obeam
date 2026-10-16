@@ -11,12 +11,18 @@ func gc(s *sched, live, heapNeed, stackNeed uint32) bool {
 	p := s.cur
 	end := p.blockEnd()
 	used := p.htop - p.block + end - p.stop
+	// A pending message adds what it holds, not its block: sixteen
+	// messages of a few longs counted as sixteen blocks asked for a block
+	// twice the heap's, which a fragmented pool did not have.
 	for b := p.pending; b != noBlock; b = arena[b] {
-		used += 1 << fragOrder(b)
+		used += fragSize(b)
 	}
+	// What is in use counts the garbage too, which the collection leaves
+	// behind: past the largest block it is collected into one of those, and
+	// whether what lives fits is asked after.
 	order := orderFor(used + heapNeed + stackNeed)
 	if order == 0xff {
-		return false
+		order = maxOrder
 	}
 	if order < initOrder {
 		order = initOrder
@@ -24,6 +30,9 @@ func gc(s *sched, live, heapNeed, stackNeed uint32) bool {
 	nb := allocBlock(order)
 	if nb == noBlock {
 		return false
+	}
+	if p.forceGC {
+		s.forced++
 	}
 	s.gcs++
 	s.gcFrom, s.gcFromE = p.block, end
@@ -68,8 +77,31 @@ func gc(s *sched, live, heapNeed, stackNeed uint32) bool {
 		}
 	}
 
+	// The new block was sized by all that was in use, garbage too, so it
+	// shrinks to what lives: while that, with as much room again, fits in
+	// half of the block, the stack moves down to the lower half's end, the
+	// heap being at the block's start already, and the upper half goes back
+	// to the pool. Nothing on the stack points into the stack, so the move is
+	// a copy. Without it a block only grew, and a hundred processes of a ring
+	// held 256 longs each for a few that lived.
+	for order > initOrder {
+		half := uint32(1) << (order - 1)
+		ssz := s.gcNewE - nstop
+		if 2*(s.gcTo-nb+ssz+heapNeed+stackNeed) > half {
+			break
+		}
+		newE := nb + half
+		for i := uint32(0); i < ssz; i++ {
+			arena[newE-ssz+i] = arena[nstop+i]
+		}
+		nstop = newE - ssz
+		s.gcNewE = newE
+		order--
+		freeBlock(newE, order)
+	}
+
 	freeBlock(p.block, p.order)
-	freeFragments(p.pending)
+	freeFragments(s, p.pending)
 	p.pending = noBlock
 	p.npending = 0
 	p.forceGC = false

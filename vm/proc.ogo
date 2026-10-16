@@ -12,7 +12,7 @@ const (
 	maxSaveX   = maxArity
 	initOrder  = 6 // a new process's block: 64 longs
 	reductions = 2000
-	maxPending = 4 // messages taken out of the mailbox and still in their fragments, before a collection is forced: a hundred processes with fifteen each ran a 96 KB arena dry
+	maxPending = 16 // messages taken out of the mailbox and still in their fragments, before a collection is forced; sooner when the pool runs low
 	noProc     = 0xffffffff
 	nsched     = 7 // schedulers at most: the cogs besides main's
 
@@ -70,6 +70,7 @@ type Proc struct {
 	pending  uint32
 	npending uint32
 	forceGC  bool
+	lowMem   bool // under the stripe: a message to it found the pool low
 
 	// A receive's timeout: when it ends, and where the process continues.
 	deadline  uint32
@@ -118,10 +119,16 @@ type sched struct {
 	cap      [capSize]byte // what a padded directive wrote
 	ncap     int32         // how much of it, or -1 while nothing is captured
 
-	steps uint32 // instructions interpreted
-	gcs   uint32 // collections
-	refs  uint32 // references made
-	left  uint8  // why the last turn ended: leftEnd, leftYield, leftWait or leftFail
+	steps      uint32        // instructions interpreted
+	cb         [cbLen]uint32 // the core's block
+	cbAddr     uint32        // and its address
+	coreRuns   uint32        // the times the core was run
+	coreSteps  uint32        // the instructions it did
+	coreClocks uint64        // and the clocks it took, its call and return among them
+	gcs        uint32        // collections
+	forced     uint32        // of them forced by pending messages
+	refs       uint32        // references made
+	left       uint8         // why the last turn ended: leftEnd, leftYield, leftWait or leftFail
 }
 
 const (
@@ -141,7 +148,6 @@ var (
 	running   uint32           // under lockRun: schedulers in their loops
 	timers    [maxProcs]uint32 // under lockRun: the processes waiting with a timeout, by index; an entry may be stale
 	ntimers   uint32
-	fakeMs    uint32 // the clock where there is no Millis hook: a tick a reading
 )
 
 func procsInit() {
@@ -156,6 +162,10 @@ func procsInit() {
 		scheds[i].cur = nil
 		scheds[i].steps = 0
 		scheds[i].gcs = 0
+		scheds[i].forced = 0
+		scheds[i].coreRuns = 0
+		scheds[i].coreSteps = 0
+		scheds[i].coreClocks = 0
 		scheds[i].refs = 0
 	}
 	namesInit()
@@ -165,16 +175,6 @@ func procsInit() {
 	entryDone = procFree
 	running = 0
 	ntimers = 0
-	fakeMs = 0
-}
-
-// now is the time in milliseconds.
-func now() uint32 {
-	if Millis == nil {
-		fakeMs++
-		return fakeMs
-	}
-	return Millis()
 }
 
 // spawn makes a process that begins at a code offset with nargs arguments,
@@ -229,6 +229,7 @@ func spawn(entry, nargs, argLongs uint32) *Proc {
 	p.pending = noBlock
 	p.npending = 0
 	p.forceGC = false
+	p.lowMem = false
 	p.timed = false
 	unlock(stripe(p))
 	return p
@@ -303,8 +304,8 @@ func (p *Proc) exit(state uint8) {
 		unlock(lockRun)
 	}
 	freeBlock(p.block, p.order)
-	freeFragments(mbox)
-	freeFragments(pend)
+	freeFragments(nil, mbox)
+	freeFragments(nil, pend)
 	lock(lockProcs)
 	p.used = false
 	unlock(lockProcs)

@@ -219,8 +219,20 @@ func packCmd(args []string) error {
 func genCmd(args []string) error {
 	fs := flag.NewFlagSet("gen", flag.ContinueOnError)
 	dir := fs.String("vm", "vm", "the VM's package directory")
+	names := fs.String("names", "", "also write the opcodes' and BIFs' names into this directory, for the profiler")
+	coreDir := fs.String("core", "core", "the PASM core's directory, whose core.spin2 to write from core.pasm, or empty")
 	if err := fs.Parse(args); err != nil {
 		return err
+	}
+	if *coreDir != "" {
+		if err := pack.GenCore(*coreDir); err != nil {
+			return err
+		}
+	}
+	if *names != "" {
+		if err := pack.GenNames(*names); err != nil {
+			return err
+		}
 	}
 	return pack.GenVM(*dir)
 }

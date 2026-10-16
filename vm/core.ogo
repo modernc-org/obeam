@@ -1,0 +1,75 @@
+// Copyright 2026 The obeam Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file.
+
+// The PASM core, package core, when the board program sets Core: the run
+// loop hands it every instruction the packer marked as the core's, bits 8-15
+// of the opcode long, and the core does them, and the ones after them, until
+// one it leaves, which the loop then does itself. The core reads and writes
+// the process's state through a block of longs of the scheduler's,
+// core/core.spin2 says which; it takes no lock and raises nothing, so the
+// state it changes is the running process's own, and the X registers.
+
+import (
+	"unsafe"
+
+	"p2"
+)
+
+// Core is core.Run, or nil, when every instruction is the loop's.
+var Core func(blk uint32) uint32
+
+// The core block's longs.
+const (
+	cbPC = iota
+	cbCode
+	cbArena
+	cbX
+	cbStop
+	cbHtop
+	cbCP
+	cbReds
+	cbForce
+	cbSteps
+	cbLen
+)
+
+// coreAddrs puts into each scheduler's block the addresses that do not
+// change while an image runs, numbers the core can read and write by.
+func coreAddrs() {
+	if len(code) == 0 {
+		return
+	}
+	for i := range scheds {
+		s := &scheds[i]
+		s.cb[cbCode] = uint32(uintptr(unsafe.Pointer(&code[0])))
+		s.cb[cbArena] = uint32(uintptr(unsafe.Pointer(&arena[0])))
+		s.cb[cbX] = uint32(uintptr(unsafe.Pointer(&s.x[0])))
+		s.cbAddr = uint32(uintptr(unsafe.Pointer(&s.cb[0])))
+	}
+}
+
+// coreRun has the core do instructions from pc, the process's state handed
+// over and taken back, and answers the index of the one it left.
+func coreRun(s *sched, p *Proc, pc uint32) uint32 {
+	s.cb[cbPC] = pc
+	s.cb[cbStop] = p.stop
+	s.cb[cbHtop] = p.htop
+	s.cb[cbCP] = p.cp
+	s.cb[cbReds] = uint32(p.reds)
+	s.cb[cbForce] = 0
+	if p.forceGC {
+		s.cb[cbForce] = 1
+	}
+	t := p2.GetCt()
+	pc = Core(s.cbAddr)
+	s.coreClocks += uint64(p2.GetCt() - t)
+	s.coreSteps += s.cb[cbSteps]
+	p.stop = s.cb[cbStop]
+	p.htop = s.cb[cbHtop]
+	p.cp = s.cb[cbCP]
+	p.reds = int32(s.cb[cbReds])
+	s.steps += s.cb[cbSteps]
+	s.coreRuns++
+	return pc
+}

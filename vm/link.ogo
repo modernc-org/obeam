@@ -39,9 +39,12 @@ func namesInit() {
 	}
 }
 
-// fragKind returns a fragment's kind, and fragOrder its order.
+// A fragment's second long holds its block's order in bits 0-7, the size of
+// the message in longs in bits 8-23, and its kind above. fragKind, fragOrder
+// and fragSize read them.
 func fragKind(b uint32) uint32  { return arena[b+1] >> 24 }
-func fragOrder(b uint32) uint32 { return arena[b+1] & 0xffffff }
+func fragOrder(b uint32) uint32 { return arena[b+1] & 0xff }
+func fragSize(b uint32) uint32  { return arena[b+1] >> 8 & 0xffff }
 
 // deliver appends a term to a process's mailbox as a message of a kind,
 // copied into a fragment, and wakes the receiver if it waits; it reports
@@ -56,20 +59,23 @@ func deliver(s *sched, to, msg, kind uint32) bool {
 	if order == 0xff {
 		return false
 	}
-	b := allocBlock(order)
+	b, low := fragAlloc(s, order)
 	if b == noBlock {
 		return false
 	}
 	root, _ := copyTerm(s, msg, b+fragHead)
 	arena[b] = noBlock
-	arena[b+1] = order | kind<<24
+	arena[b+1] = order | uint32(size)<<8 | kind<<24
 	arena[b+2] = root
 	p := procOf(to)
 	lock(stripe(p))
 	if !p.alive(to) {
 		unlock(stripe(p))
-		freeBlock(b, order)
+		fragFree(s, b, order)
 		return true
+	}
+	if low {
+		p.lowMem = true
 	}
 	if p.mboxTail == noBlock {
 		p.mboxHead = b
@@ -116,7 +122,7 @@ func signals(s *sched) bool {
 		}
 		r := tupleElem(arena[b+2], 3)
 		if p.trapExit && r != mkAtom(atomKill) {
-			arena[b+1] = fragOrder(b)
+			arena[b+1] &^= 0xff000000 // a message now
 			prev = b
 			b = next
 			continue

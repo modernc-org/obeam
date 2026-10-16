@@ -2,7 +2,11 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-import "math"
+import (
+	"math"
+
+	"p2"
+)
 
 // The BIFs. Each takes its arguments from bargs, as many as n says, and
 // answers its result, or nonValue after failWith; one that allocates asks
@@ -594,12 +598,7 @@ func bifDisplay(s *sched, n uint32) uint32 {
 	return trueTerm
 }
 
-func millis() int64 {
-	if Millis == nil {
-		return 0
-	}
-	return int64(Millis())
-}
+func millis() int64 { return int64(now()) }
 
 func bifMonotonicTime0(s *sched, n uint32) uint32 { return intResult(s, millis()*1000000) }
 
@@ -804,10 +803,7 @@ func bifP2Cog(s *sched, n uint32) uint32 {
 }
 
 func bifP2GetCt(s *sched, n uint32) uint32 {
-	if GetCt == nil {
-		return mkSmall(0)
-	}
-	return intResult(s, int64(GetCt()))
+	return intResult(s, int64(p2.GetCt()))
 }
 
 func bifP2ClockFreq(s *sched, n uint32) uint32 {

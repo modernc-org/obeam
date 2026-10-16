@@ -2,31 +2,32 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-// What the board gives the VM and the host gives its twin: where output goes,
-// the time, the locks, a pause, and the pins the p2 module's BIFs drive. A
-// hook that is nil does nothing: without locks the VM runs on one scheduler,
-// without pins a pin BIF answers ok or 0.
+// What the board gives the VM. The locks, the clocks and a pause are the P2's
+// own, through OctoGo's p2 package, whose TryLock is one instruction: a lock
+// taken through a function value cost 616 clocks a round, measured by make
+// prof, and every message takes several. The twin, scripts/twin.sh, has this
+// package import a Go shim of them instead, internal/p2twin. Where output
+// goes and the pins stay hooks, main's to set: the serial line is main's, and
+// the pins are driven from main's cog. A hook that is nil does nothing, and a
+// pin BIF then answers ok or 0.
+
+import "p2"
+
 var (
 	Out       func(b byte)
-	Millis    func() uint32
-	NewLock   func() int
-	TryLock   func(l int) bool
-	Unlock    func(l int)
-	Idle      func()
 	PinHigh   func(pin int)
 	PinLow    func(pin int)
 	PinToggle func(pin int)
 	PinFloat  func(pin int)
 	PinIn     func(pin int) int
 	PinWrite  func(pin int, v int)
-	GetCt     func() uint32
 	ClockFreq func() uint32
 	Rnd       func() uint32
 )
 
-// The VM's locks: the pool, the run queue, the process table's free slots,
-// the output, and four stripes of mailboxes and process states, a process's
-// by its index. The order to take them in, where two are held, is a stripe,
+// The VM's locks: the pool, the run queue, the table's free slots, the
+// output, and four stripes of mailboxes and process states, a process's by
+// its index. The order to take them in, where two are held, is a stripe,
 // then the run queue or the pool; the pool is taken inside the table's.
 const (
 	lockPool = iota
@@ -44,35 +45,32 @@ var (
 
 // makeLocks takes the VM's locks from the board, once.
 func makeLocks() {
-	if NewLock == nil || locksMade {
+	if locksMade {
 		return
 	}
 	for i := range locks {
-		locks[i] = NewLock()
+		locks[i] = p2.NewLock()
 	}
 	locksMade = true
 }
 
-// lock takes a lock, spinning until it has it; unlock gives it back. Without
-// the hooks there is one scheduler and nothing to lock against.
+// lock takes a lock, spinning until it has it; unlock gives it back.
 func lock(k int) {
-	if TryLock == nil {
-		return
-	}
 	l := locks[k]
-	for !TryLock(l) {
+	for !p2.TryLock(l) {
 	}
 }
 
-func unlock(k int) {
-	if Unlock == nil {
-		return
-	}
-	Unlock(locks[k])
-}
+func unlock(k int) { p2.Unlock(locks[k]) }
 
 // stripe is the lock of a process's mailbox and state.
 func stripe(p *Proc) int { return lockStripe + int(p.idx&3) }
+
+// now is the time in milliseconds.
+func now() uint32 { return p2.GetMs() }
+
+// idle is what a scheduler does with nothing to run: a moment's wait.
+func idle() { p2.WaitUs(20) }
 
 func out(b byte) {
 	if Out != nil {
@@ -80,8 +78,8 @@ func out(b byte) {
 	}
 }
 
-func outString(s string) {
-	for i := 0; i < len(s); i++ {
-		out(s[i])
+func outString(str string) {
+	for i := 0; i < len(str); i++ {
+		out(str[i])
 	}
 }

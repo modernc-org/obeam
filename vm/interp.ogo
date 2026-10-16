@@ -111,6 +111,33 @@ var handlers = [256]handler{
 // run interprets a process from where it continues until it ends, waits
 // for a message, or has used its reductions, and reports whether it ended.
 func run(s *sched, p *Proc) bool {
+	pc, ok := turnStart(s, p)
+	if !ok {
+		return true
+	}
+	steps := uint32(0)
+	core := Core != nil
+	for pc != 0 {
+		if core && code[pc]&0xff00 != 0 {
+			pc = coreRun(s, p, pc)
+		}
+		op := code[pc] & 0xff
+		h := handlers[op]
+		p.pc = pc
+		pc = h(s, pc)
+		if pc == slowPath {
+			pc = slow[op](s, p.pc)
+		}
+		steps++
+	}
+	s.steps += steps
+	return turnEnd(s, p)
+}
+
+// turnStart begins a process's turn: it is running, its saved X registers
+// are back, and an exit signal waiting for it is dealt with. It answers where
+// the process goes on, and false when a signal has ended it.
+func turnStart(s *sched, p *Proc) (uint32, bool) {
 	s.cur = p
 	lock(stripe(p))
 	p.state = procRunning
@@ -121,18 +148,14 @@ func run(s *sched, p *Proc) bool {
 	}
 	s.left = leftEnd
 	if sig && !signals(s) {
-		return true
+		return 0, false
 	}
-	pc := p.pc
-	for pc != 0 {
-		h := handlers[code[pc]&0xff]
-		if h == nil {
-			panic("vm: an instruction the VM does not have")
-		}
-		p.pc = pc
-		pc = h(s, pc)
-		s.steps++
-	}
+	return p.pc, true
+}
+
+// turnEnd ends a process's turn, as the last instruction said it ended, and
+// reports whether the process has ended.
+func turnEnd(s *sched, p *Proc) bool {
 	switch s.left {
 	case leftEnd:
 		endProc(s, mkAtom(atomNormal))
@@ -531,13 +554,16 @@ func hLoopRec(s *sched, pc uint32) uint32 {
 	p := s.cur
 	lock(stripe(p))
 	sig := p.signaled
-	unlock(stripe(p))
-	if sig && !signals(s) {
-		return 0
-	}
-	lock(stripe(p))
 	c := p.mboxCur
 	unlock(stripe(p))
+	if sig {
+		if !signals(s) {
+			return 0
+		}
+		lock(stripe(p))
+		c = p.mboxCur
+		unlock(stripe(p))
+	}
 	if c == noBlock {
 		return code[pc+1]
 	}

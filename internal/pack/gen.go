@@ -9,6 +9,7 @@ import (
 	"go/format"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"modernc.org/obeam/internal/beam"
@@ -132,6 +133,12 @@ func genBifs() string {
 	var b strings.Builder
 	b.WriteString(genHeader)
 	fmt.Fprintf(&b, "// TableID is the fingerprint of the well-known atoms and the BIFs, which an\n// image must carry too: one packed before the tables changed calls BIFs by\n// numbers that are no longer theirs.\nconst TableID = 0x%08x\n\n", TableID())
+	fmt.Fprintf(&b, "// nBifs is how many BIFs there are.\nconst nBifs = %d\n\n", len(Bifs))
+	b.WriteString("// The BIFs' numbers, for the handlers that do some of them themselves.\nconst (\n")
+	for i, bif := range Bifs {
+		fmt.Fprintf(&b, "\tbix%s = %d\n", strings.TrimPrefix(bif.Func, "bif"), i)
+	}
+	b.WriteString(")\n\n")
 	fmt.Fprintf(&b, "// The BIFs, by the number the packer gives a call of each. The table is filled\n// in init: apply refers to it, and under Go a variable's initializer may not\n// reach the variable.\nvar bifs [%d]bifEntry\n\nfunc init() {\n\tbifs = [%d]bifEntry{\n", len(Bifs), len(Bifs))
 	for _, bif := range Bifs {
 		fmt.Fprintf(&b, "\t\t{%s, %d}, // %s:%s/%d\n", bif.Func, bif.Arity, bif.Module, bif.Function, bif.Arity)
@@ -153,4 +160,184 @@ func wellKnown(name string) string {
 		}
 	}
 	return "noAtom"
+}
+
+// GenNames writes into dir the names of the opcodes and of the BIFs, as a
+// file of package dir's name, for a program that prints what the VM does,
+// the profiler: the VM itself carries no names.
+func GenNames(dir string) error {
+	var b strings.Builder
+	b.WriteString(genHeader)
+	b.WriteString("// opNames are the opcodes' names, by number.\nvar opNames = [256]string{\n")
+	for _, op := range beam.Opcodes() {
+		if !op.Obsolete() {
+			fmt.Fprintf(&b, "\t%d: %q,\n", op, op.String())
+		}
+	}
+	for _, op := range vmOpcodes {
+		fmt.Fprintf(&b, "\t%d: %q,\n", op.op, op.name)
+	}
+	b.WriteString("}\n\n")
+	fmt.Fprintf(&b, "// nb is how many BIFs there are, and bifNames their names, by number.\nconst nb = %d\n\nvar bifNames = [nb]string{\n", len(Bifs))
+	for _, bif := range Bifs {
+		fmt.Fprintf(&b, "\t%q,\n", fmt.Sprintf("%s:%s/%d", bif.Module, bif.Function, bif.Arity))
+	}
+	b.WriteString("}\n")
+	src, err := FormatOgo(b.String())
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(filepath.Join(dir, "names.ogo"), []byte(src), 0o644)
+}
+
+// The lines of core/core.pasm between which obeam gen writes the dispatch
+// table.
+const (
+	coreTableBegin = "'' -- the dispatch table, written by obeam gen from internal/pack's CoreOps --"
+	coreTableEnd   = "'' -- the end of the table --"
+)
+
+// coreMacros are the core's macros, a line "@name args": an operand read or
+// written by a run of instructions with no branch, flexspin's inline
+// assembly allowing no call. In @src, X is the argument.
+var coreMacros = map[string]string{
+	// @src X: X, a source operand, is the term, or the register a marker
+	// names; q_t is scratch. Z: a marker; C: a y register's.
+	"src": `        mov     q_t, X
+        and     q_t, #7
+        cmp     q_t, #7 wz
+ if_z   test    X, #8 wc
+ if_z   shr     X, #4
+ if_c_and_z add X, q_stop
+ if_c_and_z add X, #1
+ if_z   shl     X, #2
+ if_c_and_z add X, q_arena
+ if_nc_and_z add X, q_x
+ if_z   rdlong  X, X`,
+	// @dst: q_v goes to the register the marker in q_d names.
+	"dst": `        test    q_d, #8 wc
+        shr     q_d, #4
+ if_c   add     q_d, q_stop
+ if_c   add     q_d, #1
+        shl     q_d, #2
+ if_c   add     q_d, q_arena
+ if_nc  add     q_d, q_x
+        wrlong  q_v, q_d`,
+	// @one: a test's operand, after its Fail label, into q_v.
+	"one": `        rdlong  q_v, ptrb[2]
+        @src q_v`,
+	// @two: a test's two operands into q_a and q_v.
+	"two": `        rdlong  q_v, ptrb[2]
+        @src q_v
+        mov     q_a, q_v
+        rdlong  q_v, ptrb[3]
+        @src q_v`,
+	// @next: the dispatch. The opcode long at PTRB holds the core's index of
+	// the instruction in bits 8-15, 0 for one the core leaves; the table's
+	// entry for it is a JMP #\label, whose low 20 bits are the address.
+	"next": `        rdlong  q_w, ptrb
+        getbyte q_t, q_w, #1
+        cmp     q_t, #0 wz
+ if_z   jmp     #.out
+        add     q_steps, #1
+        shl     q_t, #2
+        add     q_t, q_tab
+        rdlong  q_t, q_t
+        jmp     q_t`,
+	// @kinds: q_n is 1 when q_a and q_v are both lists or both boxed, whose
+	// words may differ and the terms be equal, 0 when not.
+	"kinds": `        mov     q_t, q_a
+        xor     q_t, q_v
+        and     q_t, #3
+        mov     q_n, q_a
+        and     q_n, #3
+        mov     q_w, q_n
+        shr     q_w, #1
+        xor     q_n, q_w
+        and     q_n, #1
+        cmp     q_t, #0 wz
+ if_nz  mov     q_n, #0`,
+}
+
+// expandCore expands the macros of the core's lines, those of a macro's
+// expansion too.
+func expandCore(lines []string, depth int) ([]string, error) {
+	if depth > 4 {
+		return nil, fmt.Errorf("core macros nested too deeply")
+	}
+	var out []string
+	for _, l := range lines {
+		t := strings.TrimSpace(l)
+		if !strings.HasPrefix(t, "@") {
+			out = append(out, l)
+			continue
+		}
+		name, arg, _ := strings.Cut(t[1:], " ")
+		body, ok := coreMacros[name]
+		if name == "pass" {
+			ok = true
+		}
+		if !ok {
+			return nil, fmt.Errorf("core: no macro %q", name)
+		}
+		switch name {
+		case "src":
+			arg = strings.TrimSpace(arg)
+			if arg == "" {
+				return nil, fmt.Errorf("core: @src without its register")
+			}
+			body = strings.ReplaceAll(body, "X", arg)
+		case "pass":
+			// @pass N: past an instruction of N longs, and the dispatch.
+			n, err := strconv.Atoi(strings.TrimSpace(arg))
+			if err != nil || n < 1 || n > 127 {
+				return nil, fmt.Errorf("core: @pass %q", arg)
+			}
+			body = fmt.Sprintf("        add     ptrb, #%d\n        @next", 4*n)
+		}
+		x, err := expandCore(strings.Split(body, "\n"), depth+1)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, x...)
+	}
+	return out, nil
+}
+
+// GenCore writes dir/core.spin2 from the template dir/core.pasm: its macros
+// expanded, and the dispatch table between its marker lines, an entry for
+// each of CoreOps in order after one for index 0, which no instruction the
+// core does has.
+func GenCore(dir string) error {
+	b, err := os.ReadFile(filepath.Join(dir, "core.pasm"))
+	if err != nil {
+		return err
+	}
+	lines, err := expandCore(strings.Split(string(b), "\n"), 0)
+	if err != nil {
+		return err
+	}
+	var out strings.Builder
+	out.WriteString("' Code generated by obeam gen from core.pasm. DO NOT EDIT.\n\n")
+	table := false
+	for _, l := range lines {
+		switch strings.TrimSpace(l) {
+		case coreTableBegin:
+			out.WriteString(l + "\n")
+			out.WriteString("        jmp     #\\.out\n")
+			for _, op := range CoreOps {
+				fmt.Fprintf(&out, "        jmp     #\\.op_%s\n", op)
+			}
+			table = true
+			continue
+		case coreTableEnd:
+			table = false
+		}
+		if table {
+			continue
+		}
+		out.WriteString(l + "\n")
+	}
+	s := strings.TrimRight(out.String(), "\n") + "\n"
+	return os.WriteFile(filepath.Join(dir, "core.spin2"), []byte(s), 0o644)
 }

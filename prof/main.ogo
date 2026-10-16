@@ -1,0 +1,118 @@
+// Copyright 2026 The obeam Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file.
+
+// Command prof is the VM's profiler: it runs erl/bench.erl, packed into
+// prof/image by make prof, on one scheduler, first as the board program
+// would, for the clocks an instruction costs in all, and then with every
+// instruction timed by the cycle counter, by opcode and by BIF. What the
+// handlers cost against what an instruction costs in all is what the loop
+// around them costs.
+
+import (
+	"p2"
+
+	"modernc.org/obeam/core"
+	"modernc.org/obeam/prof/image"
+	"modernc.org/obeam/vm"
+)
+
+func out(b byte) {
+	if b == '\n' {
+		p2.WriteByte('\r')
+	}
+	p2.WriteByte(b)
+}
+
+// run loads the image afresh and runs it on one scheduler, and answers the
+// clocks it took and the instructions.
+func run(profile bool) (uint64, uint32) {
+	vm.Load(image.Code[:], image.Literals[:], image.Atoms[:], image.Funcs[:], image.Funs[:], image.Lines[:], image.Files[:])
+	vm.Profile = profile
+	vm.ProfReset()
+	t0 := p2.GetCt()
+	ms := p2.GetMs()
+	vm.Run(image.Entry, 1)
+	clocks := uint64(p2.GetCt() - t0)
+	if p2.GetMs()-ms > 20000 {
+		clocks += uint64(p2.GetMs()-ms) / 26000 * 4294967296 // the counter wrapped, at 160 MHz every 26.8 s
+	}
+	return clocks, vm.Steps()
+}
+
+// The rows of the table, sorted by their clocks.
+var (
+	order [256]int
+	borde [nb]int
+)
+
+func main() {
+	vm.Out = out
+	if image.TableID != vm.TableID {
+		printf("prof: the image was packed for other tables than the VM's: make prof\r\n")
+		return
+	}
+
+	clocks, steps := run(false)
+	printf("\r\n%s on one scheduler: %d instructions in %d clocks, %d an instruction\r\n",
+		image.EntryName, steps, clocks, clocks/uint64(steps))
+
+	vm.Core = core.Run
+	clocks, steps = run(false)
+	printf("with the core: %d instructions in %d clocks, %d an instruction, the core run %d times\r\n",
+		steps, clocks, clocks/uint64(steps), vm.CoreRuns())
+	cs, cc := vm.CoreSteps(), vm.CoreClocks()
+	printf("  the core did %d of them in %d clocks, %d each with its calls and returns; the rest %d each\r\n",
+		cs, cc, cc/uint64(cs), (clocks-cc)/uint64(steps-cs))
+	vm.Core = nil
+
+	_, steps = run(true)
+	total := uint64(0)
+	for i := range vm.ProfClocks {
+		total += vm.ProfClocks[i]
+	}
+	printf("profiled: %d instructions, the handlers %d clocks an instruction, the loop the rest; a reading costs %d\r\n",
+		steps, total/uint64(steps), vm.ProfOverhead)
+	printf("%d collections, %d of them forced by pending messages; a lock and its unlock %d clocks\r\n\r\n",
+		vm.Collections(), vm.Forced(), vm.LockClocks())
+
+	for i := range order {
+		order[i] = i
+	}
+	for i := 0; i < len(order); i++ {
+		for j := i + 1; j < len(order); j++ {
+			if vm.ProfClocks[order[j]] > vm.ProfClocks[order[i]] {
+				order[i], order[j] = order[j], order[i]
+			}
+		}
+	}
+	printf("%-22s %9s %7s %9s %6s\r\n", "opcode", "count", "count%", "clocks/1", "time%")
+	for _, op := range order {
+		n := vm.ProfCount[op]
+		if n == 0 {
+			continue
+		}
+		c := vm.ProfClocks[op]
+		printf("%-22s %9d %7d %9d %6d\r\n", opNames[op], n, uint64(n)*100/uint64(steps), c/uint64(n), c*100/total)
+	}
+
+	for i := range borde {
+		borde[i] = i
+	}
+	for i := 0; i < nb; i++ {
+		for j := i + 1; j < nb; j++ {
+			if vm.ProfBifClocks[borde[j]] > vm.ProfBifClocks[borde[i]] {
+				borde[i], borde[j] = borde[j], borde[i]
+			}
+		}
+	}
+	printf("\r\n%-22s %9s %9s %6s\r\n", "BIF", "count", "clocks/1", "time%")
+	for _, b := range borde {
+		n := vm.ProfBifCount[b]
+		if n == 0 {
+			continue
+		}
+		c := vm.ProfBifClocks[b]
+		printf("%-22s %9d %9d %6d\r\n", bifNames[b], n, c/uint64(n), c*100/total)
+	}
+}

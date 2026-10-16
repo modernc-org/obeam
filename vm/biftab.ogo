@@ -3,7 +3,119 @@
 // TableID is the fingerprint of the well-known atoms and the BIFs, which an
 // image must carry too: one packed before the tables changed calls BIFs by
 // numbers that are no longer theirs.
-const TableID = 0x72e2f697
+const TableID = 0x66b08466
+
+// nBifs is how many BIFs there are.
+const nBifs = 105
+
+// The BIFs' numbers, for the handlers that do some of them themselves.
+const (
+	bixAdd            = 0
+	bixSub            = 1
+	bixMul            = 2
+	bixDiv            = 3
+	bixRem            = 4
+	bixNeg            = 5
+	bixPlus           = 6
+	bixAbs            = 7
+	bixBand           = 8
+	bixBor            = 9
+	bixBxor           = 10
+	bixBsl            = 11
+	bixBsr            = 12
+	bixBnot           = 13
+	bixEq             = 14
+	bixNe             = 15
+	bixEqExact        = 16
+	bixNeExact        = 17
+	bixLt             = 18
+	bixGt             = 19
+	bixLe             = 20
+	bixGe             = 21
+	bixNot            = 22
+	bixAnd            = 23
+	bixOr             = 24
+	bixXor            = 25
+	bixLength         = 26
+	bixHd             = 27
+	bixTl             = 28
+	bixElement        = 29
+	bixSetelement     = 30
+	bixTupleSize      = 31
+	bixIsAtom         = 32
+	bixIsInteger      = 33
+	bixIsNumber       = 34
+	bixIsFloat        = 35
+	bixIsList         = 36
+	bixIsTuple        = 37
+	bixIsBoolean      = 38
+	bixIsFunction1    = 39
+	bixIsFunction2    = 40
+	bixIsPid          = 41
+	bixIsReference    = 42
+	bixIsBinary       = 43
+	bixIsRecord3      = 44
+	bixIntegerToList  = 45
+	bixListToInteger  = 46
+	bixAtomToList     = 47
+	bixAppend         = 48
+	bixSubtract       = 49
+	bixMin            = 50
+	bixMax            = 51
+	bixSelf           = 52
+	bixSpawn1         = 53
+	bixSpawn3         = 54
+	bixSend           = 55
+	bixApply2         = 56
+	bixApply3         = 57
+	bixIsProcessAlive = 58
+	bixRaise3         = 59
+	bixSpawnLink1     = 60
+	bixSpawnLink3     = 61
+	bixLink           = 62
+	bixUnlink         = 63
+	bixExit2          = 64
+	bixProcessFlag    = 65
+	bixRegister       = 66
+	bixUnregister     = 67
+	bixWhereis        = 68
+	bixMonitor2       = 69
+	bixDemonitor1     = 70
+	bixDemonitor2     = 71
+	bixFdiv           = 72
+	bixFloat          = 73
+	bixTrunc          = 74
+	bixRound          = 75
+	bixMathSqrt       = 76
+	bixMathPow        = 77
+	bixMathPi         = 78
+	bixMakeRef        = 79
+	bixError1         = 80
+	bixError2         = 81
+	bixExit1          = 82
+	bixThrow          = 83
+	bixDisplay        = 84
+	bixMonotonicTime0 = 85
+	bixMonotonicTime1 = 86
+	bixListsReverse1  = 87
+	bixListsReverse2  = 88
+	bixListsMember    = 89
+	bixListsKeyfind   = 90
+	bixIoFormat1      = 91
+	bixIoFormat2      = 92
+	bixIoPutChars     = 93
+	bixIoNl           = 94
+	bixP2PinHigh      = 95
+	bixP2PinLow       = 96
+	bixP2PinToggle    = 97
+	bixP2PinFloat     = 98
+	bixP2PinIn        = 99
+	bixP2PinWrite     = 100
+	bixP2Cog          = 101
+	bixP2GetCt        = 102
+	bixP2ClockFreq    = 103
+	bixP2Rnd          = 104
+)
 
 // The BIFs, by the number the packer gives a call of each. The table is filled
 // in init: apply refers to it, and under Go a variable's initializer may not
