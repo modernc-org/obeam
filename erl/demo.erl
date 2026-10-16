@@ -3,7 +3,8 @@
 %% license that can be found in the LICENSE file.
 
 %% demo: what the board runs: the modules of the corpus the VM can run, one
-%% after the other. counter waits a second for a reply that never comes.
+%% after the other, Erlang's and then Elixir's, ex/, and cogs last. counter
+%% waits a second for a reply that never comes.
 -module(demo).
 -export([main/0]).
 
@@ -21,4 +22,10 @@ main() ->
     links:main(),
     flt:main(),
     fmt:main(),
+    'Elixir.Hello':main(),
+    'Elixir.Fac':main(),
+    'Elixir.Ping':main(),
+    'Elixir.Ring':main(),
+    'Elixir.Enums':main(),
+    'Elixir.Strings':main(),
     cogs:main().

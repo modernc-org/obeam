@@ -11,7 +11,7 @@ scheduler on each of seven cogs. The user is the author of OctoGo (`../ogo`) and
 p2-11 (`../p2-11`); the idea came from a talk with a friend who likes Erlang on
 2026-10-16.
 
-**Status, 2026-10-16, night: M4 built, M5 begun.** The user said go that afternoon; M0
+**Status, 2026-10-16, night: M5 committed, M6a built.** The user said go that afternoon; M0
 (the reader, the corpus, DESIGN.md) was done by evening, DESIGN.md's open
 points decided with the user, M1 (one process on one cog, e1a384e), M2
 (processes, messages, receive with timeouts, funs and apply, 18c3c27), M3
@@ -25,9 +25,11 @@ have to become bytes), bit syntax, maps, bignums, `~p`'s line breaking. M5's
 OctoGo part is done (a profiler, leaf fast handlers, the P2's locks directly,
 collections sized by what lives) and the PASM core, on each scheduler's own
 cog as the user chose, run from hub: it does 88% of the instructions, and
-the demo runs twice as fast as at the end of M4. What is left of M5 is the
-runtime around the core: sends, receives, collections, scheduling (DESIGN.md
-section 8, the end). The files:
+the demo runs twice as fast as at the end of M4 (bba5a36; the user put the
+runtime around the core off for later). M6a, Elixir: six Elixir modules run
+and print what `elixir` prints, through `bs_create_bin`, run-time binaries,
+`IO`/`Kernel.inspect`/`String.Chars` BIFs and an `Enum` shim. M6b, maps and
+binary matching, is next in the plan. The files:
 
 - `ASSESSMENT.md`: the consolidated assessment and the plan. Verdict: start,
   staged. It holds the measured facts (opcode counts, AtomVM's size, what a
@@ -49,6 +51,10 @@ section 8, the end). The files:
 - `prof/`: the profiler, a board program over `erl/bench.erl`; `make prof`
   packs its image into `prof/image` and writes `prof/names.ogo`, the names
   the VM does not carry.
+- `ex/`: the Elixir corpus, `*.ex` compiled by `make exbeam` into committed
+  `Elixir.*.beam`; `ex/shim/` the Erlang shims of Elixir's library (`Enum`),
+  packed with an Elixir program and **never on the oracle's path**, where they
+  would hide Elixir's own. `TestElixir` runs `elixir -pa ex -e "Mod.main()"`.
 - `core/`: the PASM core. **Edit `core/core.pasm`, never `core/core.spin2`**,
   which `go run ./cmd/obeam gen -vm vm -names prof` writes from it and from
   `CoreOps` in `internal/pack/tables.go`; `TestCoreGenerated` fails on a stale
@@ -156,6 +162,7 @@ make run                         # ogo run on the board, under the shared lock
 make prof                        # the profiler, prof/prof.binary, over erl/bench.erl (pack, names, build)
 make prof-run                    # and run it on the board, under the shared lock
 make beam                        # recompile the corpus (erlc +deterministic, OTP 27) after a .erl edit
+make exbeam                      # recompile the Elixir corpus and its shims (elixirc 1.18.3, deterministic)
 make stats                       # regenerate erl/stats.txt
 make generate                    # regenerate internal/beam/opcodes.go and vm/{opcodes,tags,atoms,biftab}.ogo
 go run ./cmd/obeam dis erl/pingpong.beam     # a listing, as erlc -S would write it
@@ -224,6 +231,13 @@ the tree or be ahead of what this file knows; do not install over it.
   `CoreOps`, a `.op_<name>` in the template, `obeam gen`, `make image`. The
   core is not in the twin: run the demo on the board and diff it against
   `erl`, and `make prof`, after every change to it.
+- **Hub RAM is nearly full**: the checked demo binary is 503,788 bytes and
+  `main`'s stack 12 KB, some 8 KB short of 512 KB. `ogo build` says by how
+  much a build misses; the arena (`arenaLongs`) and the demo's modules are the
+  levers, and loading the image from the SD card the way out.
+- Elixir's `inspect` is `vm/inspect.ogo`; it does not break lines at 80
+  columns as Elixir's pretty printer does, so a corpus module keeps what it
+  inspects short.
 - **Measure before and after** with `make prof` and the board: the profile is
   by opcode and by BIF, on one scheduler. `vm.Dump()` prints the pool's free
   lists and the last request it failed: a `system_limit` with the pool mostly

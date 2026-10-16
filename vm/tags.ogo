@@ -31,6 +31,11 @@ const (
 	funExport    = 1
 	funBif       = 2
 	jumpValue    = 119
+	segBinary    = 0
+	segInteger   = 1
+	segUTF8      = 2
+	segAll       = 4294967295
+	segLittle    = 1
 	markX        = 7
 	markY        = 15
 )

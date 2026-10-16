@@ -10,9 +10,10 @@ and how to run it.
 2026-10-16; section 7 records the decisions. M1, one process on one cog, M2,
 processes and messages on that cog, M3, seven scheduler cogs, and M4,
 exceptions caught, links and monitors, floats and the rest of io:format, were
-built the same evening and night, and M5, speed, begun: sections 3 and 4 say
-where what is built differs from what was proposed.** What M0 measured is in
-section 6 and in `erl/stats.txt`; what M1 to M5 measured is in section 8.
+built the same evening and night, then M5, speed, and M6a, Elixir: sections
+3 and 4 say where what is built differs from what was proposed.** What M0
+measured is in section 6 and in `erl/stats.txt`; what M1 to M6a measured is
+in section 8.
 
 ## 1. The pieces
 
@@ -612,3 +613,43 @@ schedulers, both builds printing what `erl` prints line for line:
 
 Net of the demo's waits, the unchecked build computes about twice as fast as
 at the end of M4.
+
+**M6a, Elixir runs**, 2026-10-16, the same night. Three small Elixir modules
+compiled with Elixir 1.18.3 on OTP 27 named, through the packer's refusals,
+all that stood between them and the VM: `__info__/1`, which every Elixir
+module exports and which the packer now drops as it drops `module_info`;
+Elixir's library, `IO`, `Enum` and `String.Chars`; and `bs_create_bin`, the
+one instruction string interpolation and `<>` compile to. None needed maps or
+the bit syntax's matching. What was built:
+
+- `bs_create_bin`, which the packer rewrites into the VM's form, a kind, unit,
+  flags, source and size a segment, a `string` segment, an offset into the
+  module's string table, becoming a literal binary; binary, integer and UTF-8
+  segments, bit by bit where they are not whole bytes, a binary of no whole
+  number of bytes failing; float and UTF-16 and -32 segments refused by name.
+- Binaries made at run time: `emit` has a third target, the bytes of a binary
+  on the heap, so every writer makes a binary in two passes, one to count,
+  one to write, the argument read again after the room is made.
+  `integer_to_binary`, `atom_to_binary`, `binary_to_list`, `list_to_binary`,
+  `iolist_to_binary`, `byte_size`.
+- `IO.puts`, `IO.inspect`, `Kernel.inspect` and `String.Chars.to_string` as
+  BIFs, the last for what is no struct; `vm/inspect.ogo` writes terms as
+  Elixir's `inspect` does: atoms, aliases, strings with Elixir's escapes,
+  printable charlists as `~c"..."`, keyword lists as `[a: 1]`, 50 items of a
+  collection at most. It does not break a long result over lines at 80
+  columns, which Elixir's pretty printer does, nor take bytes past 127 for
+  text.
+- `ex/shim/Elixir.Enum.erl`, the `Enum` functions the corpus calls, on lists,
+  in Erlang, packed with an Elixir program and kept off the oracle's path.
+- `ex/`, six Elixir modules: `Hello`, `Fac`, `Ping`, `Ring`, `Enums` and
+  `Strings`, which `TestElixir` holds to what `elixir` prints, as `TestErl`
+  holds the Erlang ones to `erl`. All six agreed on their first run.
+
+On the board the demo runs the thirteen Erlang modules, the six Elixir ones
+and `cogs`, and the 85 lines before `cogs` are byte for byte what `erl` and
+`elixir` print, in both builds: 1,078,054 instructions in 4,787 ms checked,
+3,908 unchecked. The checked binary is 503,788 bytes, which with `main`'s
+stack of 12 KB leaves some 8 KB of the hub: the next addition to the VM or
+the demo is a question of room. Maps, the bit syntax's matching and Elixir's
+ranges and structs, which are maps, are M6b.
+

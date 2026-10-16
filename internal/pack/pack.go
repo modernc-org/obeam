@@ -257,7 +257,8 @@ func (p *packer) entry() (fnKey, error) {
 
 // reach returns the functions the entry and the exports reach, in a stable
 // order, and counts the rest as dropped. module_info/0 and /1 are dropped
-// whatever reaches them: nothing on the board answers them.
+// whatever reaches them, and Elixir's __info__/1: nothing on the board
+// answers them.
 func (p *packer) reach(entry fnKey) []*function {
 	seen := map[fnKey]bool{}
 	var work []*function
@@ -265,7 +266,8 @@ func (p *packer) reach(entry fnKey) []*function {
 		if fn == nil || seen[fn.key] {
 			return
 		}
-		if fn.key.name == "module_info" && (fn.key.arity == 0 || fn.key.arity == 1) {
+		if fn.key.name == "module_info" && (fn.key.arity == 0 || fn.key.arity == 1) ||
+			fn.key.name == "__info__" && fn.key.arity == 1 {
 			return
 		}
 		seen[fn.key] = true
@@ -532,6 +534,9 @@ func (p *packer) emitFunction(fn *function) {
 				p.emitArg(f, a, where(in))
 			}
 			continue
+		case beam.OpBsCreateBin:
+			p.emitBsCreateBin(f, in, where(in))
+			continue
 		case beam.OpMakeFun3:
 			idx := int(in.Args[0].Val)
 			if idx >= len(f.Funs) {
@@ -666,4 +671,79 @@ func (p *packer) supported(op beam.Opcode) bool {
 		return true
 	}
 	return false
+}
+
+// The kinds of a bs_create_bin segment in the image.
+const (
+	SegBinary  = 0          // a binary, all of it or its first Size*Unit bits; a string of the module's is a literal binary
+	SegInteger = 1          // an integer in Size*Unit bits
+	SegUTF8    = 2          // a code point in UTF-8
+	SegAll     = 0xffffffff // a segment's Size: all of the binary
+	SegLittle  = 1          // a segment's flags: little-endian
+)
+
+// emitBsCreateBin writes bs_create_bin as the VM takes it: Fail, Alloc, Live,
+// Unit and Dst as they are, then the count of segments and, for each, its
+// kind, unit, flags, source and size. A string segment, an offset into the
+// module's string table, becomes a literal binary of its bytes; append and
+// private_append, a binary to go on from, are a binary of all of it, since
+// the VM makes a new one. Floats and UTF-16 and -32 are refused.
+func (p *packer) emitBsCreateBin(f *beam.File, in beam.Instr, where string) {
+	if len(in.Args) != 6 || in.Args[5].Kind != beam.ArgList || len(in.Args[5].List)%6 != 0 {
+		p.errorf("%s: bs_create_bin of an unexpected shape", where)
+		return
+	}
+	p.emit(opw(in.Op))
+	for _, a := range in.Args[:5] {
+		p.emitArg(f, a, where)
+	}
+	list := in.Args[5].List
+	p.emit(uint32(len(list) / 6))
+	for k := 0; k < len(list); k += 6 {
+		typ, unit, flags, src, size := list[k], list[k+2], list[k+3], list[k+4], list[k+5]
+		if typ.Kind != beam.ArgAtom {
+			p.errorf("%s: a segment's type is no atom", where)
+			return
+		}
+		name := f.Atoms[typ.Val]
+		fl := uint32(0)
+		if flags.Kind == beam.ArgLiteral && flags.Val < int64(len(f.Literals)) {
+			for _, e := range f.Literals[flags.Val].Elems {
+				if e.Kind == beam.TermAtom && e.Atom == "little" {
+					fl |= SegLittle
+				}
+			}
+		}
+		switch name {
+		case "string":
+			n := int(size.Val)
+			off := int(src.Val)
+			if off < 0 || n < 0 || off+n > len(f.Strings) {
+				p.errorf("%s: a string segment past the string table", where)
+				return
+			}
+			lit, err := p.layoutTerm(beam.Term{Kind: beam.TermBinary, Bytes: f.Strings[off : off+n]})
+			if err != nil {
+				p.errorf("%s: %v", where, err)
+				return
+			}
+			p.emit(SegBinary, 8, 0, lit, SegAll)
+			continue
+		case "binary", "append", "private_append":
+			p.emit(SegBinary, uint32(unit.Val), fl)
+		case "integer":
+			p.emit(SegInteger, uint32(unit.Val), fl)
+		case "utf8":
+			p.emit(SegUTF8, 1, fl)
+		default:
+			p.errorf("%s: a %s segment, which the VM does not make", where, name)
+			return
+		}
+		p.emitArg(f, src, where)
+		if size.Kind == beam.ArgAtom && f.Atoms[size.Val] == "all" || name == "append" || name == "private_append" || name == "utf8" {
+			p.emit(SegAll)
+		} else {
+			p.emitArg(f, size, where)
+		}
+	}
 }

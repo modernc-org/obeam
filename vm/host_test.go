@@ -135,3 +135,38 @@ func TestShortest(t *testing.T) {
 		}
 	}
 }
+
+// TestElixir runs the Elixir modules of ex/, packed with the shims of
+// ex/shim, and holds what they print to what elixir prints for the same
+// module, which runs Elixir's own library: the shims are not on its path.
+func TestElixir(t *testing.T) {
+	root := os.Getenv("OBEAM_ROOT")
+	if root == "" {
+		t.Skip("OBEAM_ROOT unset: run through scripts/twin.sh")
+	}
+	elixir, err := exec.LookPath("elixir")
+	if err != nil {
+		t.Skip("no elixir on PATH")
+	}
+	shims, err := filepath.Glob(filepath.Join(root, "ex", "shim", "*.beam"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, m := range []string{"Hello", "Fac", "Ping", "Ring", "Enums", "Strings"} {
+		t.Run(m, func(t *testing.T) {
+			files := append([]string{filepath.Join(root, "ex", "Elixir."+m+".beam")}, shims...)
+			img, err := pack.Pack(files, pack.Options{Entry: "Elixir." + m + ":main/0", Lines: true})
+			if err != nil {
+				t.Fatal(err)
+			}
+			want, err := exec.Command(elixir, "-pa", filepath.Join(root, "ex"), "-e", m+".main()").Output()
+			if err != nil {
+				t.Fatalf("elixir: %v", err)
+			}
+			got := runImage(img)
+			if !bytes.Equal(got, want) {
+				t.Errorf("the VM printed:\n%s--- elixir printed:\n%s", got, want)
+			}
+		})
+	}
+}

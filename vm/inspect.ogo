@@ -1,0 +1,327 @@
+// Copyright 2026 The obeam Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file.
+
+// Elixir's inspect, what IO.inspect writes and Kernel.inspect makes a binary
+// of, for the terms without maps: integers and floats as ~w writes them;
+// atoms as :ok, true, false and nil bare, a module's alias without its
+// Elixir. prefix, others in quotes; lists [1, 2] with a space after each
+// comma, a keyword list as [a: 1], a printable charlist as ~c"ab"; tuples
+// {1, 2}; a printable binary as "ab", Elixir's escapes in it, another as
+// <<1, 2>>. A collection shows 50 items at most, and then "...", as
+// inspect's default limit says. What it does not do: break a long result
+// over lines at 80 columns, which Elixir's pretty printer does, and take
+// bytes past 127 for printable, which Elixir does for valid UTF-8.
+
+const inspectLimit = 50
+
+// inspect writes a term as Elixir's inspect does, the compound terms still
+// to finish on the writer's stack.
+func inspect(s *sched, t uint32) {
+	sp := 0
+	ipush(s, &sp, t)
+	for sp > 0 {
+		f := &s.wstack[sp-1]
+		if !f.list {
+			n := tupleArity(f.t)
+			if f.i > n {
+				emit(s, '}')
+				sp--
+				continue
+			}
+			if f.i > 1 {
+				emits(s, ", ")
+			}
+			if f.i > inspectLimit {
+				emits(s, "...")
+				f.i = n + 1
+				continue
+			}
+			e := tupleElem(f.t, f.i)
+			f.i++
+			ipush(s, &sp, e)
+			continue
+		}
+		if f.tail || f.t == nilTerm {
+			emit(s, ']')
+			sp--
+			continue
+		}
+		if !isCons(f.t) {
+			emits(s, " | ")
+			f.tail = true
+			ipush(s, &sp, f.t)
+			continue
+		}
+		if !f.first {
+			emits(s, ", ")
+		}
+		f.first = false
+		if f.i >= inspectLimit {
+			emits(s, "...")
+			f.tail = true
+			continue
+		}
+		f.i++
+		i := consIdx(f.t)
+		e := arena[i]
+		f.t = arena[i+1]
+		if f.kw {
+			writeExAtom(s, tupleElem(e, 1), true)
+			emit(s, ' ')
+			ipush(s, &sp, tupleElem(e, 2))
+			continue
+		}
+		ipush(s, &sp, e)
+	}
+}
+
+// ipush writes a term that has no parts, or opens a compound one and puts it
+// on the stack.
+func ipush(s *sched, sp *int, t uint32) {
+	switch {
+	case isCons(t):
+		if isPrintableCharlist(t) {
+			emits(s, "~c")
+			emit(s, '"')
+			for isCons(t) {
+				i := consIdx(t)
+				writeExChar(s, byte(smallVal(arena[i])), arena[i+1])
+				t = arena[i+1]
+			}
+			emit(s, '"')
+			return
+		}
+		if *sp == writeDepth {
+			panic("vm: a term nested too deeply to inspect")
+		}
+		emit(s, '[')
+		s.wstack[*sp] = wframe{t: t, list: true, first: true, kw: isKeyword(t)}
+		*sp++
+	case t == nilTerm:
+		emits(s, "[]")
+	case isTuple(t):
+		if *sp == writeDepth {
+			panic("vm: a term nested too deeply to inspect")
+		}
+		emit(s, '{')
+		s.wstack[*sp] = wframe{t: t, i: 1}
+		*sp++
+	case isAtom(t):
+		writeExAtom(s, t, false)
+	case isBinary(t):
+		writeExBinary(s, t)
+	case isPid(t):
+		emits(s, "#PID<0.")
+		writeInt(s, int64(pidIdx(t)))
+		emit(s, '.')
+		writeInt(s, int64(t>>(5+pidIndexBits)))
+		emit(s, '>')
+	case isRef(t):
+		emits(s, "#Reference<0.0.0.")
+		writeInt(s, int64(t>>5))
+		emit(s, '>')
+	case isFun(t):
+		emits(s, "#Function<")
+		writeInt(s, int64(funCode(t)))
+		emit(s, '/')
+		writeInt(s, int64(funArity(t)))
+		emit(s, '>')
+	default:
+		writeFlat(s, t, false)
+	}
+}
+
+// exPrintable reports whether a byte is one Elixir writes in a string, as
+// itself or escaped.
+func exPrintable(c uint32) bool {
+	return c >= 32 && c <= 126 || c >= 7 && c <= 13 || c == 27
+}
+
+func isPrintableCharlist(t uint32) bool {
+	for isCons(t) {
+		h := arena[consIdx(t)]
+		if !isSmall(h) || smallVal(h) < 0 || !exPrintable(uint32(smallVal(h))) {
+			return false
+		}
+		t = arena[consIdx(t)+1]
+	}
+	return t == nilTerm
+}
+
+// isKeyword reports whether a list is a keyword list: proper, of pairs whose
+// first element is an atom.
+func isKeyword(t uint32) bool {
+	for isCons(t) {
+		e := arena[consIdx(t)]
+		if !isTuple(e) || tupleArity(e) != 2 || !isAtom(tupleElem(e, 1)) {
+			return false
+		}
+		t = arena[consIdx(t)+1]
+	}
+	return t == nilTerm
+}
+
+// writeExChar writes a character in a string, escaped as Elixir escapes it;
+// next is what follows it, a # before { being escaped too.
+func writeExChar(s *sched, c byte, next uint32) {
+	switch c {
+	case '"', '\\':
+		emit(s, '\\')
+		emit(s, c)
+	case '\n':
+		emits(s, `\n`)
+	case '\t':
+		emits(s, `\t`)
+	case '\r':
+		emits(s, `\r`)
+	case 7:
+		emits(s, `\a`)
+	case '\b':
+		emits(s, `\b`)
+	case '\f':
+		emits(s, `\f`)
+	case '\v':
+		emits(s, `\v`)
+	case 27:
+		emits(s, `\e`)
+	case '#':
+		if isCons(next) && arena[consIdx(next)] == mkSmall('{') {
+			emit(s, '\\')
+		}
+		emit(s, c)
+	default:
+		emit(s, c)
+	}
+}
+
+// writeExBinary writes a printable binary as a string, another as its bytes.
+func writeExBinary(s *sched, t uint32) {
+	n := binaryLen(t)
+	text := true
+	for k := uint32(0); k < n && text; k++ {
+		text = exPrintable(uint32(binaryByte(t, k)))
+	}
+	if text {
+		emit(s, '"')
+		for k := uint32(0); k < n; k++ {
+			c := binaryByte(t, k)
+			if c == '#' && k+1 < n && binaryByte(t, k+1) == '{' {
+				emit(s, '\\')
+				emit(s, c)
+				continue
+			}
+			writeExChar(s, c, nilTerm)
+		}
+		emit(s, '"')
+		return
+	}
+	emits(s, "<<")
+	for k := uint32(0); k < n; k++ {
+		if k > 0 {
+			emits(s, ", ")
+		}
+		if k == inspectLimit {
+			emits(s, "...")
+			break
+		}
+		writeInt(s, int64(binaryByte(t, k)))
+	}
+	emits(s, ">>")
+}
+
+// writeExAtom writes an atom as inspect does, or as a keyword list's key,
+// name and colon, when key is set.
+func writeExAtom(s *sched, t uint32, key bool) {
+	name := atomName(t)
+	if key {
+		if isExIdent(name) {
+			emits(s, name)
+		} else {
+			writeExQuoted(s, name)
+		}
+		emit(s, ':')
+		return
+	}
+	if name == "true" || name == "false" || name == "nil" {
+		emits(s, name)
+		return
+	}
+	if len(name) > 7 && name[:7] == "Elixir." && isExAlias(name[7:]) {
+		emits(s, name[7:])
+		return
+	}
+	emit(s, ':')
+	if isExIdent(name) || isExOperator(name) {
+		emits(s, name)
+		return
+	}
+	writeExQuoted(s, name)
+}
+
+func writeExQuoted(s *sched, name string) {
+	emit(s, '"')
+	for i := 0; i < len(name); i++ {
+		writeExChar(s, name[i], nilTerm)
+	}
+	emit(s, '"')
+}
+
+func isLetter(c byte) bool { return c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' }
+func isDigit(c byte) bool  { return c >= '0' && c <= '9' }
+
+// isExIdent reports whether an atom's name is one Elixir writes unquoted: a
+// letter or an underscore, then letters, digits, underscores and at signs,
+// and a ? or ! at the end.
+func isExIdent(name string) bool {
+	if len(name) == 0 || !isLetter(name[0]) && name[0] != '_' {
+		return false
+	}
+	for i := 1; i < len(name); i++ {
+		c := name[i]
+		if isLetter(c) || isDigit(c) || c == '_' || c == '@' {
+			continue
+		}
+		if i == len(name)-1 && (c == '?' || c == '!') {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+// isExAlias reports whether what follows Elixir. in an atom is a module's
+// alias: parts that begin with a capital, joined by dots.
+func isExAlias(name string) bool {
+	start := true
+	for i := 0; i < len(name); i++ {
+		c := name[i]
+		switch {
+		case start:
+			if c < 'A' || c > 'Z' {
+				return false
+			}
+			start = false
+		case c == '.':
+			start = true
+		case isLetter(c) || isDigit(c) || c == '_':
+		default:
+			return false
+		}
+	}
+	return !start
+}
+
+var exOperators = [24]string{
+	"+", "-", "*", "/", "==", "!=", "===", "!==", "<", ">", "<=", ">=", "&&", "||",
+	"!", "<>", "++", "--", "|>", "=~", "..", "&", "^", "**",
+}
+
+func isExOperator(name string) bool {
+	for i := range exOperators {
+		if exOperators[i] == name {
+			return true
+		}
+	}
+	return false
+}

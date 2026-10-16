@@ -20,11 +20,18 @@ type wframe struct {
 	list  bool
 	first bool // of a list: nothing written after the bracket yet
 	tail  bool // of a list: an improper tail has been written, the bracket is owed
+	kw    bool // of a list Elixir writes as a keyword list, [a: 1]
 }
 
 // emit writes a byte of output: into the capture buffer while one is open,
 // else to the output hook.
 func emit(s *sched, b byte) {
+	if s.binAt != 0 {
+		// Into a binary being made, its longs zeroed.
+		arena[s.binAt+s.binPos/4] |= uint32(b) << (8 * (s.binPos % 4))
+		s.binPos++
+		return
+	}
 	if s.ncap >= 0 {
 		if s.ncap < capSize {
 			s.cap[s.ncap] = b

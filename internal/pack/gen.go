@@ -110,6 +110,8 @@ func genTags() string {
 		{"pidIndexBits", PidIndexBits}, {"pidGenBits", PidGenBits}, {"funHeadLongs", FunHeadLongs},
 		{"maxArity", MaxArity}, {"funLocal", FunLocal}, {"funExport", FunExport}, {"funBif", FunBif},
 		{"jumpValue", JumpValue},
+		{"segBinary", SegBinary}, {"segInteger", SegInteger}, {"segUTF8", SegUTF8},
+		{"segAll", SegAll}, {"segLittle", SegLittle},
 		{"markX", MarkX}, {"markY", MarkY},
 	} {
 		fmt.Fprintf(&b, "\t%s = %d\n", c.name, c.v)
@@ -135,7 +137,12 @@ func genBifs() string {
 	fmt.Fprintf(&b, "// TableID is the fingerprint of the well-known atoms and the BIFs, which an\n// image must carry too: one packed before the tables changed calls BIFs by\n// numbers that are no longer theirs.\nconst TableID = 0x%08x\n\n", TableID())
 	fmt.Fprintf(&b, "// nBifs is how many BIFs there are.\nconst nBifs = %d\n\n", len(Bifs))
 	b.WriteString("// The BIFs' numbers, for the handlers that do some of them themselves.\nconst (\n")
+	seen := map[string]bool{}
 	for i, bif := range Bifs {
+		if seen[bif.Func] {
+			continue // a function that is two BIFs is numbered by the first
+		}
+		seen[bif.Func] = true
 		fmt.Fprintf(&b, "\tbix%s = %d\n", strings.TrimPrefix(bif.Func, "bif"), i)
 	}
 	b.WriteString(")\n\n")

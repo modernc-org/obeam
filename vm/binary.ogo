@@ -1,0 +1,409 @@
+// Copyright 2026 The obeam Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file.
+
+// Binaries made at run time: bs_create_bin, which string interpolation and
+// the bit syntax's construction compile to, and the BIFs that make a binary
+// of a term. A binary is a boxed term: its header, its length in bytes, and
+// the bytes, four to a long, the first in the low byte. The bits within a
+// byte go from the high one down, as Erlang's do. Bitstrings, binaries of a
+// length that is no whole number of bytes, are not made: a construction that
+// would make one fails.
+
+// hBsCreateBin makes a binary of its segments: Fail, Alloc, Live, Unit and
+// Dst, the count of segments, and each segment's kind, unit, flags, source
+// and size, as the packer writes them. A segment that does not fit what it
+// is fails to Fail, or with badarg.
+func hBsCreateBin(s *sched, pc uint32) uint32 {
+	fail, live, dst, n := code[pc+1], code[pc+3], code[pc+5], code[pc+6]
+	seg := pc + 7
+	bits := uint32(0)
+	for k := uint32(0); k < n; k++ {
+		b, ok := segBits(s, seg+5*k)
+		if !ok {
+			return bsFail(s, fail)
+		}
+		bits += b
+	}
+	if bits%8 != 0 {
+		return bsFail(s, fail)
+	}
+	bytes := bits / 8
+	longs := (bytes + 3) / 4
+	if !ensure(s, 2+longs, int32(live)) {
+		return raiseAtom(s, atomError, atomSystemLimit)
+	}
+	i := s.cur.htop
+	arena[i] = mkHeader(hdrBinary, 1+longs)
+	arena[i+1] = bytes
+	for k := uint32(0); k < longs; k++ {
+		arena[i+2+k] = 0
+	}
+	pos := uint32(0)
+	for k := uint32(0); k < n; k++ {
+		pos = segPut(s, i+2, pos, seg+5*k)
+	}
+	s.cur.htop += 2 + longs
+	store(s, dst, mkBoxed(i))
+	return seg + 5*n
+}
+
+func bsFail(s *sched, fail uint32) uint32 {
+	if fail != 0 {
+		return fail
+	}
+	return raiseAtom(s, atomError, atomBadarg)
+}
+
+// segSize reads a segment's size, Size*Unit bits, and reports whether it is
+// a small integer that is no less than zero.
+func segSize(s *sched, at uint32) (uint32, bool) {
+	sz := src(s, code[at+4])
+	if !isSmall(sz) || smallVal(sz) < 0 {
+		return 0, false
+	}
+	return uint32(smallVal(sz)) * code[at+1], true
+}
+
+// segBits answers how many bits a segment makes, and whether its source is
+// what its kind takes.
+func segBits(s *sched, at uint32) (uint32, bool) {
+	v := src(s, code[at+3])
+	switch code[at] {
+	case segBinary:
+		if !isBinary(v) {
+			return 0, false
+		}
+		all := binaryLen(v) * 8
+		if code[at+4] == segAll {
+			return all, true
+		}
+		b, ok := segSize(s, at)
+		return b, ok && b <= all
+	case segInteger:
+		if !isInteger(v) {
+			return 0, false
+		}
+		b, ok := segSize(s, at)
+		return b, ok && b <= 64
+	case segUTF8:
+		n := utf8Len(v)
+		return 8 * n, n != 0
+	}
+	return 0, false
+}
+
+// utf8Len answers how many bytes a code point takes in UTF-8, 0 for what is
+// none.
+func utf8Len(v uint32) uint32 {
+	if !isSmall(v) {
+		return 0
+	}
+	c := smallVal(v)
+	switch {
+	case c < 0:
+		return 0
+	case c < 0x80:
+		return 1
+	case c < 0x800:
+		return 2
+	case c >= 0xd800 && c < 0xe000:
+		return 0
+	case c < 0x10000:
+		return 3
+	case c < 0x110000:
+		return 4
+	}
+	return 0
+}
+
+// putBits writes the low n bits of v at bit pos of the binary whose first
+// byte's long is base, the high bit first.
+func putBits(base, pos uint32, v uint64, n uint32) uint32 {
+	for k := n; k > 0; k-- {
+		if v>>(k-1)&1 != 0 {
+			b := pos / 8
+			arena[base+b/4] |= 1 << (8*(b%4) + 7 - pos%8)
+		}
+		pos++
+	}
+	return pos
+}
+
+// segPut writes a segment at bit pos and answers the bit after it.
+func segPut(s *sched, base, pos, at uint32) uint32 {
+	v := src(s, code[at+3])
+	switch code[at] {
+	case segBinary:
+		b := binaryLen(v) * 8
+		if code[at+4] != segAll {
+			b, _ = segSize(s, at)
+		}
+		for k := uint32(0); k < b/8; k++ {
+			pos = putBits(base, pos, uint64(binaryByte(v, k)), 8)
+		}
+		if r := b % 8; r != 0 {
+			pos = putBits(base, pos, uint64(binaryByte(v, b/8)>>(8-r)), r)
+		}
+	case segInteger:
+		b, _ := segSize(s, at)
+		x := uint64(intVal(v))
+		if code[at+2]&segLittle != 0 && b%8 == 0 {
+			for k := uint32(0); k < b/8; k++ {
+				pos = putBits(base, pos, x>>(8*k), 8)
+			}
+			break
+		}
+		pos = putBits(base, pos, x, b)
+	case segUTF8:
+		pos = putUTF8(base, pos, uint32(smallVal(v)))
+	}
+	return pos
+}
+
+// putUTF8 writes a code point in UTF-8 at bit pos.
+func putUTF8(base, pos, c uint32) uint32 {
+	switch {
+	case c < 0x80:
+		return putBits(base, pos, uint64(c), 8)
+	case c < 0x800:
+		pos = putBits(base, pos, uint64(0xc0|c>>6), 8)
+	case c < 0x10000:
+		pos = putBits(base, pos, uint64(0xe0|c>>12), 8)
+		pos = putBits(base, pos, uint64(0x80|c>>6&0x3f), 8)
+	default:
+		pos = putBits(base, pos, uint64(0xf0|c>>18), 8)
+		pos = putBits(base, pos, uint64(0x80|c>>12&0x3f), 8)
+		pos = putBits(base, pos, uint64(0x80|c>>6&0x3f), 8)
+	}
+	return putBits(base, pos, uint64(0x80|c&0x3f), 8)
+}
+
+// emitUTF8 writes a code point in UTF-8.
+func emitUTF8(s *sched, c uint32) {
+	switch {
+	case c < 0x80:
+		emit(s, byte(c))
+		return
+	case c < 0x800:
+		emit(s, byte(0xc0|c>>6))
+	case c < 0x10000:
+		emit(s, byte(0xe0|c>>12))
+		emit(s, byte(0x80|c>>6&0x3f))
+	default:
+		emit(s, byte(0xf0|c>>18))
+		emit(s, byte(0x80|c>>12&0x3f))
+		emit(s, byte(0x80|c>>6&0x3f))
+	}
+	emit(s, byte(0x80|c&0x3f))
+}
+
+// The writers a binary can be made with.
+const (
+	wkToString = iota // String.Chars.to_string's
+	wkInspect         // Kernel.inspect's
+	wkAtom            // an atom's name
+	wkIolist          // an iolist's bytes
+)
+
+// writeKind writes a term with a writer, and reports whether the term was
+// one the writer takes.
+func writeKind(s *sched, kind int, t uint32) bool {
+	switch kind {
+	case wkToString:
+		return writeToString(s, t)
+	case wkInspect:
+		inspect(s, t)
+		return true
+	case wkAtom:
+		if !isAtom(t) {
+			return false
+		}
+		emits(s, atomName(t))
+		return true
+	}
+	return writeData(s, t, false)
+}
+
+// binaryOf makes a binary of what a writer writes of the BIF's first
+// argument: once to count the bytes, once into the binary, the argument read
+// again after the room is made, a collection perhaps having moved it.
+func binaryOf(s *sched, kind int) uint32 {
+	s.ncap = 0
+	ok := writeKind(s, kind, s.bargs[0])
+	n := uint32(s.ncap)
+	s.ncap = -1
+	if !ok {
+		return badarg(s)
+	}
+	longs := (n + 3) / 4
+	if !ensure(s, 2+longs, s.curLive) {
+		return nonValue
+	}
+	i := s.cur.htop
+	arena[i] = mkHeader(hdrBinary, 1+longs)
+	arena[i+1] = n
+	for k := uint32(0); k < longs; k++ {
+		arena[i+2+k] = 0
+	}
+	s.binAt = i + 2
+	s.binPos = 0
+	writeKind(s, kind, s.bargs[0])
+	s.binAt = 0
+	s.cur.htop += 2 + longs
+	return mkBoxed(i)
+}
+
+// writeData writes iodata, bytes and binaries in lists nested to any depth,
+// or, when chars is set, Elixir's chardata, whose integers are code points
+// written in UTF-8. The lists still to finish wait on the message stack.
+func writeData(s *sched, t uint32, chars bool) bool {
+	sp := 0
+	for {
+		switch {
+		case isBinary(t):
+			n := binaryLen(t)
+			for k := uint32(0); k < n; k++ {
+				emit(s, binaryByte(t, k))
+			}
+			t = nilTerm
+		case isCons(t):
+			i := consIdx(t)
+			h := arena[i]
+			t = arena[i+1]
+			switch {
+			case isSmall(h) && smallVal(h) >= 0 && (smallVal(h) < 256 || chars && utf8Len(h) != 0):
+				if chars {
+					emitUTF8(s, uint32(smallVal(h)))
+				} else {
+					emit(s, byte(smallVal(h)))
+				}
+			case isCons(h) || isBinary(h) || h == nilTerm:
+				if sp == msgDepth {
+					return false
+				}
+				s.msgStack[sp] = t
+				sp++
+				t = h
+			default:
+				return false
+			}
+			continue
+		case t != nilTerm:
+			return false
+		}
+		if sp == 0 {
+			return true
+		}
+		sp--
+		t = s.msgStack[sp]
+	}
+}
+
+// writeToString writes what String.Chars.to_string makes of a term: a
+// binary's bytes, chardata, an atom's name, nil being the empty string, an
+// integer or a float in decimal. Anything else is not here.
+func writeToString(s *sched, t uint32) bool {
+	switch {
+	case isBinary(t) || isList(t):
+		return writeData(s, t, true)
+	case isAtom(t):
+		if atomName(t) != "nil" {
+			emits(s, atomName(t))
+		}
+		return true
+	case isInteger(t):
+		writeInt(s, intVal(t))
+		return true
+	case isFloat(t):
+		writeFloat(s, floatVal(t))
+		return true
+	}
+	return false
+}
+
+// The BIFs.
+
+func bifByteSize(s *sched, n uint32) uint32 {
+	if !isBinary(s.bargs[0]) {
+		return badarg(s)
+	}
+	return mkSmall(int32(binaryLen(s.bargs[0])))
+}
+
+func bifIntegerToBinary(s *sched, n uint32) uint32 {
+	if !isInteger(s.bargs[0]) {
+		return badarg(s)
+	}
+	return binaryOf(s, wkToString)
+}
+
+func bifAtomToBinary(s *sched, n uint32) uint32 {
+	return binaryOf(s, wkAtom)
+}
+
+func bifIolistToBinary(s *sched, n uint32) uint32 {
+	if isBinary(s.bargs[0]) {
+		return s.bargs[0]
+	}
+	return binaryOf(s, wkIolist)
+}
+
+func bifBinaryToList(s *sched, n uint32) uint32 {
+	if !isBinary(s.bargs[0]) {
+		return badarg(s)
+	}
+	len := binaryLen(s.bargs[0])
+	if !ensure(s, 2*len, s.curLive) {
+		return nonValue
+	}
+	b := s.bargs[0]
+	t := uint32(nilTerm)
+	for k := len; k > 0; k-- {
+		i := s.cur.htop
+		arena[i] = mkSmall(int32(binaryByte(b, k-1)))
+		arena[i+1] = t
+		s.cur.htop += 2
+		t = mkCons(i)
+	}
+	return t
+}
+
+// bifExToString is String.Chars.to_string for what is no Elixir struct.
+func bifExToString(s *sched, n uint32) uint32 {
+	if isBinary(s.bargs[0]) {
+		return s.bargs[0]
+	}
+	return binaryOf(s, wkToString)
+}
+
+// bifExKernelInspect is Kernel.inspect/1: the binary of what IO.inspect
+// writes.
+func bifExKernelInspect(s *sched, n uint32) uint32 {
+	return binaryOf(s, wkInspect)
+}
+
+// bifExPuts is IO.puts/1: chardata, or what to_string makes of the term,
+// and a newline, under the output's lock.
+func bifExPuts(s *sched, n uint32) uint32 {
+	lock(lockOut)
+	ok := writeToString(s, s.bargs[0])
+	if ok {
+		emit(s, '\n')
+	}
+	unlock(lockOut)
+	if !ok {
+		return badarg(s)
+	}
+	return okTerm
+}
+
+// bifExInspect is IO.inspect/1: the term as Elixir writes it, a newline, and
+// the term back.
+func bifExInspect(s *sched, n uint32) uint32 {
+	lock(lockOut)
+	inspect(s, s.bargs[0])
+	emit(s, '\n')
+	unlock(lockOut)
+	return s.bargs[0]
+}

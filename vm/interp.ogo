@@ -102,6 +102,7 @@ var handlers = [256]handler{
 	opFmul:              hFmul,
 	opFdiv:              hFdiv,
 	opFnegate:           hFnegate,
+	opBsCreateBin:       hBsCreateBin,
 	opBadmatch:          hBadmatch,
 	opCaseEnd:           hCaseEnd,
 	opIfEnd:             hIfEnd,

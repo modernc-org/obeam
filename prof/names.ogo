@@ -146,7 +146,7 @@ var opNames = [256]string{
 }
 
 // nb is how many BIFs there are, and bifNames their names, by number.
-const nb = 105
+const nb = 116
 
 var bifNames = [nb]string{
 	"erlang:+/2",
@@ -222,6 +222,17 @@ var bifNames = [nb]string{
 	"erlang:demonitor/1",
 	"erlang:demonitor/2",
 	"erlang://2",
+	"erlang:byte_size/1",
+	"erlang:integer_to_binary/1",
+	"erlang:atom_to_binary/1",
+	"erlang:atom_to_binary/2",
+	"erlang:binary_to_list/1",
+	"erlang:list_to_binary/1",
+	"erlang:iolist_to_binary/1",
+	"Elixir.IO:puts/1",
+	"Elixir.IO:inspect/1",
+	"Elixir.Kernel:inspect/1",
+	"Elixir.String.Chars:to_string/1",
 	"erlang:float/1",
 	"erlang:trunc/1",
 	"erlang:round/1",

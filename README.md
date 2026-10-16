@@ -11,10 +11,10 @@ seven of them. It is the second program of size in OctoGo, after
 
 ## Status
 
-Begun on 2026-10-16, and at milestone M4 of the plan in `ASSESSMENT.md`:
-Erlang processes, spawned, linked and monitored, sending and receiving,
-catching exceptions, computing in floats, on seven scheduler cogs, running
-modules compiled by `erlc`.
+Begun on 2026-10-16, and at milestone M6a of the plan in `ASSESSMENT.md`:
+Erlang and Elixir processes, spawned, linked and monitored, sending and
+receiving, catching exceptions, computing in floats and making binaries, on
+seven scheduler cogs, running modules compiled by `erlc` and `elixirc`.
 
 - `cmd/obeam`: the host tool, Go. `obeam pack` turns `.beam` files into the
   image the board runs, every operand resolved and every literal laid out as
@@ -30,13 +30,13 @@ modules compiled by `erlc`.
   processes, a server with timeouts, linked workers, `try` and `catch` and
   floats, print the same bytes under both.
 - `main.ogo`, `image/`: the board program and its image, `demo`, which runs
-  the thirteen and then `cogs`, seven workers that report which scheduler ran
-  them. Build it with `ogo build`, run it with `make run`. On a P2-EC it
-  prints what `erl` prints, line for line, then the workers' schedulers, and
+  the thirteen Erlang modules, the six Elixir ones, and then `cogs`, seven
+  workers that report which scheduler ran them. Build it with `ogo build`, run it with `make run`. On a P2-EC it
+  prints what `erl` and `elixir` print, line for line, then the workers' schedulers, and
   then:
 
   ```
-  913088 instructions in 3101 ms, 294449 a second, 619 collections, the core run 33118 times
+  1078054 instructions in 4787 ms, 225204 a second, 1223 collections, the core run 64431 times
   ```
 
   which is the checked build at 160 MHz, a second of it the demo's own
@@ -46,13 +46,17 @@ modules compiled by `erlc`.
   clocks each against 800 in OctoGo.
 - `prof/`: the profiler, which times every instruction of a workload on the
   board, by opcode and by BIF: `make prof-run`.
+- `ex/`: six Elixir modules, from `IO.puts("hello, world")` to a ring of a
+  hundred processes and string interpolation of every kind, held to what
+  `elixir` prints; `ex/shim/` the part of Elixir's `Enum` they use, in Erlang.
 - `erl/`: the corpus, seventeen small Erlang modules from `fac` to a process
   ring, a concurrent prime sieve, linked workers and floats, compiled with
   OTP 27 and committed; `erl/stats.txt` is the opcode and call histogram M0
   measured over the first eleven.
 - `DESIGN.md`: how it is made, and what each milestone measured.
 
-Not yet: bit syntax, maps, bignums, an image loaded from the SD card, `~p`'s
+Not yet: maps (so neither Elixir's structs nor its ranges), the bit syntax's
+matching, bignums, an image loaded from the SD card, `~p`'s
 line breaking. The arena for process heaps is 128 KB: the checked build of
 the VM with the full demo image fills most of the rest of the 512 KB. A process's stack is bounded by its largest heap block, 8,192
 longs, so a recursion 20,000 deep that Erlang takes ends here in

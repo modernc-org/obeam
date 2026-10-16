@@ -9,7 +9,7 @@ ERLCFLAGS  = +deterministic
 ERLS  = $(wildcard erl/*.erl)
 BEAMS = $(ERLS:.erl=.beam)
 
-.PHONY: all test twin beam stats generate image prof prof-run run clean
+.PHONY: all test twin beam exbeam stats generate image prof prof-run run clean
 
 all: test
 
@@ -30,7 +30,8 @@ twin:
 IMAGE_ENTRY   = demo:main/0
 IMAGE_MODULES = erl/demo.beam erl/fac.beam erl/fib.beam erl/lst.beam erl/tuples.beam erl/funs.beam \
 	erl/pingpong.beam erl/ring.beam erl/sieve.beam erl/counter.beam erl/exc.beam erl/links.beam \
-	erl/flt.beam erl/fmt.beam erl/cogs.beam
+	erl/flt.beam erl/fmt.beam erl/cogs.beam ex/Elixir.Hello.beam ex/Elixir.Fac.beam ex/Elixir.Ping.beam \
+	ex/Elixir.Ring.beam ex/Elixir.Enums.beam ex/Elixir.Strings.beam ex/shim/Elixir.Enum.beam
 
 image: $(BEAMS)
 	mkdir -p image
@@ -62,6 +63,16 @@ beam: $(BEAMS)
 
 erl/%.beam: erl/%.erl
 	$(ERLC) $(ERLCFLAGS) -o erl $<
+
+# exbeam compiles the Elixir corpus, ex/*.ex, with elixirc, and the shims,
+# ex/shim/*.erl, with erlc. The .beam files are committed, so this is needed
+# only after a source changes.
+EXS   = $(wildcard ex/*.ex)
+SHIMS = $(wildcard ex/shim/*.erl)
+
+exbeam:
+	elixirc --no-docs --no-debug-info -o ex $(EXS)
+	$(ERLC) $(ERLCFLAGS) -o ex/shim $(SHIMS)
 
 # stats regenerates erl/stats.txt, the corpus's opcode and call histogram.
 stats: $(BEAMS)

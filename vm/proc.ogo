@@ -118,6 +118,8 @@ type sched struct {
 	fbuf     [256]byte     // a format string being written
 	cap      [capSize]byte // what a padded directive wrote
 	ncap     int32         // how much of it, or -1 while nothing is captured
+	binAt    uint32        // where a binary being written begins, its first byte's long, or 0
+	binPos   uint32        // and the next byte's index in it
 
 	steps      uint32        // instructions interpreted
 	cb         [cbLen]uint32 // the core's block
