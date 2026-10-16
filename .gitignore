@@ -1,0 +1,14 @@
+# What make generate fetches, and what go build leaves at the root.
+/build/
+/obeam
+
+# ogo build artifacts
+*.binary
+*.p2asm
+
+# Local assistant state, as in ogo's and p2-11's .gitignore: a `git add -A`
+# would otherwise sweep it into a repository that is meant to become public.
+.claude/
+
+# What a failed erl -eval leaves behind.
+erl_crash.dump

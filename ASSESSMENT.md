@@ -114,7 +114,12 @@ OTP 27.3.4.1, whose set ends at 183 (`executable_line`). Pin OTP 27, and have
 the host tool refuse an opcode or a BIF it does not implement, by name. How
 many a program needs is measured in milestone 0; the expectation is 30 to 40
 for pingpong-class programs, about 50 with lists, funs and exceptions, and
-well under 100 for anything the compiler emits today.
+well under 100 for anything the compiler emits today. **Measured, M0, the same
+day:** over the eleven modules of `erl/` (1,486 instructions) the compiler
+uses 63 distinct opcodes; `pingpong` alone 30, `fac` 20, `ring` 32, the
+concurrent sieve 35, the server with references and timeouts 41. So version
+1's subset is about sixty-five opcodes, not fifty; `erl/stats.txt` has the
+counts and DESIGN.md section 6 what they add to the list below.
 
 **AtomVM.** `src/libAtomVM`: 65,104 lines of C and headers, 46,515 of code;
 `opcodesswitch.h` handles 142 opcode cases; SMP is on by default
