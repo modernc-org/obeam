@@ -685,6 +685,16 @@ func hWaitTimeout(s *sched, pc uint32) uint32 {
 	if !isSmall(t) || smallVal(t) < 0 {
 		return raiseAtom(s, atomError, atomTimeoutValue)
 	}
+	if code[pc+1] == pc {
+		// A receive of no clauses, an after alone, goes on waiting where
+		// it waits: no message is of interest to it, so all are seen, and
+		// one that came is not a reason to go on.
+		p := s.cur
+		lock(stripe(p))
+		p.mboxCur = noBlock
+		p.mboxPrev = p.mboxTail
+		unlock(stripe(p))
+	}
 	return sleep(s, code[pc+1], true, uint32(smallVal(t)), pc+3)
 }
 
@@ -695,6 +705,7 @@ func hTimeout(s *sched, pc uint32) uint32 {
 	lock(stripe(p))
 	p.mboxCur = p.mboxHead
 	p.mboxPrev = noBlock
+	p.armed = false
 	unlock(stripe(p))
 	return pc + 1
 }

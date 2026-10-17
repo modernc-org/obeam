@@ -32,7 +32,25 @@ var (
 	exUses = map[string][]string{
 		"Maps": {"Point"},
 	}
+
+	// reports names the modules whose spawned processes crash: erl logs
+	// that, if at all, in its own words, and the VM in the shell's, so what
+	// the VM prints of a crash is left out of the comparison.
+	reports = map[string]bool{"exits": true}
 )
+
+// withoutReports drops the VM's reports of crashes from what it printed: the
+// lines of "** exception" and of the frames under them.
+func withoutReports(b []byte) []byte {
+	var r []byte
+	for _, line := range bytes.SplitAfter(b, []byte("\n")) {
+		if bytes.HasPrefix(line, []byte("** exception ")) || bytes.HasPrefix(line, []byte("     in ")) {
+			continue
+		}
+		r = append(r, line...)
+	}
+	return r
+}
 
 // TestErl runs the modules of the corpus the VM can run, packed in memory,
 // and holds their output to what erl prints for the same module. It runs in
@@ -48,7 +66,7 @@ func TestErl(t *testing.T) {
 	if err != nil {
 		t.Skip("no erl on PATH")
 	}
-	for _, m := range []string{"hello", "fac", "fib", "lst", "tuples", "funs", "pingpong", "ring", "sieve", "counter", "exc", "links", "sup", "flt", "fmt", "mp", "bin", "listlib", "bench"} {
+	for _, m := range []string{"hello", "fac", "fib", "lst", "tuples", "funs", "pingpong", "ring", "sieve", "counter", "exc", "links", "sup", "flt", "fmt", "mp", "bin", "listlib", "exits", "waits", "bench"} {
 		t.Run(m, func(t *testing.T) {
 			var files []string
 			for _, mod := range append([]string{m}, uses[m]...) {
@@ -69,6 +87,9 @@ func TestErl(t *testing.T) {
 			for _, fast := range []bool{false, true} {
 				useFast(fast)
 				got := runImage(img)
+				if reports[m] {
+					got = withoutReports(got)
+				}
 				if !bytes.Equal(got, want) {
 					t.Errorf("the VM printed, fast handlers %v:\n%s--- erl printed:\n%s", fast, got, want)
 				}

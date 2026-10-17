@@ -203,9 +203,11 @@ func frameLine(off uint32, first bool) (uint32, uint32, bool) {
 }
 
 // stackList turns a raw stacktrace into Erlang's list of {M, F, A, [{file,
-// F}, {line, L}]}, on the heap, with live X registers as roots; a stacktrace
-// that is a list already is answered as it is, and nonValue says there was
-// no room.
+// F}, {line, L}]}, on the heap, with live X registers and the caller's bargs
+// as roots; a stacktrace that is a list already is answered as it is, and
+// nonValue says there was no room. It keeps the stacktrace in the bargs
+// after the caller's while it makes room, and leaves the caller's as they
+// were.
 func stackList(s *sched, raw uint32, live int32) uint32 {
 	if !isTuple(raw) || tupleArity(raw) != 2 {
 		return raw
@@ -224,14 +226,15 @@ func stackList(s *sched, raw uint32, live int32) uint32 {
 		}
 		first = false
 	}
-	s.bargs[0] = raw
-	s.nbargs = 1
+	k := s.nbargs
+	s.bargs[k] = raw
+	s.nbargs = k + 1
 	if !ensure(s, need, live) {
-		s.nbargs = 0
+		s.nbargs = k
 		return nonValue
 	}
-	raw = s.bargs[0]
-	s.nbargs = 0
+	raw = s.bargs[k]
+	s.nbargs = k
 	var o [traceDepth]uint32
 	n := 0
 	for t := tupleElem(raw, 2); isCons(t) && n < traceDepth; t = arena[consIdx(t)+1] {

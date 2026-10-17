@@ -80,9 +80,12 @@ of another OTP release may use an instruction OctoBeam does not know yet, and
    Ctrl-]. The loader finds the board by itself; with several, name the port:
    `-p /dev/ttyUSB0` (`-p COM3` on Windows). The program is in the board's
    RAM, not its flash, so a reset ends it. Then try `examples/ring.beam`, a
-   ring of processes; `examples/blink.beam`, the P2-EDGE's two LEDs on pins
-   56 and 57, a process each; and the whole demo, 26 modules of Erlang and
-   Elixir: `obeam run -entry demo:main/0 examples/demo/*.beam`.
+   ring of processes; `examples/leds.beam`, Erlang's "let it crash" to be
+   seen: the P2-EDGE's two LEDs, on pins 56 and 57 (its DIP switch LED on),
+   each blinked by a process with a bug that crashes it now and then, its LED
+   going out, and a supervisor that restarts it a second later, saying so;
+   and the whole demo, 26 modules of Erlang and Elixir: `obeam run -entry
+   demo:main/0 examples/demo/*.beam`.
 4. **Write a program.** `hello.erl`:
 
    ```erlang
@@ -155,8 +158,10 @@ functions that take a fun, and Elixir's `Enum` and `Map`. A program takes
 what it calls of them and nothing else.
 
 Not yet: bignums, bitstrings that are not whole bytes, OTP's behaviours
-(`gen_server` and the like), an image loaded from the SD card, `~p`'s line
-breaking, and OTP's and Elixir's libraries beyond the shims. A map with atom
+(`gen_server` and the like), `~p`'s line breaking, and OTP's and Elixir's
+libraries beyond the shims. A stacktrace's first frame, for an error in a
+BIF or a `function_clause`, is the caller's, with its arity, where Erlang's
+is the BIF's or the function's, with its arguments. A map with atom
 keys prints its keys in term order, where `erl` and `elixir` print them in
 the order of their atom tables, and a map of more than 32 keys in term
 order, where OTP prints its hash trie's. The arena is 224 KB (276 KB
@@ -192,7 +197,7 @@ them, on seven scheduler cogs, running modules compiled by `erlc` and
   caught by `try` and `catch`, floats, binaries and their matching, maps,
   134 BIFs, `io:format` with its widths and precisions, Elixir's `inspect`,
   and the exception reports. It is Go once given a package clause, and the
-  tests run it so, on seven goroutines, against `erl` and `elixir`: nineteen
+  tests run it so, on seven goroutines, against `erl` and `elixir`: twenty-one
   Erlang modules of the corpus, from `hello` to a ring of a hundred processes,
   a server with timeouts, linked workers, a process linked to fifty, `try`
   and `catch`, floats, maps and binary parsers, and the seven Elixir ones,
@@ -220,9 +225,10 @@ them, on seven scheduler cogs, running modules compiled by `erlc` and
   hundred processes, string interpolation of every kind, and maps, structs
   and ranges, held to what `elixir` prints; `ex/shim/` the parts of Elixir's
   `Enum` and `Map` they use, in Erlang.
-- `erl/`: the corpus, twenty-two small Erlang modules from `hello` to a
-  process ring, a concurrent prime sieve, linked workers, floats, maps,
-  binary parsers and OTP's `lists`, compiled with OTP 27 and committed;
+- `erl/`: the corpus, twenty-five small Erlang modules from `hello` to a
+  process ring, a concurrent prime sieve, linked workers, exit reasons,
+  timeouts, floats, maps, binary parsers, OTP's `lists`, and `blink` and
+  `leds` for the board's LEDs, compiled with OTP 27 and committed;
   `erl/shim/` OTP's `lists` and the functions of `maps` that take a fun;
   `erl/stats.txt` is the opcode and call histogram M0 measured over the
   first eleven.

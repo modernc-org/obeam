@@ -315,8 +315,8 @@ the tree or be ahead of what this file knows; do not install over it.
   in the top 16 KB while loading), which `TestBootable` in
   `internal/vmbin` holds both VMs to; a larger one does not boot, and the
   board, finding the file, answers no serial loader either (found
-  2026-10-17). The checked VM binary is 504,844 bytes, whatever the image,
-  the unchecked 505,900; `make budget` says how far under. The arena is
+  2026-10-17). The checked VM binary is 505,180 bytes, whatever the image,
+  the unchecked 506,180; `make budget` says how far under. The arena is
   224 KB (`arenaChecked`): the demo's image takes 69 KB of it and leaves
   154 KB to the heaps, which `obeam` reports. The unchecked VM's arena is
   276 KB (`arenaUnchecked`, which `make vms` swaps in, in a copy of the
@@ -374,6 +374,14 @@ the tree or be ahead of what this file knows; do not install over it.
   which the test reports as `erl: exit status 1` for every module. Cap the
   compiler in a subshell, `(ulimit -v 4000000; ogo build .)`, and nothing
   else. Found 2026-10-16, twice, before the crash dump said why.
+- **A receive of no clauses** (`receive after T -> ok end`) is a
+  `wait_timeout` whose label is itself: `hWaitTimeout` marks every message
+  seen for it, or `sleep`, finding one unseen, answers the label and the
+  process goes round in one turn for ever. A receive's timeout is `armed`
+  at its first wait and disarmed when it takes a message or times out.
+  `stackList` keeps the caller's `bargs` (found 2026-10-17 by `erl/leds.erl`,
+  held by `erl/exits.erl` and `erl/waits.erl`; `reports` in
+  `vm/host_test.go` leaves the VM's crash reports out of the comparison).
 - A process's turn ends only at a call (`jump`) or a `receive` that waits;
   what is saved is the call's arguments, `maxArity` of them, pushed on the
   process's own stack by `yield` and popped by `turnStart`. Its links and

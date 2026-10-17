@@ -188,6 +188,7 @@ func takeMessage(s *sched) {
 	p.mboxCur = p.mboxHead
 	p.mboxPrev = noBlock
 	p.timed = false
+	p.armed = false
 	low := p.lowMem
 	p.lowMem = false
 	unlock(stripe(p))

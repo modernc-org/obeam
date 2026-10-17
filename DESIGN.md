@@ -893,3 +893,26 @@ committed, printed the 143 lines in 5,505 ms; over serial both VMs printed
 them, in 5,507 and 4,453 ms. `obeam flash` wrote hello into the flash and
 ran it, and serial loading worked after it; a boot from the flash at
 power-on is not tried, the P2-EDGE's DIP switch FLASH being off.
+
+**The LEDs**, 2026-10-17: `erl/leds.erl`, "let it crash" to be seen on the
+P2-EDGE's two LEDs, a blinker for each under a supervisor that traps exits
+and restarts a blinker its bug crashed, found three faults the corpus had
+not, its workers all ending with `exit/1`. The exit reason of a process that
+failed with an error was its raw stack, `{{error,[322]}, ...}` where Erlang
+has `{badarith, Stacktrace}`: `stackList` kept its argument in `bargs[0]`
+while it made room, over the reason `exitReason` had put there; it keeps it
+after the caller's now, and `exitReason` roots the list it gets back. A
+throw's was `{nocatch, V}`, without the stacktrace Erlang gives it. And a
+receive of no clauses, `receive after 1000 -> ok end`, which erlc compiles
+to a `wait_timeout` whose label is itself, went round in one turn for ever
+when a message came while it waited, `sleep` answering the label because a
+message was unseen: the supervisor hung when both blinkers died within a
+second, its scheduler busy and its state running, which the twin's process
+table and goroutines showed. Such a wait now counts every message seen; and
+a receive's timeout is armed once, at its first wait, where every wait set
+it again, so that messages it had no clause for put it off for ever.
+`erl/exits.erl` and `erl/waits.erl` hold all of it to `erl`; a first frame
+made of a BIF and its arguments, or of a `function_clause`'s function and
+its arguments, which Erlang gives and the VM does not, is left for later.
+On the board the demo restarts its blinkers, five each in a minute, and
+goes on.

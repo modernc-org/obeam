@@ -64,7 +64,7 @@ for t in $TARGETS; do
 
 	cp LICENSE "$stage/LICENSE"
 	cp "$FLEXPROP" "$stage/LICENSE-flexprop"
-	for m in hello listlib ring sieve sup blink; do
+	for m in hello listlib ring sieve sup blink leds; do
 		cp "erl/$m.erl" "erl/$m.beam" "$stage/examples/"
 	done
 	cp ex/hello.ex ex/Elixir.Hello.beam "$stage/examples/"
@@ -88,7 +88,10 @@ Elixir's elixirc); obeam reads the .beam files they write.
 Quick start, with a P2 board on a USB port:
   ./$bin run examples/hello.beam          # put it into the VM, load it, show what it prints
                                           # (Ctrl-] leaves the terminal)
-  ./$bin run examples/blink.beam          # a P2-EDGE's LEDs on pins 56 and 57, a process each
+  ./$bin run examples/leds.beam           # "let it crash" on a P2-EDGE's LEDs, pins 56 and 57
+                                          # (DIP switch LED on): blinkers that crash now and
+                                          # then, and a supervisor that restarts them
+  ./$bin run examples/blink.beam          # the two LEDs, a process each
   ./$bin run -entry demo:main/0 examples/demo/*.beam
                                           # the demo: 26 modules of Erlang and Elixir
   ./$bin examples/hello.beam              # only write hello.binary, for any P2 loader

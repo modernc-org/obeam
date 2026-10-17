@@ -65,9 +65,13 @@ type Proc struct {
 	forceGC  bool
 	lowMem   bool // under the stripe: a message to it found the pool low
 
-	// A receive's timeout: when it ends, and where the process continues.
+	// A receive's timeout: when it ends, and where the process continues;
+	// timed while the process waits for it, armed from the receive's first
+	// wait until it takes a message or times out, so that a message it has
+	// no clause for does not put the time off.
 	deadline  uint32
 	timed     bool
+	armed     bool
 	timeoutPC uint32
 }
 
@@ -227,6 +231,7 @@ func spawn(entry, nargs, argLongs uint32) *Proc {
 	p.forceGC = false
 	p.lowMem = false
 	p.timed = false
+	p.armed = false
 	unlock(stripe(p))
 	return p
 }
@@ -390,7 +395,10 @@ func sleep(s *sched, label uint32, timed bool, ms uint32, timeoutPC uint32) uint
 	p.pc = label
 	p.timed = timed
 	if timed {
-		p.deadline = now() + ms
+		if !p.armed {
+			p.deadline = now() + ms
+			p.armed = true
+		}
 		p.timeoutPC = timeoutPC
 		// On the timer list under the stripe still, so that a walker's
 		// verdict on an entry of this process and the entry's removal

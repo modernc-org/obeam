@@ -367,38 +367,42 @@ func linkTo(of, pid uint32) (alive, room bool) {
 }
 
 // exitReason answers what a process that raised an exception exits with:
-// {Reason, Stacktrace} of an error, the reason of an exit, {nocatch, V} of a
-// throw; it is built on the process's heap, or is the reason alone when
-// there is no room.
+// the reason of an exit, {Reason, Stacktrace} of an error, and {{nocatch, V},
+// Stacktrace} of a throw; it is built on the process's heap, or is the reason
+// alone when there is no room.
 func exitReason(s *sched, class, reason, raw uint32) uint32 {
-	switch class {
-	case mkAtom(atomExit):
+	if class == mkAtom(atomExit) {
 		return reason
-	case mkAtom(atomThrow):
-		s.bargs[0] = reason
-		s.nbargs = 1
-		if !ensure(s, 3, 0) {
-			s.nbargs = 0
-			return reason
-		}
-		reason = s.bargs[0]
-		s.nbargs = 0
-		i := s.cur.htop
-		arena[i] = mkHeader(hdrTuple, 2)
-		arena[i+1] = mkAtom(atomNocatch)
-		arena[i+2] = reason
-		s.cur.htop += 3
-		return mkBoxed(i)
 	}
 	s.bargs[0] = reason
 	s.bargs[1] = raw
 	s.nbargs = 2
-	stk := stackList(s, s.bargs[1], 0)
-	if stk == nonValue || !ensure(s, 3, 0) {
-		s.nbargs = 0
-		return reason
+	if class == mkAtom(atomThrow) {
+		if !ensure(s, 3, 0) {
+			s.nbargs = 0
+			return s.bargs[0]
+		}
+		i := s.cur.htop
+		arena[i] = mkHeader(hdrTuple, 2)
+		arena[i+1] = mkAtom(atomNocatch)
+		arena[i+2] = s.bargs[0]
+		s.cur.htop += 3
+		s.bargs[0] = mkBoxed(i)
 	}
-	reason = s.bargs[0]
+	raw = s.bargs[1]
+	s.nbargs = 1
+	stk := stackList(s, raw, 0)
+	if stk == nonValue {
+		s.nbargs = 0
+		return s.bargs[0]
+	}
+	s.bargs[1] = stk
+	s.nbargs = 2
+	if !ensure(s, 3, 0) {
+		s.nbargs = 0
+		return s.bargs[0]
+	}
+	reason, stk = s.bargs[0], s.bargs[1]
 	s.nbargs = 0
 	i := s.cur.htop
 	arena[i] = mkHeader(hdrTuple, 2)
