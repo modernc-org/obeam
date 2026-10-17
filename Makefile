@@ -94,7 +94,7 @@ prof-run: prof
 # program whose main stack does not fit. The arena, image and heaps, is in
 # the binary, so its size is the same whatever the image.
 budget: obeam.binary
-	@n=$$(stat -c %s obeam.binary); echo "obeam.binary: $$n bytes, $$((524288 - n)) of the hub's 524288 left beside it"
+	@n=$$(stat -c %s obeam.binary); echo "obeam.binary: $$n bytes, $$((524288 - n)) of the hub's 524288 left beside it, $$((507904 - n)) under the 507904 the ROM boots from an SD card"
 
 # run runs the demo on the board, under the lock the ogo and p2-11 sessions
 # share.

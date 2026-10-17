@@ -55,3 +55,31 @@ func TestBuild(t *testing.T) {
 		t.Error("no files, and no error")
 	}
 }
+
+// TestSD writes the file the P2 boots from an SD card, and refuses -sd where
+// obeam would load what it wrote.
+func TestSD(t *testing.T) {
+	hello, err := filepath.Abs("erl/hello.beam")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(t.TempDir())
+	out, _, err := build("obeam", []string{"-sd", hello})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out != bootFile {
+		t.Errorf("-sd wrote %s", out)
+	}
+	if b, err := os.ReadFile(bootFile); err != nil || len(b) != len(vmbin.Checked) {
+		t.Errorf("%s: %d bytes, %v", bootFile, len(b), err)
+	}
+	for _, cmd := range []string{"run", "flash"} {
+		if _, _, err := build(cmd, []string{"-sd", hello, "-o", "x.binary"}); err == nil {
+			t.Errorf("%s -sd: no error", cmd)
+		}
+		if _, err := os.Stat("x.binary"); err == nil {
+			t.Errorf("%s -sd wrote a file", cmd)
+		}
+	}
+}

@@ -13,11 +13,14 @@
 
 // The arena's length. The unchecked VM is 52 KB smaller, and make vms builds
 // it from a copy of the tree in which arenaLongs is arenaUnchecked, so that
-// the room goes to the heaps.
+// the room goes to the heaps. Each is what leaves its VM's binary within the
+// 496 KB the P2's ROM loads from an SD card, _BOOT_P2.BIX, with a little to
+// spare: a binary is the arena with the rest, and internal/vmbin's test holds
+// both to it.
 const (
 	arenaLongs     = arenaChecked
-	arenaChecked   = 59392 // 232 KB for the image and the heaps above it, since the image left the binary for it; before, 160 KB of heaps since M6b, 192 KB from the room before M6b, 128 KB from M4 until the room
-	arenaUnchecked = 72704 // 284 KB
+	arenaChecked   = 57344 // 224 KB for the image and the heaps above it, since the image left the binary for it and gave 8 KB to the SD card's limit; before, 160 KB of heaps since M6b, 192 KB from the room before M6b, 128 KB from M4 until the room
+	arenaUnchecked = 70656 // 276 KB
 )
 
 const (

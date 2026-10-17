@@ -21,6 +21,9 @@ The first release.
   and, for `-unchecked`, without the runtime checks and with 52 KB more for the
   heaps, the shims and a P2 loader (`obeam loadp2`), so nothing else is
   installed. `go install modernc.org/obeam@latest`, or a release zip.
+- **Without a computer**: `obeam -sd` writes `_BOOT_P2.BIX`, which the P2's ROM
+  boots from an SD card, and `obeam flash` writes the program into the board's
+  flash. Every binary obeam writes fits the 496 KB the ROM loads from a card.
 - **The VM**: Erlang and Elixir processes on seven scheduler cogs, messages and
   `receive` with timeouts, links, monitors, exit signals and registered names,
   exceptions caught by `try` and `catch`, 32-bit floats, binaries made and

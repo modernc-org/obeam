@@ -32,6 +32,18 @@ func TestFresh(t *testing.T) {
 	}
 }
 
+// TestBootable holds each VM's binary to the 496 KB the P2's ROM loads from
+// an SD card: a larger _BOOT_P2.BIX does not boot, and the board then answers
+// no serial loader either.
+func TestBootable(t *testing.T) {
+	const most = 512*1024 - 16*1024
+	for name, b := range map[string][]byte{"checked": Checked, "unchecked": Unchecked} {
+		if len(b) > most {
+			t.Errorf("the %s VM is %d bytes, %d more than the ROM loads from an SD card: make its arena smaller", name, len(b), len(b)-most)
+		}
+	}
+}
+
 // TestRegions finds each VM's arena and checks that the unchecked one has the
 // larger.
 func TestRegions(t *testing.T) {

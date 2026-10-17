@@ -45,10 +45,14 @@ bottom of the arena, written into a built VM binary, the arena 232 KB,
 `image/` gone. Step 2, built: `obeam` at the root, carrying the VMs
 (`internal/vmbin`, `make vms`) and the shims, `obeam run` loading through
 `modernc.org/ogo/loadp2`, the board program in `board/`, OTP's `lists` as a
-shim, `make release` and the README's guide. The user is to put the
+shim, `make release` and the README's guide, committed (7a40746). Then
+`-sd` as the user chose it, the ROM's own boot: `obeam -sd` writes
+`_BOOT_P2.BIX`, and `obeam flash` writes the board's flash; both arenas
+8 KB smaller so that every VM binary fits the 496 KB the ROM loads from a
+card. The user is to put the
 repository on GitLab (cznic/obeam) with a GitHub mirror (modernc-org/obeam)
 where the zips are published; nothing is pushed or published by an agent.
-Next: `-sd`, the image read from the card at boot. The files:
+The files:
 
 - `ASSESSMENT.md`: the consolidated assessment and the plan. Verdict: start,
   staged. It holds the measured facts (opcode counts, AtomVM's size, what a
@@ -137,8 +141,8 @@ Next: `-sd`, the image read from the card at boot. The files:
   `-lines=false` to drop it; the hardware API is the module `p2`, OctoGo's
   `p2` package name for name in snake_case, plus `p2:cog/0`, with no blocking
   waits. The arena was 128 KB from M4 until the room before M6b gave the
-  192 KB back, 160 KB since M6b, and 232 KB since the image moved into it
-  from the binary (`arenaLongs` in `vm/arena.ogo`), what the image does not
+  192 KB back, 160 KB since M6b, 232 KB since the image moved into it
+  from the binary, and 224 KB since the binary must fit the SD boot's 496 KB (`arenaLongs` in `vm/arena.ogo`), what the image does not
   take going to the heaps; it is the lever when the hub runs short. `ogo build` says by how much a build
   misses the 512 KB, but when it misses, the size it names is of an attempt
   with other stack slots: compare only builds that fit.
@@ -306,13 +310,26 @@ the tree or be ahead of what this file knows; do not install over it.
   `CoreOps`, a `.op_<name>` in the template, `obeam gen`, `make demo`. The
   core is not in the twin: run the demo on the board and diff it against
   `erl`, and `make prof`, after every change to it.
-- **Hub RAM**: the checked VM binary is 513,068 bytes, whatever the image,
-  and `main`'s stack 1,108, which leaves about 10 KB of the 512 KB; `make
-  budget` says so after a change. The arena is 232 KB (`arenaChecked`): the
-  demo's image takes 69 KB of it and leaves 162 KB to the heaps, which
-  `obeam` reports. The unchecked VM's arena is 284 KB (`arenaUnchecked`,
-  which `make vms` swaps in, in a copy of the tree under `build/unchecked`),
-  its binary 514,124 bytes. `ogo build` says by how much a build misses; the arena
+- **Hub RAM**: a VM binary must be at most **507,904 bytes**, the 496 KB
+  the P2's ROM loads from an SD card (`_BOOT_P2.BIX`; it keeps its own code
+  in the top 16 KB while loading), which `TestBootable` in
+  `internal/vmbin` holds both VMs to; a larger one does not boot, and the
+  board, finding the file, answers no serial loader either (found
+  2026-10-17). The checked VM binary is 504,844 bytes, whatever the image,
+  the unchecked 505,900; `make budget` says how far under. The arena is
+  224 KB (`arenaChecked`): the demo's image takes 69 KB of it and leaves
+  154 KB to the heaps, which `obeam` reports. The unchecked VM's arena is
+  276 KB (`arenaUnchecked`, which `make vms` swaps in, in a copy of the
+  tree under `build/unchecked`).
+- **The board's slot**: p2-11's 32 GB card belongs there; the user's 4 GB
+  card (FAT32, partition type 0x0b) is for OctoBeam's SD tests. With the
+  P2-EDGE's DIP switch SD on and a card holding `_BOOT_P2.BIX`, the board
+  boots the card at power-on and at a DTR reset, 7.7 s for a VM, and no
+  loader finds it: the card comes out before the board is loaded over USB,
+  the other sessions' loads included. The board's flash holds hello since
+  `obeam flash` was tried on 2026-10-17 (DIP switch FLASH off, so it does not
+  boot it). `scripts/listen.py -r PORT SECS`,
+  under the lock, resets the board by DTR and prints what it sends. `ogo build` says by how much a build misses; the arena
   (`arenaLongs`) is the lever. DESIGN.md section 8 has where the bytes go.
 - **The image is the bottom of the arena** (`internal/pack/region.go`, DESIGN.md
   section 4): a header of 24 longs, the literals at `LitBase` where the

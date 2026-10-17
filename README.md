@@ -65,7 +65,7 @@ of another OTP release may use an instruction OctoBeam does not know yet, and
 
    ```
    $ obeam run examples/hello.beam
-   obeam: hello.binary: hello:main/0, the VM checked; the image 490 longs, 12 of them code; 230 KB of the arena left for the heaps
+   obeam: hello.binary: hello:main/0, the VM checked; the image 490 longs, 12 of them code; 222 KB of the arena left for the heaps
    obeam: loading hello.binary; Ctrl-] leaves the terminal
    ( Entering terminal mode.  Press Ctrl-] or Ctrl-Z to exit. )
    obeam: hello:main/0, 12 longs of code, 7 schedulers
@@ -116,12 +116,25 @@ of another OTP release may use an instruction OctoBeam does not know yet, and
    ordinary P2 binary for any loader: `obeam loadp2 -t -b 230400
    hello.binary`, FlexProp's `loadp2`, or `ogo loadp2`. The board prints at
    230400 baud.
+8. **From an SD card, with no computer**: `obeam -sd hello.beam` writes
+   `_BOOT_P2.BIX`, the file the P2's ROM boots from the root directory of a
+   FAT32 card in the board's slot. Copy it onto the card (onto a card that
+   holds no other `_BOOT_P2.BIX`, so that the file is in one piece, which the
+   ROM needs), put the card into the slot, and the board runs the program
+   whenever it is powered or reset; on a P2-EDGE the DIP switch SD is on.
+   The ROM reads the card at about 65 KB/s, so the program starts eight
+   seconds after the reset. While such a card is in the slot the board does
+   not answer a loader: take it out to load programs over USB again.
+9. **From the board's flash**: `obeam flash hello.beam` writes the program
+   into the board's flash and runs it; with the board set to boot from flash
+   (a P2-EDGE's DIP switch FLASH on), it runs whenever the board is powered.
 
 The flags, before or after the files (`obeam help`):
 
 | Flag | |
 | :--- | :--- |
 | `-o FILE` | the binary to write; by default the entry's module's name, `.binary`, in the current directory |
+| `-sd` | name it `_BOOT_P2.BIX`, the file the P2 boots from an SD card |
 | `-entry m:f/a` | the function to start, exported, of no arguments; the first module's `main/0` by default |
 | `-unchecked` | the VM without its runtime checks: 52 KB more for the heaps, and a fifth faster, but a fault of the VM's corrupts memory silently where the checked VM stops with a `panic:` message. Develop with the default. |
 | `-lines=false` | leave out the line numbers a crash report names, for room |
@@ -146,9 +159,10 @@ Not yet: bignums, bitstrings that are not whole bytes, OTP's behaviours
 breaking, and OTP's and Elixir's libraries beyond the shims. A map with atom
 keys prints its keys in term order, where `erl` and `elixir` print them in
 the order of their atom tables, and a map of more than 32 keys in term
-order, where OTP prints its hash trie's. The arena is 232 KB (284 KB
+order, where OTP prints its hash trie's. The arena is 224 KB (276 KB
 unchecked), the image at its bottom and the process heaps above, so the
-demo's image of 69 KB leaves its heaps 162 KB and a hello, world 230 KB. A
+demo's image of 69 KB leaves its heaps 154 KB and a hello, world 222 KB; the
+VM is no larger than the 496 KB the P2's ROM boots from an SD card. A
 process's stack is bounded by its largest heap block, 8,192 longs, so a
 recursion 20,000 deep that Erlang takes ends here in `system_limit`; write it
 as a tail call. The links and monitors of all processes together are 256 at

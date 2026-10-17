@@ -875,3 +875,21 @@ printed what `erl` prints on its first run, in the twin and on the board.
 examples. The VMs carried are built by ogo v0.57.0; on the board, through
 `obeam run`, both print the demo's 143 lines, in 5,506 ms checked and 4,452
 unchecked.
+
+**Without a computer**, 2026-10-17: the P2's ROM boots a file of an SD
+card by itself, `_BOOT_P2.BIX` in the root directory of a FAT32 volume, so
+`-sd` became that, as the user chose over a VM that reads an image from the
+card: `obeam -sd` writes the binary under that name, and `obeam flash`
+writes it into the board's flash with loadp2's `-FLASH`. On the P2-EDGE,
+DIP switch SD on, a tiny program booted from the card at power-on and at a
+DTR reset; the VM, 513,068 bytes, did not, and the board answered no loader
+while the card was in. The ROM loads at most 512 KB less the 16 KB it keeps
+its code in while loading, 507,904 bytes; a VM with an arena 8 KB smaller,
+504,844 bytes, booted, its first line 7.7 s after the reset, the ROM reading
+the card at about 65 KB/s. So both arenas are 8 KB smaller, 224 KB and 276
+KB, and a test holds both binaries to the limit: the demo's heaps have 154
+KB, 206 unchecked. The demo, booted from the card by the VM that is
+committed, printed the 143 lines in 5,505 ms; over serial both VMs printed
+them, in 5,507 and 4,453 ms. `obeam flash` wrote hello into the flash and
+ran it, and serial loading worked after it; a boot from the flash at
+power-on is not tried, the P2-EDGE's DIP switch FLASH being off.

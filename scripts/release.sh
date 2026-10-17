@@ -92,6 +92,9 @@ Quick start, with a P2 board on a USB port:
   ./$bin run -entry demo:main/0 examples/demo/*.beam
                                           # the demo: 26 modules of Erlang and Elixir
   ./$bin examples/hello.beam              # only write hello.binary, for any P2 loader
+  ./$bin -sd examples/hello.beam          # write _BOOT_P2.BIX: copied onto a FAT32 SD card in
+                                          # the board's slot, the board runs it when reset
+  ./$bin flash examples/hello.beam        # into the board's flash, which it can boot from
   erlc hello.erl && ./$bin run hello.beam # a program of your own: hello:main/0
   ./$bin help                             # the flags
   ./$bin version                          # should print: obeam version $VERSION $goos/$goarch

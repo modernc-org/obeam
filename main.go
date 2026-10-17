@@ -8,6 +8,7 @@
 //
 //	obeam [flags] FILE.beam...       write NAME.binary: the VM with the modules in it
 //	obeam run [flags] FILE.beam...   the same, then load it onto the board and show what it prints
+//	obeam flash [flags] FILE.beam... the same, but into the board's flash, which it boots from
 //	obeam loadp2 ARGS...             the P2 loader, loadp2, as it is
 //	obeam version                    what this obeam is
 //
@@ -15,6 +16,9 @@
 //
 //	-o FILE          the binary to write; NAME.binary in the current directory,
 //	                 after the entry's module, by default
+//	-sd              name it _BOOT_P2.BIX, the file the P2 boots from an SD card:
+//	                 copied to the root directory of a FAT32 card in the board's
+//	                 slot, it is what the board runs when it is reset
 //	-entry m:f/a     the function to start; the first module's main/0 by default
 //	-unchecked       the VM without its runtime checks: 52 KB more for the heaps,
 //	                 and faster, but a fault of the VM's corrupts memory silently
@@ -49,6 +53,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"runtime/debug"
+	"strconv"
 	"strings"
 
 	"modernc.org/obeam/internal/beam"
@@ -77,12 +82,11 @@ func main() {
 	cmd, args := os.Args[1], os.Args[2:]
 	var err error
 	switch cmd {
-	case "run":
+	case "run", "flash":
 		var out string
 		var o options
-		if out, o, err = build("run", args); err == nil {
-			fmt.Fprintf(os.Stderr, "obeam: loading %s; Ctrl-] leaves the terminal\n", out)
-			if rc := loadp2.Load(loadp2.Options{Binary: out, Port: o.port, Terminal: true}); rc != 0 {
+		if out, o, err = build(cmd, args); err == nil {
+			if rc := load(cmd, out, o.port); rc != 0 {
 				os.Exit(rc)
 			}
 		}
@@ -115,16 +119,35 @@ func main() {
 	}
 }
 
+// load loads a binary onto the board, into its RAM for run and into its
+// flash for flash, and shows what the board prints.
+func load(cmd, binary, port string) int {
+	if cmd == "run" {
+		fmt.Fprintf(os.Stderr, "obeam: loading %s; Ctrl-] leaves the terminal\n", binary)
+		return loadp2.Load(loadp2.Options{Binary: binary, Port: port, Terminal: true})
+	}
+	fmt.Fprintf(os.Stderr, "obeam: writing %s to the board's flash; Ctrl-] leaves the terminal\n", binary)
+	args := []string{"-f", strconv.Itoa(loadp2.DefaultClockHz), "-b", strconv.Itoa(loadp2.DefaultUserBaud), "-FLASH", "-t"}
+	if port != "" {
+		args = append([]string{"-p", port}, args...)
+	}
+	return loadp2.SubCommand(append(args, binary))
+}
+
 func usage(w io.Writer) {
-	fmt.Fprint(w, `usage: obeam [flags] FILE.beam...      write NAME.binary: the VM with the modules in it
-       obeam run [flags] FILE.beam...  the same, then load it onto the board and show what it prints
-       obeam loadp2 ARGS...            the P2 loader, loadp2, as it is
-       obeam version                   what this obeam is
+	fmt.Fprint(w, `usage: obeam [flags] FILE.beam...       write NAME.binary: the VM with the modules in it
+       obeam run [flags] FILE.beam...   the same, then load it onto the board and show what it prints
+       obeam flash [flags] FILE.beam... the same, but into the board's flash, which it boots from
+       obeam loadp2 ARGS...             the P2 loader, loadp2, as it is
+       obeam version                    what this obeam is
 
 The flags may come before or after the files:
 
   -o FILE          the binary to write; NAME.binary in the current directory, after
                    the entry's module, by default
+  -sd              name it _BOOT_P2.BIX, the file the P2 boots from an SD card:
+                   copied to the root directory of a FAT32 card in the board's slot,
+                   it is what the board runs when it is reset
   -entry m:f/a     the function to start; the first module's main/0 by default
   -unchecked       the VM without its runtime checks: 52 KB more for the heaps, and
                    faster, but a fault of the VM's corrupts memory silently where
@@ -145,8 +168,12 @@ For OctoBeam's developers: obeam dis, stats, chunks and gen.
 // options are what build was asked for beside the files.
 type options struct {
 	out, entry, lib, vm, port string
-	unchecked, lines          bool
+	unchecked, lines, sd      bool
 }
+
+// bootFile is the file the P2's ROM boots from an SD card's FAT32 volume, in
+// its root directory, in capital letters.
+const bootFile = "_BOOT_P2.BIX"
 
 // build packs the modules into a copy of the VM and writes it. It answers the
 // binary's path, and the options for run.
@@ -161,6 +188,7 @@ func build(name string, args []string) (string, options, error) {
 	fs.StringVar(&o.lib, "lib", "", "")
 	fs.StringVar(&o.vm, "vm", "", "")
 	fs.StringVar(&o.port, "p", "", "")
+	fs.BoolVar(&o.sd, "sd", false, "")
 	var files []string
 	for {
 		if err := fs.Parse(args); err != nil {
@@ -186,6 +214,9 @@ func build(name string, args []string) (string, options, error) {
 	}
 	if files = expanded; len(files) == 0 {
 		return "", o, errors.New("no .beam file named")
+	}
+	if o.sd && (name == "run" || name == "flash") {
+		return "", o, fmt.Errorf("-sd writes a file for the card, which obeam %s does not load", name)
 	}
 	var libs []string
 	if o.lib != "" {
@@ -217,7 +248,11 @@ func build(name string, args []string) (string, options, error) {
 	if err != nil {
 		return "", o, fmt.Errorf("the VM, %s: %w", which, err)
 	}
-	if o.out == "" {
+	switch {
+	case o.out != "":
+	case o.sd:
+		o.out = bootFile
+	default:
 		mod, _, _ := strings.Cut(img.EntryMFA, ":")
 		o.out = mod + ".binary"
 	}
@@ -226,6 +261,13 @@ func build(name string, args []string) (string, options, error) {
 	}
 	fmt.Fprintf(os.Stderr, "obeam: %s: %s, the VM %s; the image %d longs, %d of them code; %d KB of the arena left for the heaps\n",
 		o.out, img.EntryMFA, which, len(region), len(img.Code), room*4/1024)
+	if o.sd {
+		as := ""
+		if filepath.Base(o.out) != bootFile {
+			as = " as " + bootFile
+		}
+		fmt.Fprintf(os.Stderr, "obeam: copy %s to the root directory of the board's FAT32 SD card%s: the board runs it when it is reset\n", o.out, as)
+	}
 	return o.out, o, nil
 }
 
