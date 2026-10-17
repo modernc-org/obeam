@@ -4,9 +4,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-obeam is a subset BEAM (the Erlang virtual machine) for the Parallax Propeller 2,
-to be written in OctoGo as the second OctoGo showcase after p2-11. It is to run
-modules compiled by Erlang's own compiler (`erlc`, OTP 27) on the board, with a
+OctoBeam (short name `obeam`, as OctoGo's is `ogo`; the user named it so on
+2026-10-17) is a subset BEAM (the Erlang virtual machine) for the Parallax
+Propeller 2, written in OctoGo as the second OctoGo showcase after p2-11. It
+is to run modules compiled by Erlang's own compiler (`erlc`, OTP 27) on the board, with a
 scheduler on each of seven cogs. The user is the author of OctoGo (`../ogo`) and of
 p2-11 (`../p2-11`); the idea came from a talk with a friend who likes Erlang on
 2026-10-16.

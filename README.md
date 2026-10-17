@@ -1,13 +1,14 @@
 *Eight cogs. Seven schedulers. One tiny BEAM.*
 
-# obeam
+# OctoBeam
 
-A BEAM, the Erlang virtual machine, for the
-[Parallax Propeller 2](https://www.parallax.com/propeller-2/), to be written in
+OctoBeam is a BEAM, the Erlang virtual machine, for the
+[Parallax Propeller 2](https://www.parallax.com/propeller-2/), written in
 [OctoGo](https://pkg.go.dev/modernc.org/ogo): the modules Erlang's own compiler
 writes, run on the eight cores of a microcontroller, a scheduler on each of
-seven of them. It is the second program of size in OctoGo, after
-[p2-11](https://gitlab.com/cznic/p2-11), a PDP-11/40 that runs Unix V6.
+seven of them. Its short name, the repository's and the host tool's, is
+`obeam`, as OctoGo's is `ogo`. It is the second program of size in OctoGo,
+after [p2-11](https://gitlab.com/cznic/p2-11), a PDP-11/40 that runs Unix V6.
 
 ## Status
 
