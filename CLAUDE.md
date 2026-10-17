@@ -90,7 +90,10 @@ The files:
 - `scripts/twin.sh`: runs `vm/` under Go; `make test` runs it last.
 - `prof/`: the profiler, a board program over `erl/bench.erl`; `make prof`
   writes `prof/names.ogo`, the names the VM does not carry, builds
-  `prof/vm.binary` and puts the bench's image into it, `prof/prof.binary`.
+  `prof/vm.binary` from a copy of the tree under `build/prof` in which
+  `profOn` (`vm/profile.ogo`) is 1, and puts the bench's image into it,
+  `prof/prof.binary`. In the tree `profOn` is 0, so that the board's VMs
+  leave the profiler's tables and `runProfiled` out, 5.8 KB.
 - `ex/`: the Elixir corpus, `*.ex` compiled by `make exbeam` into committed
   `Elixir.*.beam`; `ex/shim/` the Erlang shims of Elixir's library (`Enum`,
   `Map`, `elixir_erl_pass`), and `erl/shim/` of OTP's (`maps`' functions
@@ -142,7 +145,7 @@ The files:
   `p2` package name for name in snake_case, plus `p2:cog/0`, with no blocking
   waits. The arena was 128 KB from M4 until the room before M6b gave the
   192 KB back, 160 KB since M6b, 232 KB since the image moved into it
-  from the binary, and 224 KB since the binary must fit the SD boot's 496 KB (`arenaLongs` in `vm/arena.ogo`), what the image does not
+  from the binary, 224 KB since the binary must fit the SD boot's 496 KB, and 222 KB since the stacktraces took 7 KB and the profiler, leaving the board's build, gave 5 back (`arenaLongs` in `vm/arena.ogo`), what the image does not
   take going to the heaps; it is the lever when the hub runs short. `ogo build` says by how much a build
   misses the 512 KB, but when it misses, the size it names is of an attempt
   with other stack slots: compare only builds that fit.
@@ -315,15 +318,17 @@ the tree or be ahead of what this file knows; do not install over it.
   in the top 16 KB while loading), which `TestBootable` in
   `internal/vmbin` holds both VMs to; a larger one does not boot, and the
   board, finding the file, answers no serial loader either (found
-  2026-10-17). The checked VM binary is 505,316 bytes, whatever the image,
-  the unchecked 505,880, 2,588 and 2,024 under; `make budget` says how far.
-  The arenas are 217 and 271 KB since the stacktraces' 6 KB of code. The
+  2026-10-17). The checked VM binary is 504,492 bytes, whatever the image,
+  the unchecked 505,424, 3,412 and 2,480 under; `make budget` says how far.
+  The arenas are 222 and 276 KB: the stacktraces' 6 KB of code took 7 and
+  5 KB of them, and the profiler, out of the board's build since
+  (`profOn`), gave 5 and 5 KB back. The
   goroutine slots are 800 longs checked; a build with `--gostack N` shows
   by the size how much of a growth is theirs.
   The next VM growth may take a kilobyte or two of the arenas. The arena is
-  217 KB (`arenaChecked`): the demo's image takes 69 KB of it and leaves
-  147 KB to the heaps, which `obeam` reports. The unchecked VM's arena is
-  271 KB (`arenaUnchecked`, which `make vms` swaps in, in a copy of the
+  222 KB (`arenaChecked`): the demo's image takes 69 KB of it and leaves
+  152 KB to the heaps, which `obeam` reports. The unchecked VM's arena is
+  276 KB (`arenaUnchecked`, which `make vms` swaps in, in a copy of the
   tree under `build/unchecked`).
 - **The board's slot**: p2-11's 32 GB card belongs there; the user's 4 GB
   card (FAT32, partition type 0x0b) is for OctoBeam's SD tests. With the

@@ -167,7 +167,7 @@ func schedule(id int) {
 			continue
 		}
 		var ended bool
-		if Profile {
+		if profOn != 0 && Profile {
 			ended = runProfiled(s, p)
 		} else {
 			ended = run(s, p)

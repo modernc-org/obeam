@@ -146,7 +146,7 @@ var opNames = [256]string{
 }
 
 // nb is how many BIFs there are, and bifNames their names, by number.
-const nb = 134
+const nb = 135
 
 var bifNames = [nb]string{
 	"erlang:+/2",
@@ -208,6 +208,7 @@ var bifNames = [nb]string{
 	"erlang:apply/2",
 	"erlang:apply/3",
 	"erlang:is_process_alive/1",
+	"erlang:function_exported/3",
 	"erlang:raise/3",
 	"erlang:spawn_link/1",
 	"erlang:spawn_link/3",

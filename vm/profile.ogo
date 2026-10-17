@@ -13,13 +13,19 @@ import "p2"
 // its call through the handler table; what the loop around it costs is the
 // difference between a run's clocks an instruction without the profile and
 // the handlers' with it.
+//
+// profOn is 1 in the profiler's build only, which make prof makes from a copy
+// of the tree. In the board's it is 0: the tables are a long or two each and
+// the scheduler never calls runProfiled, so the backend leaves it out, 5.8 KB
+// of the hub in all that go to the arena.
+const profOn = 0
 
 var (
 	Profile       bool
-	ProfCount     [256]uint32
-	ProfClocks    [256]uint64
-	ProfBifCount  [nBifs]uint32
-	ProfBifClocks [nBifs]uint64
+	ProfCount     [1 + 255*profOn]uint32
+	ProfClocks    [1 + 255*profOn]uint64
+	ProfBifCount  [1 + (nBifs-1)*profOn]uint32
+	ProfBifClocks [1 + (nBifs-1)*profOn]uint64
 	ProfOverhead  uint32 // what two readings of the counter cost, ProfCalibrate's
 )
 

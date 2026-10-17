@@ -18,7 +18,7 @@ The first release.
 - **`obeam`, one program for users**: `obeam hello.beam` writes `hello.binary`,
   the VM with the program in its arena, and `obeam run hello.beam` loads it onto
   a P2 board and shows what it prints. It carries the VM built twice, checked
-  and, for `-unchecked`, without the runtime checks and with 52 KB more for the
+  and, for `-unchecked`, without the runtime checks and with 54 KB more for the
   heaps, the shims and a P2 loader (`obeam loadp2`), so nothing else is
   installed. `go install modernc.org/obeam@latest`, or a release zip.
 - **Without a computer**: `obeam -sd` writes `_BOOT_P2.BIX`, which the P2's ROM

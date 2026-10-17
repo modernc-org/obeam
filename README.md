@@ -66,7 +66,7 @@ of another OTP release may use an instruction OctoBeam does not know yet, and
 
    ```
    $ obeam run examples/hello.beam
-   obeam: hello.binary: hello:main/0, the VM checked; the image 490 longs, 12 of them code; 215 KB of the arena left for the heaps
+   obeam: hello.binary: hello:main/0, the VM checked; the image 511 longs, 12 of them code; 220 KB of the arena left for the heaps
    obeam: loading hello.binary; Ctrl-] leaves the terminal
    ( Entering terminal mode.  Press Ctrl-] or Ctrl-Z to exit. )
    obeam: hello:main/0, 12 longs of code, 7 schedulers
@@ -141,7 +141,7 @@ The flags, before or after the files (`obeam help`):
 | `-o FILE` | the binary to write; by default the entry's module's name, `.binary`, in the current directory |
 | `-sd` | name it `_BOOT_P2.BIX`, the file the P2 boots from an SD card |
 | `-entry m:f/a` | the function to start, exported, of no arguments; the first module's `main/0` by default |
-| `-unchecked` | the VM without its runtime checks: 52 KB more for the heaps, and a fifth faster, but a fault of the VM's corrupts memory silently where the checked VM stops with a `panic:` message. Develop with the default. |
+| `-unchecked` | the VM without its runtime checks: 54 KB more for the heaps, and a fifth faster, but a fault of the VM's corrupts memory silently where the checked VM stops with a `panic:` message. Develop with the default. |
 | `-lines=false` | leave out the line numbers a crash report names, for room |
 | `-lib A.beam,...` | more library modules, of which the program takes what it reaches |
 | `-p PORT` | with `run`: the board's serial port |
@@ -173,9 +173,9 @@ as BIFs, `reverse`, `member` and `keyfind`, fail as BIFs do, with `badarg`,
 where OTP's `reverse` fails with a `function_clause` of its own. A map with atom
 keys prints its keys in term order, where `erl` and `elixir` print them in
 the order of their atom tables, and a map of more than 32 keys in term
-order, where OTP prints its hash trie's. The arena is 217 KB (271 KB
+order, where OTP prints its hash trie's. The arena is 222 KB (276 KB
 unchecked), the image at its bottom and the process heaps above, so the
-demo's image of 69 KB leaves its heaps 147 KB and a hello, world 215 KB; the
+demo's image of 69 KB leaves its heaps 152 KB and a hello, world 220 KB; the
 VM is no larger than the 496 KB the P2's ROM boots from an SD card. A
 process's stack is bounded by its largest heap block, 8,192 longs, so a
 recursion 20,000 deep that Erlang takes ends here in `system_limit`; write it

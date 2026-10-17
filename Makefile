@@ -75,15 +75,20 @@ demo: demo.binary
 demo.binary: obeam.binary $(DEMO_MODULES) $(DEMO_LIBS) $(PACKER)
 	$(OBEAM) -vm obeam.binary -o $@ -entry $(DEMO_ENTRY) $(DEMO_MODULES)
 
-# prof writes the names the profiler prints, builds the profiler, and puts
-# erl/bench.erl into its arena, prof/prof.binary; prof-run runs it on the
-# board under the shared lock.
+# prof writes the names the profiler prints, builds the profiler from a copy
+# of the tree in which profOn is 1, the board's VMs leaving the profiler out,
+# and puts erl/bench.erl into its arena, prof/prof.binary; prof-run runs it on
+# the board under the shared lock.
 PROF_MODULES = erl/bench.beam erl/fib.beam erl/lst.beam erl/tuples.beam erl/pingpong.beam \
 	erl/ring.beam erl/sieve.beam
 
 prof: $(BEAMS)
 	$(OBEAM) gen -vm vm -names prof
-	$(OGO) build --unchecked -o prof/vm.binary ./prof
+	rm -rf build/prof && mkdir -p build/prof
+	cp -r ogo.mod vm core prof build/prof/
+	sed -i 's/^const profOn = 0$$/const profOn = 1/' build/prof/vm/profile.ogo
+	grep -q '^const profOn = 1$$' build/prof/vm/profile.ogo
+	$(OGO) build --unchecked -o prof/vm.binary build/prof/prof
 	$(OBEAM) -vm prof/vm.binary -o prof/prof.binary -entry bench:main/0 $(PROF_MODULES)
 
 prof-run: prof

@@ -977,3 +977,17 @@ unchecked, the goroutines' slots 16 longs more (measured by building with
 `--gostack 784`), so the arenas gave 7 and 5 KB: 217 and 271 KB, the VMs
 505,316 and 505,880 bytes, 2,588 and 2,024 under the limit, the demo's heaps
 147 KB and 201 KB.
+
+Then `ogo build --report` (ogo master, 2026-10-17: Hub RAM by its parts,
+every package variable, the largest functions) showed what the board's VMs
+carried that they never run: the profiler, its four tables 4,692 bytes and
+`runProfiled` with `bifAt` 1,248. A function the board's program does not
+call had kept it linked (section 8); a constant does not. `profOn`, 0 in the
+tree, sizes the tables to a long or two and guards the scheduler's call,
+`if profOn != 0 && Profile`, and the backend leaves `runProfiled` out; `make
+prof` builds the profiler from a copy of the tree in which it is 1, as `make
+vms` builds the unchecked VM. That gave 5,964 bytes checked and 5,596
+unchecked, and the arenas 5 KB each: 222 and 276 KB, the VMs 504,492 and
+505,424 bytes, 3,412 and 2,480 under the limit, the demo's heaps 152 and
+206 KB, its run on the board 5,509 and 4,448 ms as before. The stacktraces
+cost the checked arena 2 KB in all and the unchecked none.
