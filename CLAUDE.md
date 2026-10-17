@@ -315,8 +315,9 @@ the tree or be ahead of what this file knows; do not install over it.
   in the top 16 KB while loading), which `TestBootable` in
   `internal/vmbin` holds both VMs to; a larger one does not boot, and the
   board, finding the file, answers no serial loader either (found
-  2026-10-17). The checked VM binary is 505,180 bytes, whatever the image,
-  the unchecked 506,180; `make budget` says how far under. The arena is
+  2026-10-17). The checked VM binary is 505,900 bytes, whatever the image,
+  the unchecked 506,728, 2,004 and 1,176 under; `make budget` says how far.
+  The next VM growth may take a kilobyte or two of the arenas. The arena is
   224 KB (`arenaChecked`): the demo's image takes 69 KB of it and leaves
   154 KB to the heaps, which `obeam` reports. The unchecked VM's arena is
   276 KB (`arenaUnchecked`, which `make vms` swaps in, in a copy of the
@@ -381,7 +382,15 @@ the tree or be ahead of what this file knows; do not install over it.
   at its first wait and disarmed when it takes a message or times out.
   `stackList` keeps the caller's `bargs` (found 2026-10-17 by `erl/leds.erl`,
   held by `erl/exits.erl` and `erl/waits.erl`; `reports` in
-  `vm/host_test.go` leaves the VM's crash reports out of the comparison).
+  `vm/host_test.go` leaves the VM's crash reports out of the comparison and
+  runs `erl` with `-kernel logger_level none` for those modules).
+- **A shim that spawns** begins the new process in a fun
+  (`spawn_link(fun() -> init_it(...) end)`): a library is packed by what
+  the program reaches, and `spawn(M, F, A)` with atoms reaches nothing, so
+  the function would be left out and the spawn fail with `undef`
+  (`gen_server`, 2026-10-17). `TestErl` reads the corpus through
+  `OBEAM_ROOT`, which go test's cache does not see: `-count=1` after a
+  `.beam` changes.
 - A process's turn ends only at a call (`jump`) or a `receive` that waits;
   what is saved is the call's arguments, `maxArity` of them, pushed on the
   process's own stack by `yield` and popped by `turnStart`. Its links and

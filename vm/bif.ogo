@@ -985,6 +985,24 @@ func bifIsProcessAlive(s *sched, n uint32) uint32 {
 	return boolTerm(alive)
 }
 
+// bifFunctionExported is erlang:function_exported/3: whether a function of
+// the image is exported, or a BIF is, as OTP's answers for one implemented
+// in C. A function the packer left out, as unreachable, is not there.
+func bifFunctionExported(s *sched, n uint32) uint32 {
+	m, f, a := s.bargs[0], s.bargs[1], s.bargs[2]
+	if !isAtom(m) || !isAtom(f) || !isSmall(a) || smallVal(a) < 0 {
+		return badarg(s)
+	}
+	arity := uint32(smallVal(a))
+	for k := 0; k+3 < len(funcs); k += 4 {
+		if funcs[k+1] == atomIdx(m) && funcs[k+2] == atomIdx(f) && funcs[k+3]&0xff == arity {
+			return boolTerm(funcs[k+3]&0x100 != 0)
+		}
+	}
+	_, ok := bifByName(m, f, arity)
+	return boolTerm(ok)
+}
+
 // A bifName is a BIF's module and function, as indexes of well-known atoms.
 type bifName struct {
 	module, function uint32

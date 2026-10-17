@@ -36,7 +36,7 @@ var (
 	// reports names the modules whose spawned processes crash: erl logs
 	// that, if at all, in its own words, and the VM in the shell's, so what
 	// the VM prints of a crash is left out of the comparison.
-	reports = map[string]bool{"exits": true}
+	reports = map[string]bool{"exits": true, "gs": true}
 )
 
 // withoutReports drops the VM's reports of crashes from what it printed: the
@@ -66,7 +66,7 @@ func TestErl(t *testing.T) {
 	if err != nil {
 		t.Skip("no erl on PATH")
 	}
-	for _, m := range []string{"hello", "fac", "fib", "lst", "tuples", "funs", "pingpong", "ring", "sieve", "counter", "exc", "links", "sup", "flt", "fmt", "mp", "bin", "listlib", "exits", "waits", "bench"} {
+	for _, m := range []string{"hello", "fac", "fib", "lst", "tuples", "funs", "pingpong", "ring", "sieve", "counter", "exc", "links", "sup", "flt", "fmt", "mp", "bin", "listlib", "exits", "waits", "gs", "bench"} {
 		t.Run(m, func(t *testing.T) {
 			var files []string
 			for _, mod := range append([]string{m}, uses[m]...) {
@@ -80,7 +80,13 @@ func TestErl(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			want, err := exec.Command(erl, "-noshell", "-pa", filepath.Join(root, "erl"), "-eval", m+":main(), halt().").Output()
+			// erl's logger, which may or may not write a crash's report
+			// before halt, is off where the VM's reports are left out.
+			args := []string{"-noshell", "-pa", filepath.Join(root, "erl"), "-eval", m + ":main(), halt()."}
+			if reports[m] {
+				args = append([]string{"-kernel", "logger_level", "none"}, args...)
+			}
+			want, err := exec.Command(erl, args...).Output()
 			if err != nil {
 				t.Fatalf("erl: %v", err)
 			}

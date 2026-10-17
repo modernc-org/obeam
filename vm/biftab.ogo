@@ -3,292 +3,294 @@
 // TableID is the fingerprint of the well-known atoms and the BIFs, which an
 // image must carry too: one packed before the tables changed calls BIFs by
 // numbers that are no longer theirs.
-const TableID = 0xa844d255
+const TableID = 0x924592a0
 
 // nBifs is how many BIFs there are.
-const nBifs = 134
+const nBifs = 135
 
 // The BIFs' numbers, for the handlers that do some of them themselves.
 const (
-	bixAdd             = 0
-	bixSub             = 1
-	bixMul             = 2
-	bixDiv             = 3
-	bixRem             = 4
-	bixNeg             = 5
-	bixPlus            = 6
-	bixAbs             = 7
-	bixBand            = 8
-	bixBor             = 9
-	bixBxor            = 10
-	bixBsl             = 11
-	bixBsr             = 12
-	bixBnot            = 13
-	bixEq              = 14
-	bixNe              = 15
-	bixEqExact         = 16
-	bixNeExact         = 17
-	bixLt              = 18
-	bixGt              = 19
-	bixLe              = 20
-	bixGe              = 21
-	bixNot             = 22
-	bixAnd             = 23
-	bixOr              = 24
-	bixXor             = 25
-	bixLength          = 26
-	bixHd              = 27
-	bixTl              = 28
-	bixElement         = 29
-	bixSetelement      = 30
-	bixTupleSize       = 31
-	bixIsAtom          = 32
-	bixIsInteger       = 33
-	bixIsNumber        = 34
-	bixIsFloat         = 35
-	bixIsList          = 36
-	bixIsTuple         = 37
-	bixIsBoolean       = 38
-	bixIsFunction1     = 39
-	bixIsFunction2     = 40
-	bixIsPid           = 41
-	bixIsReference     = 42
-	bixIsBinary        = 43
-	bixIsRecord3       = 44
-	bixIntegerToList   = 45
-	bixListToInteger   = 46
-	bixAtomToList      = 47
-	bixAppend          = 48
-	bixSubtract        = 49
-	bixMin             = 50
-	bixMax             = 51
-	bixSelf            = 52
-	bixSpawn1          = 53
-	bixSpawn3          = 54
-	bixSend            = 55
-	bixApply2          = 56
-	bixApply3          = 57
-	bixIsProcessAlive  = 58
-	bixRaise3          = 59
-	bixSpawnLink1      = 60
-	bixSpawnLink3      = 61
-	bixLink            = 62
-	bixUnlink          = 63
-	bixExit2           = 64
-	bixProcessFlag     = 65
-	bixRegister        = 66
-	bixUnregister      = 67
-	bixWhereis         = 68
-	bixMonitor2        = 69
-	bixDemonitor1      = 70
-	bixDemonitor2      = 71
-	bixFdiv            = 72
-	bixByteSize        = 73
-	bixIntegerToBinary = 74
-	bixAtomToBinary    = 75
-	bixBinaryToList    = 77
-	bixIolistToBinary  = 78
-	bixExPuts          = 80
-	bixExInspect       = 81
-	bixExKernelInspect = 82
-	bixExToString      = 83
-	bixFloat           = 84
-	bixTrunc           = 85
-	bixRound           = 86
-	bixMathSqrt        = 87
-	bixMathPow         = 88
-	bixMathPi          = 89
-	bixMakeRef         = 90
-	bixError1          = 91
-	bixError2          = 92
-	bixExit1           = 93
-	bixThrow           = 94
-	bixDisplay         = 95
-	bixMonotonicTime0  = 96
-	bixMonotonicTime1  = 97
-	bixListsReverse1   = 98
-	bixListsReverse2   = 99
-	bixListsMember     = 100
-	bixListsKeyfind    = 101
-	bixIoFormat1       = 102
-	bixIoFormat2       = 103
-	bixIoPutChars      = 104
-	bixIoNl            = 105
-	bixP2PinHigh       = 106
-	bixP2PinLow        = 107
-	bixP2PinToggle     = 108
-	bixP2PinFloat      = 109
-	bixP2PinIn         = 110
-	bixP2PinWrite      = 111
-	bixP2Cog           = 112
-	bixP2GetCt         = 113
-	bixP2ClockFreq     = 114
-	bixP2Rnd           = 115
-	bixIsMap           = 116
-	bixMapSize         = 117
-	bixIsMapKey        = 118
-	bixMapGet          = 119
-	bixMapsGet3        = 121
-	bixMapsFind        = 122
-	bixMapsPut         = 124
-	bixMapsUpdate      = 125
-	bixMapsRemove      = 126
-	bixMapsKeys        = 127
-	bixMapsValues      = 128
-	bixMapsToList      = 129
-	bixMapsFromList    = 130
-	bixMapsMerge       = 131
-	bixMapsNew         = 133
+	bixAdd              = 0
+	bixSub              = 1
+	bixMul              = 2
+	bixDiv              = 3
+	bixRem              = 4
+	bixNeg              = 5
+	bixPlus             = 6
+	bixAbs              = 7
+	bixBand             = 8
+	bixBor              = 9
+	bixBxor             = 10
+	bixBsl              = 11
+	bixBsr              = 12
+	bixBnot             = 13
+	bixEq               = 14
+	bixNe               = 15
+	bixEqExact          = 16
+	bixNeExact          = 17
+	bixLt               = 18
+	bixGt               = 19
+	bixLe               = 20
+	bixGe               = 21
+	bixNot              = 22
+	bixAnd              = 23
+	bixOr               = 24
+	bixXor              = 25
+	bixLength           = 26
+	bixHd               = 27
+	bixTl               = 28
+	bixElement          = 29
+	bixSetelement       = 30
+	bixTupleSize        = 31
+	bixIsAtom           = 32
+	bixIsInteger        = 33
+	bixIsNumber         = 34
+	bixIsFloat          = 35
+	bixIsList           = 36
+	bixIsTuple          = 37
+	bixIsBoolean        = 38
+	bixIsFunction1      = 39
+	bixIsFunction2      = 40
+	bixIsPid            = 41
+	bixIsReference      = 42
+	bixIsBinary         = 43
+	bixIsRecord3        = 44
+	bixIntegerToList    = 45
+	bixListToInteger    = 46
+	bixAtomToList       = 47
+	bixAppend           = 48
+	bixSubtract         = 49
+	bixMin              = 50
+	bixMax              = 51
+	bixSelf             = 52
+	bixSpawn1           = 53
+	bixSpawn3           = 54
+	bixSend             = 55
+	bixApply2           = 56
+	bixApply3           = 57
+	bixIsProcessAlive   = 58
+	bixFunctionExported = 59
+	bixRaise3           = 60
+	bixSpawnLink1       = 61
+	bixSpawnLink3       = 62
+	bixLink             = 63
+	bixUnlink           = 64
+	bixExit2            = 65
+	bixProcessFlag      = 66
+	bixRegister         = 67
+	bixUnregister       = 68
+	bixWhereis          = 69
+	bixMonitor2         = 70
+	bixDemonitor1       = 71
+	bixDemonitor2       = 72
+	bixFdiv             = 73
+	bixByteSize         = 74
+	bixIntegerToBinary  = 75
+	bixAtomToBinary     = 76
+	bixBinaryToList     = 78
+	bixIolistToBinary   = 79
+	bixExPuts           = 81
+	bixExInspect        = 82
+	bixExKernelInspect  = 83
+	bixExToString       = 84
+	bixFloat            = 85
+	bixTrunc            = 86
+	bixRound            = 87
+	bixMathSqrt         = 88
+	bixMathPow          = 89
+	bixMathPi           = 90
+	bixMakeRef          = 91
+	bixError1           = 92
+	bixError2           = 93
+	bixExit1            = 94
+	bixThrow            = 95
+	bixDisplay          = 96
+	bixMonotonicTime0   = 97
+	bixMonotonicTime1   = 98
+	bixListsReverse1    = 99
+	bixListsReverse2    = 100
+	bixListsMember      = 101
+	bixListsKeyfind     = 102
+	bixIoFormat1        = 103
+	bixIoFormat2        = 104
+	bixIoPutChars       = 105
+	bixIoNl             = 106
+	bixP2PinHigh        = 107
+	bixP2PinLow         = 108
+	bixP2PinToggle      = 109
+	bixP2PinFloat       = 110
+	bixP2PinIn          = 111
+	bixP2PinWrite       = 112
+	bixP2Cog            = 113
+	bixP2GetCt          = 114
+	bixP2ClockFreq      = 115
+	bixP2Rnd            = 116
+	bixIsMap            = 117
+	bixMapSize          = 118
+	bixIsMapKey         = 119
+	bixMapGet           = 120
+	bixMapsGet3         = 122
+	bixMapsFind         = 123
+	bixMapsPut          = 125
+	bixMapsUpdate       = 126
+	bixMapsRemove       = 127
+	bixMapsKeys         = 128
+	bixMapsValues       = 129
+	bixMapsToList       = 130
+	bixMapsFromList     = 131
+	bixMapsMerge        = 132
+	bixMapsNew          = 134
 )
 
 // The BIFs, by the number the packer gives a call of each. The table is filled
 // in init: apply refers to it, and under Go a variable's initializer may not
 // reach the variable.
-var bifs [134]bifEntry
+var bifs [135]bifEntry
 
 func init() {
-	bifs = [134]bifEntry{
-		{bifAdd, 2},             // erlang:+/2
-		{bifSub, 2},             // erlang:-/2
-		{bifMul, 2},             // erlang:*/2
-		{bifDiv, 2},             // erlang:div/2
-		{bifRem, 2},             // erlang:rem/2
-		{bifNeg, 1},             // erlang:-/1
-		{bifPlus, 1},            // erlang:+/1
-		{bifAbs, 1},             // erlang:abs/1
-		{bifBand, 2},            // erlang:band/2
-		{bifBor, 2},             // erlang:bor/2
-		{bifBxor, 2},            // erlang:bxor/2
-		{bifBsl, 2},             // erlang:bsl/2
-		{bifBsr, 2},             // erlang:bsr/2
-		{bifBnot, 1},            // erlang:bnot/1
-		{bifEq, 2},              // erlang:==/2
-		{bifNe, 2},              // erlang:/=/2
-		{bifEqExact, 2},         // erlang:=:=/2
-		{bifNeExact, 2},         // erlang:=/=/2
-		{bifLt, 2},              // erlang:</2
-		{bifGt, 2},              // erlang:>/2
-		{bifLe, 2},              // erlang:=</2
-		{bifGe, 2},              // erlang:>=/2
-		{bifNot, 1},             // erlang:not/1
-		{bifAnd, 2},             // erlang:and/2
-		{bifOr, 2},              // erlang:or/2
-		{bifXor, 2},             // erlang:xor/2
-		{bifLength, 1},          // erlang:length/1
-		{bifHd, 1},              // erlang:hd/1
-		{bifTl, 1},              // erlang:tl/1
-		{bifElement, 2},         // erlang:element/2
-		{bifSetelement, 3},      // erlang:setelement/3
-		{bifTupleSize, 1},       // erlang:tuple_size/1
-		{bifIsAtom, 1},          // erlang:is_atom/1
-		{bifIsInteger, 1},       // erlang:is_integer/1
-		{bifIsNumber, 1},        // erlang:is_number/1
-		{bifIsFloat, 1},         // erlang:is_float/1
-		{bifIsList, 1},          // erlang:is_list/1
-		{bifIsTuple, 1},         // erlang:is_tuple/1
-		{bifIsBoolean, 1},       // erlang:is_boolean/1
-		{bifIsFunction1, 1},     // erlang:is_function/1
-		{bifIsFunction2, 2},     // erlang:is_function/2
-		{bifIsPid, 1},           // erlang:is_pid/1
-		{bifIsReference, 1},     // erlang:is_reference/1
-		{bifIsBinary, 1},        // erlang:is_binary/1
-		{bifIsRecord3, 3},       // erlang:is_record/3
-		{bifIntegerToList, 1},   // erlang:integer_to_list/1
-		{bifListToInteger, 1},   // erlang:list_to_integer/1
-		{bifAtomToList, 1},      // erlang:atom_to_list/1
-		{bifAppend, 2},          // erlang:++/2
-		{bifSubtract, 2},        // erlang:--/2
-		{bifMin, 2},             // erlang:min/2
-		{bifMax, 2},             // erlang:max/2
-		{bifSelf, 0},            // erlang:self/0
-		{bifSpawn1, 1},          // erlang:spawn/1
-		{bifSpawn3, 3},          // erlang:spawn/3
-		{bifSend, 2},            // erlang:send/2
-		{bifApply2, 2},          // erlang:apply/2
-		{bifApply3, 3},          // erlang:apply/3
-		{bifIsProcessAlive, 1},  // erlang:is_process_alive/1
-		{bifRaise3, 3},          // erlang:raise/3
-		{bifSpawnLink1, 1},      // erlang:spawn_link/1
-		{bifSpawnLink3, 3},      // erlang:spawn_link/3
-		{bifLink, 1},            // erlang:link/1
-		{bifUnlink, 1},          // erlang:unlink/1
-		{bifExit2, 2},           // erlang:exit/2
-		{bifProcessFlag, 2},     // erlang:process_flag/2
-		{bifRegister, 2},        // erlang:register/2
-		{bifUnregister, 1},      // erlang:unregister/1
-		{bifWhereis, 1},         // erlang:whereis/1
-		{bifMonitor2, 2},        // erlang:monitor/2
-		{bifDemonitor1, 1},      // erlang:demonitor/1
-		{bifDemonitor2, 2},      // erlang:demonitor/2
-		{bifFdiv, 2},            // erlang://2
-		{bifByteSize, 1},        // erlang:byte_size/1
-		{bifIntegerToBinary, 1}, // erlang:integer_to_binary/1
-		{bifAtomToBinary, 1},    // erlang:atom_to_binary/1
-		{bifAtomToBinary, 2},    // erlang:atom_to_binary/2
-		{bifBinaryToList, 1},    // erlang:binary_to_list/1
-		{bifIolistToBinary, 1},  // erlang:list_to_binary/1
-		{bifIolistToBinary, 1},  // erlang:iolist_to_binary/1
-		{bifExPuts, 1},          // Elixir.IO:puts/1
-		{bifExInspect, 1},       // Elixir.IO:inspect/1
-		{bifExKernelInspect, 1}, // Elixir.Kernel:inspect/1
-		{bifExToString, 1},      // Elixir.String.Chars:to_string/1
-		{bifFloat, 1},           // erlang:float/1
-		{bifTrunc, 1},           // erlang:trunc/1
-		{bifRound, 1},           // erlang:round/1
-		{bifMathSqrt, 1},        // math:sqrt/1
-		{bifMathPow, 2},         // math:pow/2
-		{bifMathPi, 0},          // math:pi/0
-		{bifMakeRef, 0},         // erlang:make_ref/0
-		{bifError1, 1},          // erlang:error/1
-		{bifError2, 2},          // erlang:error/2
-		{bifExit1, 1},           // erlang:exit/1
-		{bifThrow, 1},           // erlang:throw/1
-		{bifDisplay, 1},         // erlang:display/1
-		{bifMonotonicTime0, 0},  // erlang:monotonic_time/0
-		{bifMonotonicTime1, 1},  // erlang:monotonic_time/1
-		{bifListsReverse1, 1},   // lists:reverse/1
-		{bifListsReverse2, 2},   // lists:reverse/2
-		{bifListsMember, 2},     // lists:member/2
-		{bifListsKeyfind, 3},    // lists:keyfind/3
-		{bifIoFormat1, 1},       // io:format/1
-		{bifIoFormat2, 2},       // io:format/2
-		{bifIoPutChars, 1},      // io:put_chars/1
-		{bifIoNl, 0},            // io:nl/0
-		{bifP2PinHigh, 1},       // p2:pin_high/1
-		{bifP2PinLow, 1},        // p2:pin_low/1
-		{bifP2PinToggle, 1},     // p2:pin_toggle/1
-		{bifP2PinFloat, 1},      // p2:pin_float/1
-		{bifP2PinIn, 1},         // p2:pin_in/1
-		{bifP2PinWrite, 2},      // p2:pin_write/2
-		{bifP2Cog, 0},           // p2:cog/0
-		{bifP2GetCt, 0},         // p2:get_ct/0
-		{bifP2ClockFreq, 0},     // p2:clock_freq/0
-		{bifP2Rnd, 0},           // p2:rnd/0
-		{bifIsMap, 1},           // erlang:is_map/1
-		{bifMapSize, 1},         // erlang:map_size/1
-		{bifIsMapKey, 2},        // erlang:is_map_key/2
-		{bifMapGet, 2},          // erlang:map_get/2
-		{bifMapGet, 2},          // maps:get/2
-		{bifMapsGet3, 3},        // maps:get/3
-		{bifMapsFind, 2},        // maps:find/2
-		{bifIsMapKey, 2},        // maps:is_key/2
-		{bifMapsPut, 3},         // maps:put/3
-		{bifMapsUpdate, 3},      // maps:update/3
-		{bifMapsRemove, 2},      // maps:remove/2
-		{bifMapsKeys, 1},        // maps:keys/1
-		{bifMapsValues, 1},      // maps:values/1
-		{bifMapsToList, 1},      // maps:to_list/1
-		{bifMapsFromList, 1},    // maps:from_list/1
-		{bifMapsMerge, 2},       // maps:merge/2
-		{bifMapSize, 1},         // maps:size/1
-		{bifMapsNew, 0},         // maps:new/0
+	bifs = [135]bifEntry{
+		{bifAdd, 2},              // erlang:+/2
+		{bifSub, 2},              // erlang:-/2
+		{bifMul, 2},              // erlang:*/2
+		{bifDiv, 2},              // erlang:div/2
+		{bifRem, 2},              // erlang:rem/2
+		{bifNeg, 1},              // erlang:-/1
+		{bifPlus, 1},             // erlang:+/1
+		{bifAbs, 1},              // erlang:abs/1
+		{bifBand, 2},             // erlang:band/2
+		{bifBor, 2},              // erlang:bor/2
+		{bifBxor, 2},             // erlang:bxor/2
+		{bifBsl, 2},              // erlang:bsl/2
+		{bifBsr, 2},              // erlang:bsr/2
+		{bifBnot, 1},             // erlang:bnot/1
+		{bifEq, 2},               // erlang:==/2
+		{bifNe, 2},               // erlang:/=/2
+		{bifEqExact, 2},          // erlang:=:=/2
+		{bifNeExact, 2},          // erlang:=/=/2
+		{bifLt, 2},               // erlang:</2
+		{bifGt, 2},               // erlang:>/2
+		{bifLe, 2},               // erlang:=</2
+		{bifGe, 2},               // erlang:>=/2
+		{bifNot, 1},              // erlang:not/1
+		{bifAnd, 2},              // erlang:and/2
+		{bifOr, 2},               // erlang:or/2
+		{bifXor, 2},              // erlang:xor/2
+		{bifLength, 1},           // erlang:length/1
+		{bifHd, 1},               // erlang:hd/1
+		{bifTl, 1},               // erlang:tl/1
+		{bifElement, 2},          // erlang:element/2
+		{bifSetelement, 3},       // erlang:setelement/3
+		{bifTupleSize, 1},        // erlang:tuple_size/1
+		{bifIsAtom, 1},           // erlang:is_atom/1
+		{bifIsInteger, 1},        // erlang:is_integer/1
+		{bifIsNumber, 1},         // erlang:is_number/1
+		{bifIsFloat, 1},          // erlang:is_float/1
+		{bifIsList, 1},           // erlang:is_list/1
+		{bifIsTuple, 1},          // erlang:is_tuple/1
+		{bifIsBoolean, 1},        // erlang:is_boolean/1
+		{bifIsFunction1, 1},      // erlang:is_function/1
+		{bifIsFunction2, 2},      // erlang:is_function/2
+		{bifIsPid, 1},            // erlang:is_pid/1
+		{bifIsReference, 1},      // erlang:is_reference/1
+		{bifIsBinary, 1},         // erlang:is_binary/1
+		{bifIsRecord3, 3},        // erlang:is_record/3
+		{bifIntegerToList, 1},    // erlang:integer_to_list/1
+		{bifListToInteger, 1},    // erlang:list_to_integer/1
+		{bifAtomToList, 1},       // erlang:atom_to_list/1
+		{bifAppend, 2},           // erlang:++/2
+		{bifSubtract, 2},         // erlang:--/2
+		{bifMin, 2},              // erlang:min/2
+		{bifMax, 2},              // erlang:max/2
+		{bifSelf, 0},             // erlang:self/0
+		{bifSpawn1, 1},           // erlang:spawn/1
+		{bifSpawn3, 3},           // erlang:spawn/3
+		{bifSend, 2},             // erlang:send/2
+		{bifApply2, 2},           // erlang:apply/2
+		{bifApply3, 3},           // erlang:apply/3
+		{bifIsProcessAlive, 1},   // erlang:is_process_alive/1
+		{bifFunctionExported, 3}, // erlang:function_exported/3
+		{bifRaise3, 3},           // erlang:raise/3
+		{bifSpawnLink1, 1},       // erlang:spawn_link/1
+		{bifSpawnLink3, 3},       // erlang:spawn_link/3
+		{bifLink, 1},             // erlang:link/1
+		{bifUnlink, 1},           // erlang:unlink/1
+		{bifExit2, 2},            // erlang:exit/2
+		{bifProcessFlag, 2},      // erlang:process_flag/2
+		{bifRegister, 2},         // erlang:register/2
+		{bifUnregister, 1},       // erlang:unregister/1
+		{bifWhereis, 1},          // erlang:whereis/1
+		{bifMonitor2, 2},         // erlang:monitor/2
+		{bifDemonitor1, 1},       // erlang:demonitor/1
+		{bifDemonitor2, 2},       // erlang:demonitor/2
+		{bifFdiv, 2},             // erlang://2
+		{bifByteSize, 1},         // erlang:byte_size/1
+		{bifIntegerToBinary, 1},  // erlang:integer_to_binary/1
+		{bifAtomToBinary, 1},     // erlang:atom_to_binary/1
+		{bifAtomToBinary, 2},     // erlang:atom_to_binary/2
+		{bifBinaryToList, 1},     // erlang:binary_to_list/1
+		{bifIolistToBinary, 1},   // erlang:list_to_binary/1
+		{bifIolistToBinary, 1},   // erlang:iolist_to_binary/1
+		{bifExPuts, 1},           // Elixir.IO:puts/1
+		{bifExInspect, 1},        // Elixir.IO:inspect/1
+		{bifExKernelInspect, 1},  // Elixir.Kernel:inspect/1
+		{bifExToString, 1},       // Elixir.String.Chars:to_string/1
+		{bifFloat, 1},            // erlang:float/1
+		{bifTrunc, 1},            // erlang:trunc/1
+		{bifRound, 1},            // erlang:round/1
+		{bifMathSqrt, 1},         // math:sqrt/1
+		{bifMathPow, 2},          // math:pow/2
+		{bifMathPi, 0},           // math:pi/0
+		{bifMakeRef, 0},          // erlang:make_ref/0
+		{bifError1, 1},           // erlang:error/1
+		{bifError2, 2},           // erlang:error/2
+		{bifExit1, 1},            // erlang:exit/1
+		{bifThrow, 1},            // erlang:throw/1
+		{bifDisplay, 1},          // erlang:display/1
+		{bifMonotonicTime0, 0},   // erlang:monotonic_time/0
+		{bifMonotonicTime1, 1},   // erlang:monotonic_time/1
+		{bifListsReverse1, 1},    // lists:reverse/1
+		{bifListsReverse2, 2},    // lists:reverse/2
+		{bifListsMember, 2},      // lists:member/2
+		{bifListsKeyfind, 3},     // lists:keyfind/3
+		{bifIoFormat1, 1},        // io:format/1
+		{bifIoFormat2, 2},        // io:format/2
+		{bifIoPutChars, 1},       // io:put_chars/1
+		{bifIoNl, 0},             // io:nl/0
+		{bifP2PinHigh, 1},        // p2:pin_high/1
+		{bifP2PinLow, 1},         // p2:pin_low/1
+		{bifP2PinToggle, 1},      // p2:pin_toggle/1
+		{bifP2PinFloat, 1},       // p2:pin_float/1
+		{bifP2PinIn, 1},          // p2:pin_in/1
+		{bifP2PinWrite, 2},       // p2:pin_write/2
+		{bifP2Cog, 0},            // p2:cog/0
+		{bifP2GetCt, 0},          // p2:get_ct/0
+		{bifP2ClockFreq, 0},      // p2:clock_freq/0
+		{bifP2Rnd, 0},            // p2:rnd/0
+		{bifIsMap, 1},            // erlang:is_map/1
+		{bifMapSize, 1},          // erlang:map_size/1
+		{bifIsMapKey, 2},         // erlang:is_map_key/2
+		{bifMapGet, 2},           // erlang:map_get/2
+		{bifMapGet, 2},           // maps:get/2
+		{bifMapsGet3, 3},         // maps:get/3
+		{bifMapsFind, 2},         // maps:find/2
+		{bifIsMapKey, 2},         // maps:is_key/2
+		{bifMapsPut, 3},          // maps:put/3
+		{bifMapsUpdate, 3},       // maps:update/3
+		{bifMapsRemove, 2},       // maps:remove/2
+		{bifMapsKeys, 1},         // maps:keys/1
+		{bifMapsValues, 1},       // maps:values/1
+		{bifMapsToList, 1},       // maps:to_list/1
+		{bifMapsFromList, 1},     // maps:from_list/1
+		{bifMapsMerge, 2},        // maps:merge/2
+		{bifMapSize, 1},          // maps:size/1
+		{bifMapsNew, 0},          // maps:new/0
 	}
 }
 
 // bifNames are the BIFs' modules and functions, by the atoms' indexes among the
 // well-known atoms, for apply by name; a module or function that is no
 // well-known atom is noAtom.
-var bifNames = [134]bifName{
+var bifNames = [135]bifName{
 	{atomErlang, atomPlus},
 	{atomErlang, atomMinus},
 	{atomErlang, atomTimes},
@@ -348,6 +350,7 @@ var bifNames = [134]bifName{
 	{atomErlang, atomApply},
 	{atomErlang, atomApply},
 	{atomErlang, atomIsProcessAlive},
+	{atomErlang, atomFunctionExported},
 	{atomErlang, atomRaise},
 	{atomErlang, atomSpawnLink},
 	{atomErlang, atomSpawnLink},

@@ -103,7 +103,8 @@ Quick start, with a P2 board on a USB port:
   ./$bin version                          # should print: obeam version $VERSION $goos/$goarch
 
 It runs a subset of Erlang: no bignums, 32-bit floats, OTP's and Elixir's
-libraries only as far as the shims obeam carries go (lists, maps, Enum, Map),
+libraries only as far as the shims obeam carries go (gen_server, lists, maps,
+Enum, Map),
 and 512 KB for everything. obeam says by name what a program uses that the VM
 does not have. On Windows, run it from cmd.exe or PowerShell, not git-bash.
 

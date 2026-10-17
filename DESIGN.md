@@ -916,3 +916,19 @@ made of a BIF and its arguments, or of a `function_clause`'s function and
 its arguments, which Erlang gives and the VM does not, is left for later.
 On the board the demo restarts its blinkers, five each in a minute, and
 goes on.
+
+**gen_server**, 2026-10-17, a shim in Erlang over the VM's processes,
+`erl/shim/gen_server.erl`: a synchronous start through a monitor, a name
+taken in the new process, calls through a monitor with OTP's exit reasons,
+the timeouts and `{continue, _}` of a callback's result, a throw taken as
+the result, a crash calling `terminate/2` and raised again, and the optional
+`handle_info/2` and `terminate/2` called only when exported, for which the
+VM has `erlang:function_exported/3` now, a BIF over the image's function
+table. The new process begins in a fun: a library is packed by reach, and
+`spawn(gen_server, init_it, A)` reaches nothing. `erl/gs.erl`, a key-value
+server, prints what OTP's gen_server prints, 22 lines, in the twin and on
+the board in both builds, `erl` run with its logger off and the VM's crash
+reports left out. The VMs are 505,900 and 506,728 bytes, 2,004 and 1,176
+under the SD card's limit. After an exception raised again, the VM's report
+names the place of the raise, where the stacktrace it carries names the
+crash's.

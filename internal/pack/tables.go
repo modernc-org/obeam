@@ -87,6 +87,7 @@ var WellKnownAtoms = []string{
 	"__struct__", "Elixir.Range", "first", "last", "step",
 	// Elixir's nil, which to_string writes as nothing and inspect as it is.
 	"nil",
+	"function_exported",
 }
 
 // A Bif is a function the VM implements itself: what an import of it resolves
@@ -161,6 +162,7 @@ var Bifs = []Bif{
 	{"erlang", "apply", 2, "bifApply2"},
 	{"erlang", "apply", 3, "bifApply3"},
 	{"erlang", "is_process_alive", 1, "bifIsProcessAlive"},
+	{"erlang", "function_exported", 3, "bifFunctionExported"},
 	{"erlang", "raise", 3, "bifRaise3"},
 	{"erlang", "spawn_link", 1, "bifSpawnLink1"},
 	{"erlang", "spawn_link", 3, "bifSpawnLink3"},

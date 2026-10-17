@@ -32,6 +32,10 @@ The first release.
   instructions run in PASM on each scheduler's own cog.
 - **The shims**: OTP's `lists`, sixty-two functions of it, and the functions of
   `maps` that take a fun; Elixir's `Enum` and `Map`, as far as the corpus goes.
+- **`gen_server`**, as a shim: start and start_link, named or not, call, cast,
+  reply and stop, timeouts and `{continue, _}`, the optional callbacks, a throw
+  as a callback's result, and a crash calling `terminate/2`; and
+  `erlang:function_exported/3`, which it asks.
 - **`examples/leds.beam`**: "let it crash" on a P2-EDGE's two LEDs, a blinker
   for each under a supervisor that restarts it when its bug crashes it.
 

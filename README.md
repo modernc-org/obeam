@@ -17,8 +17,8 @@ after [p2-11](https://gitlab.com/cznic/p2-11), a PDP-11/40 that runs Unix V6.
 It runs a subset of Erlang and Elixir, in 512 KB: processes, messages,
 links, monitors, exceptions, floats, binaries and maps, but no bignums,
 floats of 32 bits, no distribution, and of OTP's and Elixir's libraries only
-what the VM's BIFs and the shims `obeam` carries do (`io:format`, `lists`,
-`maps`, `Enum`, `Map` and more, listed below). `obeam` names what a program
+what the VM's BIFs and the shims `obeam` carries do (`io:format`,
+`gen_server`, `lists`, `maps`, `Enum`, `Map` and more, listed below). `obeam` names what a program
 uses that the VM does not have, before anything runs.
 
 The repository you are currently viewing might be a mirror. Please review the
@@ -152,13 +152,16 @@ The VM's BIFs include `io:format` with its widths and precisions,
 maps, processes, links, monitors, registered names and exceptions,
 `lists:reverse`, `member` and `keyfind`, and Elixir's `IO`, `Kernel.inspect`
 and `String.Chars`. The shims `obeam` carries are Erlang modules for the
-rest of what programs reach for first: OTP's `lists` (`map`, `foldl`,
-`filter`, `seq`, `sort`, `zip`, `keysort` and fifty-five more) and `maps`'
-functions that take a fun, and Elixir's `Enum` and `Map`. A program takes
-what it calls of them and nothing else.
+rest of what programs reach for first: OTP's `gen_server` (start and
+start_link, named or not, call, cast, reply and stop, timeouts and
+`{continue, _}`, the optional callbacks, and a crash calling `terminate/2`),
+`lists` (`map`, `foldl`, `filter`, `seq`, `sort`, `zip`, `keysort` and
+fifty-five more) and `maps`' functions that take a fun, and Elixir's `Enum`
+and `Map`. A program takes what it calls of them and nothing else.
 
-Not yet: bignums, bitstrings that are not whole bytes, OTP's behaviours
-(`gen_server` and the like), `~p`'s line breaking, and OTP's and Elixir's
+Not yet: bignums, bitstrings that are not whole bytes, OTP's other
+behaviours (`supervisor`, `gen_statem` and the like) and `gen_server`'s
+`sys` and `proc_lib` sides, `~p`'s line breaking, and OTP's and Elixir's
 libraries beyond the shims. A stacktrace's first frame, for an error in a
 BIF or a `function_clause`, is the caller's, with its arity, where Erlang's
 is the BIF's or the function's, with its arguments. A map with atom
@@ -195,9 +198,9 @@ them, on seven scheduler cogs, running modules compiled by `erlc` and
   processes with mailboxes, links, monitors and a run queue, seven schedulers
   each a cog, the interpreter, a copying collector per process, exceptions
   caught by `try` and `catch`, floats, binaries and their matching, maps,
-  134 BIFs, `io:format` with its widths and precisions, Elixir's `inspect`,
+  135 BIFs, `io:format` with its widths and precisions, Elixir's `inspect`,
   and the exception reports. It is Go once given a package clause, and the
-  tests run it so, on seven goroutines, against `erl` and `elixir`: twenty-one
+  tests run it so, on seven goroutines, against `erl` and `elixir`: twenty-two
   Erlang modules of the corpus, from `hello` to a ring of a hundred processes,
   a server with timeouts, linked workers, a process linked to fifty, `try`
   and `catch`, floats, maps and binary parsers, and the seven Elixir ones,
@@ -225,11 +228,12 @@ them, on seven scheduler cogs, running modules compiled by `erlc` and
   hundred processes, string interpolation of every kind, and maps, structs
   and ranges, held to what `elixir` prints; `ex/shim/` the parts of Elixir's
   `Enum` and `Map` they use, in Erlang.
-- `erl/`: the corpus, twenty-five small Erlang modules from `hello` to a
+- `erl/`: the corpus, twenty-six small Erlang modules from `hello` to a
   process ring, a concurrent prime sieve, linked workers, exit reasons,
-  timeouts, floats, maps, binary parsers, OTP's `lists`, and `blink` and
-  `leds` for the board's LEDs, compiled with OTP 27 and committed;
-  `erl/shim/` OTP's `lists` and the functions of `maps` that take a fun;
+  timeouts, floats, maps, binary parsers, OTP's `lists` and `gen_server`,
+  and `blink` and `leds` for the board's LEDs, compiled with OTP 27 and
+  committed; `erl/shim/` OTP's `gen_server`, `lists` and the functions of
+  `maps` that take a fun;
   `erl/stats.txt` is the opcode and call histogram M0 measured over the
   first eleven.
 - `DESIGN.md`: how it is made, and what each milestone measured.
