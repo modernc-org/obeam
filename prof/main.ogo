@@ -2,8 +2,8 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-// Command prof is the VM's profiler: it runs erl/bench.erl, packed into
-// prof/image by make prof, on one scheduler, first as the board program
+// Command prof is the VM's profiler: it runs erl/bench.erl, which make prof
+// puts into the arena of prof/vm.binary, on one scheduler, first as the board program
 // would, for the clocks an instruction costs in all, and then with every
 // instruction timed by the cycle counter, by opcode and by BIF. What the
 // handlers cost against what an instruction costs in all is what the loop
@@ -13,19 +13,18 @@ import (
 	"p2"
 
 	"modernc.org/obeam/core"
-	"modernc.org/obeam/prof/image"
 	"modernc.org/obeam/vm"
 )
 
 // run loads the image afresh and runs it on one scheduler, and answers the
 // clocks it took and the instructions.
 func run(profile bool) (uint64, uint32) {
-	vm.Load(image.Code[:], image.Literals[:], image.Atoms[:], image.Funcs[:], image.Funs[:], image.Lines[:], image.Files[:], image.Structs[:])
+	vm.Load()
 	vm.Profile = profile
 	vm.ProfReset()
 	t0 := p2.GetCt()
 	ms := p2.GetMs()
-	vm.Run(image.Entry, 1)
+	vm.Run(vm.Entry(), 1)
 	clocks := uint64(p2.GetCt() - t0)
 	if p2.GetMs()-ms > 20000 {
 		clocks += uint64(p2.GetMs()-ms) / 26000 * 4294967296 // the counter wrapped, at 160 MHz every 26.8 s
@@ -41,14 +40,16 @@ var (
 
 func main() {
 	vm.CRLF = true
-	if image.TableID != vm.TableID {
-		printf("prof: the image was packed for other tables than the VM's: make prof\r\n")
+	if !vm.Load() {
+		printf("prof: no image in the arena, or one packed for other tables than the VM's: make prof\r\n")
 		return
 	}
 
 	clocks, steps := run(false)
-	printf("\r\n%s on one scheduler: %d instructions in %d clocks, %d an instruction\r\n",
-		image.EntryName, steps, clocks, clocks/uint64(steps))
+	printf("\r\n")
+	vm.WriteEntry()
+	printf(" on one scheduler: %d instructions in %d clocks, %d an instruction\r\n",
+		steps, clocks, clocks/uint64(steps))
 
 	vm.Core = core.Run
 	clocks, steps = run(false)

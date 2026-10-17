@@ -53,6 +53,13 @@ func emits(s *sched, str string) {
 	}
 }
 
+// emitName writes a name of the image's, an atom's or a file's.
+func emitName(s *sched, nm uint32) {
+	for i := 0; i < nameLen(nm); i++ {
+		emit(s, nameAt(nm, i))
+	}
+}
+
 // writeTerm writes a term as ~w does, or as ~p does when pretty is set: a
 // list of printable characters as a string, a binary of them as <<"...">>.
 func writeTerm(s *sched, t uint32, pretty bool) {
@@ -234,22 +241,22 @@ func writeIntBase(s *sched, v int64, base int64, upper bool) {
 func writeAtom(s *sched, t uint32) {
 	name := atomName(t)
 	if !atomNeedsQuotes(name) {
-		emits(s, name)
+		emitName(s, name)
 		return
 	}
 	emit(s, '\'')
-	for i := 0; i < len(name); i++ {
-		writeChar(s, name[i], '\'')
+	for i := 0; i < nameLen(name); i++ {
+		writeChar(s, nameAt(name, i), '\'')
 	}
 	emit(s, '\'')
 }
 
-func atomNeedsQuotes(name string) bool {
-	if len(name) == 0 || isReserved(name) {
+func atomNeedsQuotes(name uint32) bool {
+	if nameLen(name) == 0 || isReserved(name) {
 		return true
 	}
-	for i := 0; i < len(name); i++ {
-		c := name[i]
+	for i := 0; i < nameLen(name); i++ {
+		c := nameAt(name, i)
 		switch {
 		case c >= 'a' && c <= 'z':
 		case i > 0 && (c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '_' || c == '@'):
@@ -266,9 +273,9 @@ var reserved = [29]string{
 	"not", "of", "or", "orelse", "receive", "rem", "try", "when", "xor",
 }
 
-func isReserved(name string) bool {
+func isReserved(name uint32) bool {
 	for i := range reserved {
-		if reserved[i] == name {
+		if nameIs(name, reserved[i]) {
 			return true
 		}
 	}
@@ -385,7 +392,7 @@ func writeChars(s *sched, t uint32) bool {
 		return true
 	}
 	if isAtom(t) {
-		emits(s, atomName(t))
+		emitName(s, atomName(t))
 		return true
 	}
 	for isCons(t) {
@@ -439,8 +446,8 @@ func formatString(s *sched, t uint32) int {
 	}
 	if isAtom(t) {
 		name := atomName(t)
-		for k := 0; k < len(name) && n < len(s.fbuf); k++ {
-			s.fbuf[n] = name[k]
+		for k := 0; k < nameLen(name) && n < len(s.fbuf); k++ {
+			s.fbuf[n] = nameAt(name, k)
 			n++
 		}
 		return n

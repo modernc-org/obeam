@@ -6,9 +6,13 @@
 // two. A free block holds its list links and its order in its first longs;
 // what an allocated block holds is its owner's affair, and the owner says the
 // order when it frees the block.
+//
+// The image is at the bottom of the arena, put there by obeam, which finds
+// the arena in the VM's binary by the mark it begins with; the allocator has
+// the rest.
 
 const (
-	arenaLongs = 40960 // 160 KB, five blocks of the largest order: 192 KB as decided from the room before M6b, 160 since M6b, whose maps, binaries and demo took the rest; 128 KB from M4 until the room
+	arenaLongs = 59392 // 232 KB for the image and the heaps above it, since the image left the binary for it; before, 160 KB of heaps since M6b, 192 KB from the room before M6b, 128 KB from M4 until the room
 	minOrder   = 3     // 8 longs
 	maxOrder   = 13    // 8,192 longs
 	orders     = maxOrder - minOrder + 1
@@ -17,10 +21,11 @@ const (
 )
 
 var (
-	arena     [arenaLongs]uint32
+	arena     = [arenaLongs]uint32{regionMark0, regionMark1, regionMark2, regionMark3, arenaLongs, TableID}
 	freeHead  [orders]uint32
 	freeMap   [arenaLongs / minBlock / 32]uint32 // a bit per smallest block: it begins a free block
 	arenaLow  uint32                             // where the allocator's part begins
+	lowLongs  uint32                             // where the pool runs low: a quarter of it free
 	freeLongs uint32                             // how many longs are free
 
 	failedOrder, failedFree uint32 // the last request the pool could not meet, for Dump
@@ -43,6 +48,7 @@ func setFree(i uint32, free bool) {
 // arenaInit gives the allocator the arena from low up, as aligned blocks.
 func arenaInit(low uint32) {
 	arenaLow = low
+	lowLongs = (arenaLongs - low) / 4
 	freeLongs = 0
 	for i := range freeHead {
 		freeHead[i] = noBlock
@@ -108,9 +114,6 @@ func allocBlock(order uint32) uint32 {
 	b, _ := allocBlockLow(order)
 	return b
 }
-
-// lowLongs is where the pool runs low: a quarter of the arena free.
-const lowLongs = arenaLongs / 4
 
 // allocBlockLow is allocBlock that also says whether the pool has run low.
 func allocBlockLow(order uint32) (uint32, bool) {

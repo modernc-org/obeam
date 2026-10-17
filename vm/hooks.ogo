@@ -76,6 +76,13 @@ func out(b byte) {
 	p2.WriteByte(b)
 }
 
+// outName writes a name to the serial line.
+func outName(nm uint32) {
+	for i := 0; i < nameLen(nm); i++ {
+		out(nameAt(nm, i))
+	}
+}
+
 func outString(str string) {
 	for i := 0; i < len(str); i++ {
 		out(str[i])

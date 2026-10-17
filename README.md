@@ -1,3 +1,5 @@
+![OctoBeam](logo.png)
+
 *Eight cogs. Seven schedulers. One tiny BEAM.*
 
 # OctoBeam
@@ -22,7 +24,9 @@ them, on seven scheduler cogs, running modules compiled by `erlc` and
 - `cmd/obeam`: the host tool, Go. `obeam pack` turns `.beam` files into the
   image the board runs, every operand resolved and every literal laid out as
   the board's own terms, and refuses, by module, function and line, what the
-  VM cannot run yet. `obeam dis` and `obeam stats` list and count a module.
+  VM cannot run yet; `obeam pack -vm` puts the image into the arena of a VM
+  binary built once, in milliseconds. `obeam dis` and `obeam stats` list and
+  count a module.
 - `vm/`: the VM, in OctoGo: about 8,500 lines for the terms, a buddy arena,
   processes with mailboxes, links, monitors and a run queue, seven schedulers
   each a cog, the interpreter, a copying collector per process, exceptions
@@ -34,11 +38,13 @@ them, on seven scheduler cogs, running modules compiled by `erlc` and
   a server with timeouts, linked workers, a process linked to fifty, `try`
   and `catch`, floats, maps and binary parsers, and the seven Elixir ones,
   print the same bytes under both.
-- `main.ogo`, `image/`: the board program and its image, `demo`, which runs
-  the sixteen Erlang modules, the seven Elixir ones, and then `cogs`, seven
-  workers that report which scheduler ran them. Build it with `ogo build`,
-  run it with `make run`. On a P2-EC it prints what `erl` and `elixir`
-  print, line for line, then the workers' schedulers, and then:
+- `main.ogo`: the board program, the VM, which runs the image at the bottom
+  of its arena, and the demo, which runs the sixteen Erlang modules, the
+  seven Elixir ones, and then `cogs`, seven workers that report which
+  scheduler ran them. `make demo` builds the VM with `ogo build` and puts
+  the demo into it, and `make run` runs it. On a P2-EC it prints what `erl`
+  and `elixir` print, line for line, then the workers' schedulers, and
+  then:
 
   ```
   1142805 instructions in 5483 ms, 208426 a second, 1332 collections, the core run 75001 times
@@ -66,19 +72,21 @@ Not yet: bignums, bitstrings that are not whole bytes, an image loaded from
 the SD card, `~p`'s line breaking, and OTP's and Elixir's libraries beyond
 the shims. A map with atom keys prints its keys in term order, where `erl`
 and `elixir` print them in the order of their atom tables, and a map of more
-than 32 keys in term order, where OTP prints its hash trie's. The arena for
-process heaps is 160 KB, and the checked build with the demo leaves 10.7 KB
-of the 512 KB (`make budget`). A process's stack is bounded by its largest
+than 32 keys in term order, where OTP prints its hash trie's. The arena is
+232 KB, the image at its bottom and the process heaps above, so the demo's
+image of 69 KB leaves its heaps 162 KB and a hello, world 230 KB; the
+checked VM leaves 11 KB of the 512 KB beside it (`make budget`). A process's stack is bounded by its largest
 heap block, 8,192 longs, so a recursion 20,000 deep that Erlang takes ends
 here in `system_limit`; write it as a tail call. The links and monitors of
 all processes together are 256 at most, a record at each end. Floats are 32
 bits wide: what is not exact in 32 bits prints differently from Erlang's 64.
 
 ```sh
-ogo build                                    # the board binary; ogo run loads it (make run takes the shared board lock)
+make demo                                    # the VM, obeam.binary, and demo.binary, the VM with the demo in its arena
+make run                                     # load demo.binary onto the board (under the shared board lock)
 make test                                    # the gate: formats, vet, the reader's tests, then the VM under Go against erl
-make image                                   # regenerate image/image.ogo from the corpus
-make budget                                  # build the board binary and say how much of the hub it leaves
+make budget                                  # build the VM and say how much of the hub it leaves
+go run ./cmd/obeam pack -vm obeam.binary -o hello.binary hello.beam   # a program of your own: hello:main/0
 go run ./cmd/obeam dis erl/pingpong.beam     # the module's code, as erlc -S would list it
 go run ./cmd/obeam stats erl/*.beam          # the histogram
 make beam                                    # recompile the corpus after editing a .erl file (erlc of OTP 27)

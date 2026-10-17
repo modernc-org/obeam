@@ -219,7 +219,7 @@ func writeKind(s *sched, kind int, t uint32) bool {
 		if !isAtom(t) {
 			return false
 		}
-		emits(s, atomName(t))
+		emitName(s, atomName(t))
 		return true
 	}
 	return writeData(s, t, false)
@@ -308,8 +308,8 @@ func writeToString(s *sched, t uint32) bool {
 	case isBinary(t) || isList(t):
 		return writeData(s, t, true)
 	case isAtom(t):
-		if atomName(t) != "nil" {
-			emits(s, atomName(t))
+		if atomIdx(t) != atomNil {
+			emitName(s, atomName(t))
 		}
 		return true
 	case isInteger(t):

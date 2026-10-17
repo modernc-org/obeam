@@ -139,9 +139,19 @@ const testSchedulers = 7
 // with the process table dumped after what it printed.
 func runImage(img *pack.Image) []byte {
 	p2.Sink = testWrite
-	Load(img.Code, img.Literals, img.Atoms, img.Funcs, img.Funs, img.Lines, img.Files, img.Structs)
+	region, err := img.Region()
+	if err != nil {
+		return []byte(err.Error() + "\n")
+	}
+	if len(region) > arenaLongs {
+		return []byte("the image is larger than the arena\n")
+	}
+	copy(arena[:], region)
+	if !Load() {
+		return []byte("Load found no image\n")
+	}
 	testOut = testOut[:0]
-	if !Start(img.Entry, testSchedulers) {
+	if !Start(Entry(), testSchedulers) {
 		return []byte("no room for the first process\n")
 	}
 	deadline := time.Now().Add(time.Minute)

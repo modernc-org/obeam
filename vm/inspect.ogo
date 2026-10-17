@@ -315,33 +315,33 @@ func writeExAtom(s *sched, t uint32, key bool) {
 	name := atomName(t)
 	if key {
 		if isExIdent(name) {
-			emits(s, name)
+			emitName(s, name)
 		} else {
 			writeExQuoted(s, name)
 		}
 		emit(s, ':')
 		return
 	}
-	if name == "true" || name == "false" || name == "nil" {
-		emits(s, name)
+	if i := atomIdx(t); i == atomTrue || i == atomFalse || i == atomNil {
+		emitName(s, name)
 		return
 	}
-	if len(name) > 7 && name[:7] == "Elixir." && isExAlias(name[7:]) {
-		emits(s, name[7:])
+	if nameLen(name) > 7 && nameIs(nameHead(name, 7), "Elixir.") && isExAlias(nameFrom(name, 7)) {
+		emitName(s, nameFrom(name, 7))
 		return
 	}
 	emit(s, ':')
 	if isExIdent(name) || isExOperator(name) {
-		emits(s, name)
+		emitName(s, name)
 		return
 	}
 	writeExQuoted(s, name)
 }
 
-func writeExQuoted(s *sched, name string) {
+func writeExQuoted(s *sched, name uint32) {
 	emit(s, '"')
-	for i := 0; i < len(name); i++ {
-		writeExChar(s, name[i], nilTerm)
+	for i := 0; i < nameLen(name); i++ {
+		writeExChar(s, nameAt(name, i), nilTerm)
 	}
 	emit(s, '"')
 }
@@ -352,16 +352,16 @@ func isDigit(c byte) bool  { return c >= '0' && c <= '9' }
 // isExIdent reports whether an atom's name is one Elixir writes unquoted: a
 // letter or an underscore, then letters, digits, underscores and at signs,
 // and a ? or ! at the end.
-func isExIdent(name string) bool {
-	if len(name) == 0 || !isLetter(name[0]) && name[0] != '_' {
+func isExIdent(name uint32) bool {
+	if nameLen(name) == 0 || !isLetter(nameAt(name, 0)) && nameAt(name, 0) != '_' {
 		return false
 	}
-	for i := 1; i < len(name); i++ {
-		c := name[i]
+	for i := 1; i < nameLen(name); i++ {
+		c := nameAt(name, i)
 		if isLetter(c) || isDigit(c) || c == '_' || c == '@' {
 			continue
 		}
-		if i == len(name)-1 && (c == '?' || c == '!') {
+		if i == nameLen(name)-1 && (c == '?' || c == '!') {
 			continue
 		}
 		return false
@@ -371,10 +371,10 @@ func isExIdent(name string) bool {
 
 // isExAlias reports whether what follows Elixir. in an atom is a module's
 // alias: parts that begin with a capital, joined by dots.
-func isExAlias(name string) bool {
+func isExAlias(name uint32) bool {
 	start := true
-	for i := 0; i < len(name); i++ {
-		c := name[i]
+	for i := 0; i < nameLen(name); i++ {
+		c := nameAt(name, i)
 		switch {
 		case start:
 			if c < 'A' || c > 'Z' {
@@ -396,9 +396,9 @@ var exOperators = [24]string{
 	"!", "<>", "++", "--", "|>", "=~", "..", "&", "^", "**",
 }
 
-func isExOperator(name string) bool {
+func isExOperator(name uint32) bool {
 	for i := range exOperators {
-		if exOperators[i] == name {
+		if nameIs(name, exOperators[i]) {
 			return true
 		}
 	}

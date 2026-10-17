@@ -2,15 +2,16 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-// Command obeam is the host side of obeam, a BEAM for the Propeller 2: it reads
-// the modules Erlang's compiler writes, and will pack them into an image for the
-// board.
+// Command obeam is the host side of OctoBeam, a BEAM for the Propeller 2: it
+// reads the modules Erlang's compiler writes, and packs them into an image for
+// the board, which it puts into a VM binary.
 //
 //	obeam dis FILE.beam...      list each module's code, as erlc -S would
 //	obeam stats FILE.beam...    count the opcodes and the external calls over the modules
 //	obeam chunks FILE.beam...   list each file's chunks
-//	obeam pack [-o image.ogo] [-entry m:f/a] [-lines=false] [-lib LIB.beam,...] FILE.beam...
-//	                            pack the modules into an image for the board
+//	obeam pack -o OUT [-vm VM.binary] [-entry m:f/a] [-lines=false] [-lib LIB.beam,...] FILE.beam...
+//	                            pack the modules into an image for the board, and with -vm
+//	                            put it into the VM binary's arena
 //	obeam gen [-vm DIR]         write the VM's copies of the opcodes, tags, atoms and BIFs
 //	obeam version
 package main
@@ -69,8 +70,9 @@ The commands are:
 	stats FILE.beam...    count the opcodes and the external calls over the modules
 	chunks FILE.beam...   list each file's chunks
 	pack FILE.beam...     pack the modules into an image for the board:
-	                      -o image.ogo (the standard output by default),
-	                      -entry m:f/a (the first module's main/0), -lines=false
+	                      -o OUT, the image, or with -vm VM.binary that VM binary
+	                      with the image in its arena; -entry m:f/a (the first
+	                      module's main/0), -lines=false, -lib LIB.beam,...
 	gen                   write the VM's copies of the opcodes, tags, atoms and
 	                      BIFs: -vm DIR (vm)
 	version               print the version and the opcode table's
@@ -189,7 +191,8 @@ func stats(paths []string) error {
 
 func packCmd(args []string) error {
 	fs := flag.NewFlagSet("pack", flag.ContinueOnError)
-	out := fs.String("o", "", "write the image here, as the OctoGo package image")
+	out := fs.String("o", "", "write the image here, or with -vm the VM binary with the image in it")
+	vmPath := fs.String("vm", "", "a VM binary, built by ogo build, to put the image into")
 	entry := fs.String("entry", "", "the entry function, module:function/arity")
 	lines := fs.Bool("lines", true, "keep the line table for crash messages")
 	lib := fs.String("lib", "", "library modules, comma separated: packed by what the program reaches, as the shims are")
@@ -200,25 +203,32 @@ func packCmd(args []string) error {
 	if *lib != "" {
 		libs = strings.Split(*lib, ",")
 	}
+	if *out == "" {
+		return fmt.Errorf("pack: name the output with -o")
+	}
 	img, err := pack.Pack(fs.Args(), pack.Options{Entry: *entry, Lines: *lines, Lib: libs})
 	if err != nil {
 		return err
 	}
-	w := os.Stdout
-	if *out != "" {
-		f, err := os.Create(*out)
+	region, err := img.Region()
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(os.Stderr, "obeam pack: %s: %d longs of code, %d of literals, %d atoms, %d functions (%d dropped), %d funs, %d lines; the image %d longs\n",
+		img.EntryMFA, len(img.Code), len(img.Literals), len(img.Atoms), len(img.Funcs)/4, img.Dropped, len(img.Funs)/3, len(img.Lines)/3, len(region))
+	b := pack.Bytes(region)
+	if *vmPath != "" {
+		vm, err := os.ReadFile(*vmPath)
 		if err != nil {
 			return err
 		}
-		defer f.Close()
-		w = f
+		var room int
+		if b, room, err = pack.Patch(vm, region); err != nil {
+			return fmt.Errorf("%s: %w", *vmPath, err)
+		}
+		fmt.Fprintf(os.Stderr, "obeam pack: %s: %d longs, %d KB, of the arena left for the heaps\n", *out, room, room*4/1024)
 	}
-	if err := img.WriteOgo(w); err != nil {
-		return err
-	}
-	fmt.Fprintf(os.Stderr, "obeam pack: %s: %d longs of code, %d of literals, %d atoms, %d functions (%d dropped), %d funs, %d lines\n",
-		img.EntryMFA, len(img.Code), len(img.Literals), len(img.Atoms), len(img.Funcs)/4, img.Dropped, len(img.Funs)/3, len(img.Lines)/3)
-	return nil
+	return os.WriteFile(*out, b, 0o644)
 }
 
 func genCmd(args []string) error {

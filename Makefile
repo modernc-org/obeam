@@ -13,7 +13,7 @@ comma := ,
 empty :=
 space := $(empty) $(empty)
 
-.PHONY: all test twin beam exbeam stats generate image prof prof-run run budget clean
+.PHONY: all test twin beam exbeam stats generate demo prof prof-run run budget clean
 
 all: test
 
@@ -30,47 +30,56 @@ test:
 twin:
 	scripts/twin.sh -k build/twin $(ARGS)
 
-# image regenerates image/image.ogo, what the board runs, from the corpus.
-IMAGE_ENTRY   = demo:main/0
-IMAGE_MODULES = erl/demo.beam erl/fac.beam erl/fib.beam erl/lst.beam erl/tuples.beam erl/funs.beam \
+# obeam.binary is the VM, built by ogo build, with an empty arena; demo.binary
+# is the VM with the demo's image in its arena, which obeam pack -vm puts
+# there.
+VM_SRCS = main.ogo ogo.mod $(wildcard vm/*.ogo) $(wildcard core/*.ogo core/*.spin2)
+PACK    = go run ./cmd/obeam pack
+PACKER  = $(wildcard cmd/obeam/*.go internal/*/*.go)
+
+obeam.binary: $(VM_SRCS)
+	ogo build
+
+DEMO_ENTRY   = demo:main/0
+DEMO_MODULES = erl/demo.beam erl/fac.beam erl/fib.beam erl/lst.beam erl/tuples.beam erl/funs.beam \
 	erl/pingpong.beam erl/ring.beam erl/sieve.beam erl/counter.beam erl/exc.beam erl/links.beam \
 	erl/sup.beam erl/flt.beam erl/fmt.beam erl/mp.beam erl/bin.beam erl/cogs.beam \
 	ex/Elixir.Hello.beam ex/Elixir.Fac.beam ex/Elixir.Ping.beam ex/Elixir.Ring.beam \
 	ex/Elixir.Enums.beam ex/Elixir.Strings.beam ex/Elixir.Maps.beam ex/Elixir.Point.beam
-# IMAGE_LIBS are the shims, Erlang's of OTP's and Erlang's of Elixir's
+# DEMO_LIBS are the shims, Erlang's of OTP's and Erlang's of Elixir's
 # library, which a program takes by what it reaches.
-IMAGE_LIBS = $(wildcard erl/shim/*.beam) $(wildcard ex/shim/*.beam)
+DEMO_LIBS = $(wildcard erl/shim/*.beam) $(wildcard ex/shim/*.beam)
 
-image: $(BEAMS)
-	mkdir -p image
-	go run ./cmd/obeam pack -o image/image.ogo -entry $(IMAGE_ENTRY) -lib $(subst $(space),$(comma),$(strip $(IMAGE_LIBS))) $(IMAGE_MODULES)
+demo: demo.binary
 
-# prof packs erl/bench.erl into prof/image, writes the names the profiler
-# prints, and builds the profiler, prof/prof.binary; prof-run runs it on the
+demo.binary: obeam.binary $(DEMO_MODULES) $(DEMO_LIBS) $(PACKER)
+	$(PACK) -vm obeam.binary -o $@ -entry $(DEMO_ENTRY) -lib $(subst $(space),$(comma),$(strip $(DEMO_LIBS))) $(DEMO_MODULES)
+
+# prof writes the names the profiler prints, builds the profiler, and puts
+# erl/bench.erl into its arena, prof/prof.binary; prof-run runs it on the
 # board under the shared lock.
 PROF_MODULES = erl/bench.beam erl/fib.beam erl/lst.beam erl/tuples.beam erl/pingpong.beam \
 	erl/ring.beam erl/sieve.beam
 
 prof: $(BEAMS)
-	mkdir -p prof/image
-	go run ./cmd/obeam pack -o prof/image/image.ogo -entry bench:main/0 $(PROF_MODULES)
 	go run ./cmd/obeam gen -vm vm -names prof
-	ogo build --unchecked -o prof/prof.binary ./prof
+	ogo build --unchecked -o prof/vm.binary ./prof
+	$(PACK) -vm prof/vm.binary -o prof/prof.binary -entry bench:main/0 $(PROF_MODULES)
 
 prof-run: prof
 	flock -o -w 900 /tmp/p2-board.lock ogo loadp2 -t -b 230400 prof/prof.binary
 
 # budget builds the board program, checked, and says how much of the hub's
 # 512 KB it leaves for main's stack and what comes next; ogo build refuses a
-# program whose main stack does not fit.
-budget:
-	ogo build
+# program whose main stack does not fit. The arena, image and heaps, is in
+# the binary, so its size is the same whatever the image.
+budget: obeam.binary
 	@n=$$(stat -c %s obeam.binary); echo "obeam.binary: $$n bytes, $$((524288 - n)) of the hub's 524288 left beside it"
 
-# run builds the board program and runs it on the board, under the lock the
-# ogo and p2-11 sessions share.
-run:
-	flock -o -w 900 /tmp/p2-board.lock ogo run
+# run runs the demo on the board, under the lock the ogo and p2-11 sessions
+# share.
+run: demo.binary
+	flock -o -w 900 /tmp/p2-board.lock ogo loadp2 -b 230400 -t demo.binary
 
 # beam compiles the corpus with OTP 27's erlc. The .beam files are committed,
 # so this is needed only after a .erl file changes.
@@ -102,4 +111,4 @@ generate:
 	go run ./cmd/obeam gen -vm vm
 
 clean:
-	rm -rf build obeam
+	rm -rf build obeam obeam.binary demo.binary

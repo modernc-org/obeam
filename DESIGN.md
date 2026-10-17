@@ -31,10 +31,14 @@ Three things, two of them programs:
   The packages that do not import `p2` (the interpreter, the terms, the GC,
   the image reader) are Go once given a package clause, and are tested on the
   host under `go test` as p2-11's are, with OTP's own `erl` as the oracle.
-- **The image**, what the packer writes and the board runs. In version 1 it is
-  a generated OctoGo source file, `image.ogo`, compiled into the board program,
-  as p2-11's `mac/*.ogo` are generated from MACRO-11; later a file on the SD
-  card, read with p2-11's `sd` and `fat` packages, in the same layout.
+- **The image**, what the packer writes and the board runs. It is the bottom
+  of the VM's arena: the VM is built once, its arena marked, and `obeam pack
+  -vm` writes the image over the mark in a copy of the VM's binary, so that a
+  program is packed in milliseconds and no OctoGo build is needed for it.
+  Until 2026-10-17 it was a generated OctoGo source file, `image.ogo`,
+  compiled into the board program, as p2-11's `mac/*.ogo` are generated from
+  MACRO-11. Later it is also a file on the SD card, read with p2-11's `sd`
+  and `fat` packages into the same place.
 
 The board decodes nothing: no IFF chunks, no compact term encoding, no external
 term format, no zlib. That is what keeps the VM small, and what AtomVM's
@@ -307,13 +311,20 @@ not a sum over every BIF; and the arena is 192 KB, 160 since M6b.
 
 ## 4. The image
 
-Little-endian longs, in sections, every section long-aligned:
+Little-endian longs, in sections, every section long-aligned, at the bottom
+of the arena, where the VM reads it in place (`internal/pack/region.go` is
+the layout, `Load` in `vm/vm.ogo` the reader):
 
-1. **Header**: a magic, a version, the size of each section, the entry point
-   (module, function, arity) and the counts.
+1. **Header**: 24 longs, a magic, the `TableID` the image was packed for
+   (which fingerprints the layout too), the image's length, the entry point
+   (its code offset, module, function and arity), and where each section
+   begins and how long it is.
 2. **Atoms**: the names, for printing and `atom_to_list`, numbered as the
    board's atom terms number them. The packer merges every module's atom
-   table into one.
+   table into one. An atom is a long, the byte offset of its name in the
+   arena above 10 bits and its length below, and the names' bytes follow
+   the tables, as the files' names do: OctoGo has no string made of bytes
+   at run time, so the VM reads a name byte by byte.
 3. **Code**: one stream for all modules, fixed-width: one long for the
    opcode, in its low byte, then one long per operand, a list operand as a
    count and its elements. (The proposal had an opcode byte; a long is what
@@ -335,9 +346,9 @@ Little-endian longs, in sections, every section long-aligned:
    atoms, as where a call lands when no clause matched; `label` and `line`
    to nothing. `Code[0]` is `halt`, so that no code is at offset 0 and a
    continuation of 0 ends a process.
-4. **Literals**: a read-only heap in the board's term format, placed at the
-   start of the arena, so that every pointer in it is an absolute index and
-   nothing moves. In the generated `image.ogo` it is the arena's initializer.
+4. **Literals**: a read-only heap in the board's term format, right after
+   the header, so that every pointer in it is an absolute index of the arena
+   and nothing moves or is copied.
 5. **Exports**: module, function, arity and code offset, for `spawn/3` and
    `apply/3`, sorted for a binary search.
 6. **Funs**: what `make_fun3` indexes: code offset, arity, number of free
@@ -358,6 +369,16 @@ image. It refuses, by name and place: an opcode the VM does
 not implement, an external call to a function neither a BIF nor in the image,
 a literal the board cannot hold, and the bit syntax, maps and bignums until
 they are done.
+
+A VM binary's arena begins with a mark: four longs found nowhere else in the
+binary, then the arena's length and the VM's `TableID`, the initializer of
+`arena` in `vm/arena.ogo`, which flexspin places in the binary as data with
+the arena's zeros after it. `obeam pack -vm` finds the mark, refuses a VM of
+other tables or too small an arena, and writes the image over it; `Load`
+finds the image's magic where the mark was, or reports that there is no
+image. The heaps take the arena from the image's end, rounded up to the
+smallest block, and the more a program leaves of the arena the more its
+processes have.
 
 ## 5. What runs where
 
@@ -815,3 +836,20 @@ and its heaps share the region as each needs. On the board both builds
 print the 143 lines before `cogs` that `erl` and `elixir` print: 1,142,805
 instructions in 5,483 ms checked and 4,451 unchecked; the profile is
 unchanged, 657 clocks an instruction with the core.
+
+**The image in the arena**, 2026-10-17, the first step of the way the user
+and the assessment agreed for OctoBeam's users: one `obeam` executable that
+carries the VM built once, checked and unchecked, and puts a program's image
+into it, so that a user needs neither Go nor OctoGo nor a loader of their
+own. The image left the binary for the bottom of the arena (section 4), and
+the arena grew by what it had taken: 232 KB, the checked VM binary 513,068
+bytes, 11,220 left beside it for `main`'s stack of 1,108 and what comes
+next; the unchecked binary is 460,668. The demo's image is 17,743 longs,
+69 KB, and leaves its heaps 41,649 longs, 162 KB, where they had 160; the
+hello of the README's workflow is 490 longs and leaves 230 KB. Atom and file
+names became bytes in the arena, and `nil` a well-known atom, which Elixir's
+`to_string` tested by its name. On the board both builds print the 143 lines
+before `cogs` that `erl` and `elixir` print, in 5,506 ms checked and 4,454
+unchecked; the bare VM says it has no image; the profiler, which loads the
+image afresh for each of its runs, finds 662 clocks an instruction with the
+core.

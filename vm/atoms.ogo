@@ -163,4 +163,5 @@ const (
 	atomFirst          = 157
 	atomLast           = 158
 	atomStep           = 159
+	atomNil            = 160
 )

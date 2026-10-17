@@ -108,11 +108,44 @@ func binaryByte(t, k uint32) byte {
 	return byte(arena[boxIdx(t)+2+k/4] >> (8 * (k % 4)))
 }
 
-// atomName returns an atom's name.
-func atomName(t uint32) string {
+// atomName returns an atom's name, as a name's long: the name's bytes are in
+// the image, below the heaps, and nameLen and nameAt read them.
+func atomName(t uint32) uint32 {
 	i := atomIdx(t)
 	if i >= uint32(len(atoms)) {
-		return "?"
+		return 0
 	}
 	return atoms[i]
+}
+
+// A name's long is the byte offset of the name in the arena above
+// nameLenBits, and its length below.
+const nameLenMask = 1<<nameLenBits - 1
+
+func nameLen(nm uint32) int { return int(nm & nameLenMask) }
+
+func nameAt(nm uint32, i int) byte {
+	at := nm>>nameLenBits + uint32(i)
+	return byte(arena[at/4] >> (8 * (at % 4)))
+}
+
+// nameFrom answers the name of what follows a name's first k bytes.
+func nameFrom(nm uint32, k int) uint32 {
+	return (nm>>nameLenBits+uint32(k))<<nameLenBits | (nm&nameLenMask - uint32(k))
+}
+
+// nameHead answers the name of a name's first k bytes, k at most its length.
+func nameHead(nm uint32, k int) uint32 { return nm&^nameLenMask | uint32(k) }
+
+// nameIs reports whether a name is str.
+func nameIs(nm uint32, str string) bool {
+	if nameLen(nm) != len(str) {
+		return false
+	}
+	for i := 0; i < len(str); i++ {
+		if nameAt(nm, i) != str[i] {
+			return false
+		}
+	}
+	return true
 }

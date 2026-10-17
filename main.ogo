@@ -2,10 +2,10 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-// Command obeam is a BEAM on a Propeller 2: it runs the image package image
-// holds, which obeam pack made of modules Erlang's compiler compiled, on
-// seven scheduler cogs, and prints what they print on the serial line the
-// program was loaded through.
+// Command obeam is OctoBeam, a BEAM on a Propeller 2: it runs the image at
+// the bottom of its arena, which obeam pack made of modules Erlang's compiler
+// compiled and put into this program's binary, on seven scheduler cogs, and
+// prints what they print on the serial line the program was loaded through.
 //
 // This cog is the eighth: it starts the schedulers, drives the pins for them,
 // since a pin driven by several cogs is the OR of what they drive, and prints
@@ -15,7 +15,6 @@ import (
 	"p2"
 
 	"modernc.org/obeam/core"
-	"modernc.org/obeam/image"
 	"modernc.org/obeam/vm"
 )
 
@@ -76,20 +75,19 @@ func main() {
 	vm.PinsServed = true
 	vm.Core = core.Run
 
-	if image.TableID != vm.TableID {
-		say("obeam: the image was packed for other tables than the VM's: make image\r\n")
+	if !vm.Load() {
+		say("obeam: no image: obeam pack -vm puts one into this binary\r\n")
 		return
 	}
-	vm.Load(image.Code[:], image.Literals[:], image.Atoms[:], image.Funcs[:], image.Funs[:], image.Lines[:], image.Files[:], image.Structs[:])
 	say("obeam: ")
-	say(image.EntryName)
+	vm.WriteEntry()
 	say(", ")
-	num(uint64(len(image.Code)))
+	num(uint64(vm.CodeLongs()))
 	say(" longs of code, ")
 	num(schedulers)
 	say(" schedulers\r\n\r\n")
 	t := p2.GetMs()
-	if !vm.Start(image.Entry, schedulers) {
+	if !vm.Start(vm.Entry(), schedulers) {
 		say("no room for the first process\r\n")
 		return
 	}

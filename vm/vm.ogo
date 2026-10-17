@@ -11,40 +11,69 @@
 // and biftab.ogo are generated from the packer's tables by obeam gen and not
 // edited by hand.
 
-// The image, as Load was given it.
+// The image, as Load found it at the bottom of the arena: what the packer's
+// Region laid out there, and internal/pack/region.go says how.
 var (
 	code      []uint32 // the instruction stream
-	atoms     []string // by index
+	atoms     []uint32 // the atoms' names, by index: a name's long, as nameLen and nameAt read it
 	funcs     []uint32 // quads by code offset: offset, module, function, arity with bit 8 for an export
 	funs      []uint32 // triples by index: code offset, arity, free variables
 	lines     []uint32 // triples by code offset: offset, file, line
-	files     []string
+	files     []uint32 // the files' names, as atoms holds the atoms'
 	exStructs []uint32 // pairs: an Elixir struct's module, an atom, and its fields in their order, a list
-	litEnd    uint32   // the literal heap is arena[0:litEnd]
+	litEnd    uint32   // the literals are arena[headerLongs:litEnd]
 )
 
 var entryProc *Proc
 
-// Load gives the VM an image and starts it afresh: the literals go to the
-// start of the arena, the rest of the arena to the allocator, and the process
-// table is emptied. The hooks are set before it.
-func Load(c, literals []uint32, a []string, fc, fn, ln []uint32, fl []string, st []uint32) {
-	code = c
-	atoms = a
-	funcs = fc
-	funs = fn
-	lines = ln
-	files = fl
-	exStructs = st
-	for i := range literals {
-		arena[i] = literals[i]
+// table answers the table a pair of the header's slots describes.
+func table(slot int) []uint32 {
+	at, n := arena[slot], arena[slot+1]
+	return arena[at : at+n]
+}
+
+// Load starts the VM afresh on the image at the bottom of the arena: the
+// rest of the arena goes to the allocator, and the process table is emptied.
+// It reports whether there is an image there, one packed for the VM's
+// tables. The hooks are set before it.
+func Load() bool {
+	n := arena[imgLongs]
+	if arena[imgMagic] != imageMagic || arena[imgTableID] != TableID || n < headerLongs || n > arenaLongs {
+		return false
 	}
-	litEnd = uint32(len(literals))
+	code = table(imgCode)
+	atoms = table(imgAtoms)
+	funcs = table(imgFuncs)
+	funs = table(imgFuns)
+	lines = table(imgLines)
+	files = table(imgFiles)
+	exStructs = table(imgStructs)
+	litEnd = arena[imgLitEnd]
 	makeLocks()
-	arenaInit((litEnd + minBlock - 1) &^ (minBlock - 1))
+	arenaInit((n + minBlock - 1) &^ (minBlock - 1))
 	procsInit()
 	coreAddrs()
 	entryProc = nil
+	return true
+}
+
+// Entry answers the code offset of the image's entry function, and CodeLongs
+// the length of its code.
+func Entry() uint32  { return arena[imgEntry] }
+func CodeLongs() int { return len(code) }
+
+// WriteEntry writes the entry function's module, name and arity to the
+// serial line, as m:f/a.
+func WriteEntry() {
+	outName(atoms[arena[imgEntryMod]])
+	out(':')
+	outName(atoms[arena[imgEntryFun]])
+	out('/')
+	a := arena[imgEntryArity]
+	if a >= 10 {
+		out(byte('0' + a/10))
+	}
+	out(byte('0' + a%10))
 }
 
 // Start starts a process at a function of no arguments at the code offset

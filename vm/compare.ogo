@@ -175,12 +175,12 @@ func numFloat(t uint32) float32 {
 
 func cmpAtoms(a, b uint32) int {
 	sa, sb := atomName(a), atomName(b)
-	for i := 0; i < len(sa) && i < len(sb); i++ {
-		if sa[i] != sb[i] {
-			return int(sa[i]) - int(sb[i])
+	for i := 0; i < nameLen(sa) && i < nameLen(sb); i++ {
+		if ca, cb := nameAt(sa, i), nameAt(sb, i); ca != cb {
+			return int(ca) - int(cb)
 		}
 	}
-	return len(sa) - len(sb)
+	return nameLen(sa) - nameLen(sb)
 }
 
 func cmpBinaries(a, b uint32) int {

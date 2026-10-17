@@ -460,18 +460,10 @@ func bifAtomToList(s *sched, n uint32) uint32 {
 		return badarg(s)
 	}
 	name := atomName(s.bargs[0])
-	if !ensure(s, 2*uint32(len(name)), s.curLive) {
+	if !ensure(s, 2*uint32(nameLen(name)), s.curLive) {
 		return nonValue
 	}
-	t := uint32(nilTerm)
-	for k := len(name) - 1; k >= 0; k-- {
-		i := s.cur.htop
-		arena[i] = mkSmall(int32(name[k]))
-		arena[i+1] = t
-		s.cur.htop += 2
-		t = mkCons(i)
-	}
-	return t
+	return nameList(s, name)
 }
 
 // bifAppend is ++: the first list copied, the second its tail.

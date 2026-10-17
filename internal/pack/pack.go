@@ -15,22 +15,23 @@ import (
 	"modernc.org/obeam/internal/beam"
 )
 
-// An Image is what the board runs: DESIGN.md section 4, in memory. WriteOgo
-// writes it as the OctoGo source the board program compiles in, and the host
-// tests load it as it is.
+// An Image is what the board runs: DESIGN.md section 4, in memory. Region
+// lays it out as the bottom of the board's arena, which Patch writes into a
+// VM binary and the host tests copy into the VM's arena.
 type Image struct {
-	Entry    uint32   // the code offset of the entry function
-	Atoms    []string // by index; WellKnownAtoms first
-	Code     []uint32 // the instruction stream; Code[0] is halt
-	Literals []uint32 // the literal heap, the arena's first longs
-	Funcs    []uint32 // quads, by code offset: offset, module atom, function atom, arity with bit 8 set for an export
-	Funs     []uint32 // triples, by make_fun3's index: code offset, arity, free variables
-	Lines    []uint32 // triples, by code offset: offset, file index, line
-	Files    []string // what Lines index
-	Structs  []uint32 // pairs: an Elixir struct's module, an atom, and its fields in their order, a literal list
-	Modules  []string // the modules packed, in order
-	Dropped  int      // functions left out as unreachable
-	EntryMFA string   // for messages
+	Entry                                  uint32   // the code offset of the entry function
+	EntryModule, EntryFunction, EntryArity uint32   // the entry's atoms' indexes and arity, for the board's banner
+	Atoms                                  []string // by index; WellKnownAtoms first
+	Code                                   []uint32 // the instruction stream; Code[0] is halt
+	Literals                               []uint32 // the literal heap, at LitBase in the arena
+	Funcs                                  []uint32 // quads, by code offset: offset, module atom, function atom, arity with bit 8 set for an export
+	Funs                                   []uint32 // triples, by make_fun3's index: code offset, arity, free variables
+	Lines                                  []uint32 // triples, by code offset: offset, file index, line
+	Files                                  []string // what Lines index
+	Structs                                []uint32 // pairs: an Elixir struct's module, an atom, and its fields in their order, a literal list
+	Modules                                []string // the modules packed, in order
+	Dropped                                int      // functions left out as unreachable
+	EntryMFA                               string   // for messages
 }
 
 // Options say what to pack.
@@ -178,6 +179,9 @@ func Pack(paths []string, opts Options) (*Image, error) {
 	}
 	p.img.Entry = p.funcs[entry].offset
 	p.img.EntryMFA = entry.String()
+	p.img.EntryModule = uint32(p.atom(entry.module))
+	p.img.EntryFunction = uint32(p.atom(entry.name))
+	p.img.EntryArity = uint32(entry.arity)
 	for i := 0; i < len(p.img.Funcs); i += 4 {
 		fn := p.funcs[fnKey{p.img.Atoms[p.img.Funcs[i+1]], p.img.Atoms[p.img.Funcs[i+2]], int(p.img.Funcs[i+3] & 0xff)}]
 		p.img.Funcs[i] = fn.offset
@@ -358,7 +362,7 @@ func (p *packer) layoutTerm(t beam.Term) (uint32, error) {
 	case beam.TermFloat:
 		at := len(p.img.Literals)
 		p.img.Literals = append(p.img.Literals, Header(HdrFloat, 1), math.Float32bits(float32(t.Float)))
-		return BoxedPtr(at), nil
+		return BoxedPtr(LitBase + at), nil
 	case beam.TermAtom:
 		return Atom(p.atom(t.Atom)), nil
 	case beam.TermList:
@@ -377,7 +381,7 @@ func (p *packer) layoutTerm(t beam.Term) (uint32, error) {
 			}
 			at := len(p.img.Literals)
 			p.img.Literals = append(p.img.Literals, h, tail)
-			tail = ListPtr(at)
+			tail = ListPtr(LitBase + at)
 		}
 		return tail, nil
 	case beam.TermTuple:
@@ -392,7 +396,7 @@ func (p *packer) layoutTerm(t beam.Term) (uint32, error) {
 		at := len(p.img.Literals)
 		p.img.Literals = append(p.img.Literals, Header(HdrTuple, len(elems)))
 		p.img.Literals = append(p.img.Literals, elems...)
-		return BoxedPtr(at), nil
+		return BoxedPtr(LitBase + at), nil
 	case beam.TermBinary:
 		n := len(t.Bytes)
 		longs := (n + 3) / 4
@@ -405,7 +409,7 @@ func (p *packer) layoutTerm(t beam.Term) (uint32, error) {
 			}
 			p.img.Literals = append(p.img.Literals, w)
 		}
-		return BoxedPtr(at), nil
+		return BoxedPtr(LitBase + at), nil
 	case beam.TermBitstring:
 		return 0, errors.New("a bitstring, which is not in version 1")
 	case beam.TermMap:
@@ -430,13 +434,13 @@ func (p *packer) layoutTerm(t beam.Term) (uint32, error) {
 		at := len(p.img.Literals)
 		p.img.Literals = append(p.img.Literals, Header(HdrMap, len(elems)))
 		p.img.Literals = append(p.img.Literals, elems...)
-		return BoxedPtr(at), nil
+		return BoxedPtr(LitBase + at), nil
 	case beam.TermExport:
 		m := beam.MFA{Module: t.Atom, Function: t.Elems[0].Atom, Arity: int(t.Elems[1].Int)}
 		at := len(p.img.Literals)
 		if bif, ok := bifIndex(m); ok {
 			p.img.Literals = append(p.img.Literals, Header(HdrFun, FunHeadLongs), uint32(bif), FunHead(m.Arity, 0, FunBif))
-			return BoxedPtr(at), nil
+			return BoxedPtr(LitBase + at), nil
 		}
 		fn, ok := p.funcs[fnKey{m.Module, m.Function, m.Arity}]
 		if !ok {
@@ -444,7 +448,7 @@ func (p *packer) layoutTerm(t beam.Term) (uint32, error) {
 		}
 		p.img.Literals = append(p.img.Literals, Header(HdrFun, FunHeadLongs), 0, FunHead(m.Arity, 0, FunExport))
 		p.litFixups = append(p.litFixups, funFixup{at: at + 1, file: fn.file, label: fn.fn.Entry})
-		return BoxedPtr(at), nil
+		return BoxedPtr(LitBase + at), nil
 	}
 	return 0, fmt.Errorf("a term of kind %d", t.Kind)
 }
@@ -456,7 +460,7 @@ func (p *packer) layoutInt(v int64) uint32 {
 	}
 	at := len(p.img.Literals)
 	p.img.Literals = append(p.img.Literals, Header(HdrInt64, 2), uint32(v), uint32(v>>32))
-	return BoxedPtr(at)
+	return BoxedPtr(LitBase + at)
 }
 
 func (p *packer) emit(words ...uint32) {

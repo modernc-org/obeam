@@ -85,6 +85,8 @@ var WellKnownAtoms = []string{
 	"get", "find", "is_key", "put", "update", "remove", "keys", "values",
 	"to_list", "from_list", "merge", "size", "new", "all",
 	"__struct__", "Elixir.Range", "first", "last", "step",
+	// Elixir's nil, which to_string writes as nothing and inspect as it is.
+	"nil",
 }
 
 // A Bif is a function the VM implements itself: what an import of it resolves
@@ -272,5 +274,6 @@ func TableID() uint32 {
 	for _, o := range CoreOps {
 		add(o.String())
 	}
+	add(fmt.Sprintf("image layout %d", ImageLayout))
 	return h
 }

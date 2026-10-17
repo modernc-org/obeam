@@ -195,7 +195,7 @@ func rawClass(raw uint32) (uint32, bool) {
 // frameLine answers the file and line of a frame: the first frame's offset
 // is an instruction, a later one's a return address, whose call is the
 // instruction before it.
-func frameLine(off uint32, first bool) (string, uint32, bool) {
+func frameLine(off uint32, first bool) (uint32, uint32, bool) {
 	if !first && off > 0 {
 		off--
 	}
@@ -220,7 +220,7 @@ func stackList(s *sched, raw uint32, live int32) uint32 {
 		off := uint32(smallVal(arena[consIdx(t)]))
 		need += 5 + 2 + 2 + 3 + 2 + 3
 		if file, _, ok := frameLine(off, first); ok {
-			need += 2 * uint32(len(file))
+			need += 2 * uint32(nameLen(file))
 		}
 		first = false
 	}
@@ -254,7 +254,7 @@ func stackList(s *sched, raw uint32, live int32) uint32 {
 			arena[i+2] = mkSmall(int32(line))
 			p.htop += 3
 			lineT := mkBoxed(i)
-			str := strList(s, file)
+			str := nameList(s, file)
 			i = p.htop
 			arena[i] = mkHeader(hdrTuple, 2)
 			arena[i+1] = mkAtom(atomFile)
@@ -284,13 +284,13 @@ func stackList(s *sched, raw uint32, live int32) uint32 {
 	return l
 }
 
-// strList makes a list of a string's bytes on the heap; the room is made.
-func strList(s *sched, str string) uint32 {
+// nameList makes a list of a name's bytes on the heap; the room is made.
+func nameList(s *sched, nm uint32) uint32 {
 	p := s.cur
 	l := uint32(nilTerm)
-	for k := len(str) - 1; k >= 0; k-- {
+	for k := nameLen(nm) - 1; k >= 0; k-- {
 		i := p.htop
-		arena[i] = mkSmall(int32(str[k]))
+		arena[i] = mkSmall(int32(nameAt(nm, k)))
 		arena[i+1] = l
 		p.htop += 2
 		l = mkCons(i)
@@ -303,7 +303,7 @@ func strList(s *sched, str string) uint32 {
 func report(s *sched, class, reason, raw uint32) {
 	lock(lockOut)
 	emits(s, "** exception ")
-	emits(s, atomName(class))
+	emitName(s, atomName(class))
 	emits(s, ": ")
 	explain(s, reason)
 	if isTuple(raw) && tupleArity(raw) == 2 {
@@ -326,7 +326,7 @@ func report(s *sched, class, reason, raw uint32) {
 			writeInt(s, int64(a))
 			if file, line, ok := frameLine(off, first); ok {
 				emits(s, " (")
-				emits(s, file)
+				emitName(s, file)
 				emits(s, ", line ")
 				writeInt(s, int64(line))
 				emit(s, ')')
@@ -417,7 +417,7 @@ func funcAt(pc uint32) (m, f, a uint32, ok bool) {
 }
 
 // lineAt finds the source line a code offset was compiled from.
-func lineAt(pc uint32) (file string, line uint32, ok bool) {
+func lineAt(pc uint32) (file, line uint32, ok bool) {
 	lo, hi := 0, len(lines)/3
 	for lo < hi {
 		mid := (lo + hi) / 2
@@ -428,12 +428,12 @@ func lineAt(pc uint32) (file string, line uint32, ok bool) {
 		}
 	}
 	if lo == 0 {
-		return "", 0, false
+		return 0, 0, false
 	}
 	k := 3 * (lo - 1)
 	f := lines[k+1]
 	if f >= uint32(len(files)) {
-		return "", 0, false
+		return 0, 0, false
 	}
 	return files[f], lines[k+2], true
 }

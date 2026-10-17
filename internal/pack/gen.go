@@ -97,7 +97,7 @@ func genOpcodes() string {
 func genTags() string {
 	var b strings.Builder
 	b.WriteString(genHeader)
-	b.WriteString("// The term word, as DESIGN.md section 2 lays it out and internal/pack/term.go\n// defines it.\nconst (\n")
+	b.WriteString("// The term word, as DESIGN.md section 2 lays it out and internal/pack/term.go\n// defines it, and the image's header, as internal/pack/region.go does.\nconst (\n")
 	for _, c := range []struct {
 		name string
 		v    int64
@@ -117,6 +117,12 @@ func genTags() string {
 		{"bsBinary", BsBinary}, {"bsSkip", BsSkip}, {"bsGetTail", BsGetTail}, {"bsEqual", BsEqual},
 		{"bsLittle", BsLittle}, {"bsSigned", BsSigned},
 		{"markX", MarkX}, {"markY", MarkY},
+		{"imageMagic", ImageMagic}, {"headerLongs", HeaderLongs}, {"nameLenBits", NameLenBits},
+		{"regionMark0", RegionMark0}, {"regionMark1", RegionMark1}, {"regionMark2", RegionMark2}, {"regionMark3", RegionMark3},
+		{"imgMagic", ImgMagic}, {"imgTableID", ImgTableID}, {"imgLongs", ImgLongs}, {"imgEntry", ImgEntry},
+		{"imgEntryMod", ImgEntryMod}, {"imgEntryFun", ImgEntryFun}, {"imgEntryArity", ImgEntryArity},
+		{"imgLitEnd", ImgLitEnd}, {"imgCode", ImgCode}, {"imgFuncs", ImgFuncs}, {"imgFuns", ImgFuns},
+		{"imgLines", ImgLines}, {"imgStructs", ImgStructs}, {"imgAtoms", ImgAtoms}, {"imgFiles", ImgFiles},
 	} {
 		fmt.Fprintf(&b, "\t%s = %d\n", c.name, c.v)
 	}
