@@ -19,8 +19,8 @@
 // both to it.
 const (
 	arenaLongs     = arenaChecked
-	arenaChecked   = 57344 // 224 KB for the image and the heaps above it, since the image left the binary for it and gave 8 KB to the SD card's limit; before, 160 KB of heaps since M6b, 192 KB from the room before M6b, 128 KB from M4 until the room
-	arenaUnchecked = 70656 // 276 KB
+	arenaChecked   = 55552 // 217 KB for the image and the heaps above it, since the image left the binary for it, gave 8 KB to the SD card's limit and 7 KB to Erlang's stacktraces; before, 160 KB of heaps since M6b, 192 KB from the room before M6b, 128 KB from M4 until the room
+	arenaUnchecked = 69376 // 271 KB
 )
 
 const (

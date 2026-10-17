@@ -96,6 +96,17 @@ type sched struct {
 	bifTag    uint32 // an atom index when the reason is {Tag, bifReason}, else noTag
 	bifJump   uint32
 	bifLive   uint32
+	bifNum    uint32 // the BIF called last, whose frame a failure of it makes
+
+	// What an exception about to be raised has beside the stack: the first
+	// frame of its stacktrace, {M, F, Args, Where}, which a failing BIF, a
+	// function no clause of which matched and an undefined function make of
+	// themselves, or 0; whether the code offset where the process is is no
+	// frame then, the function being one not entered; and the stacktrace
+	// erlang:raise/3 was given, or 0.
+	head     uint32
+	headSkip bool
+	raiseRaw uint32
 
 	gcTo    uint32 // the new block's allocation pointer while a collection runs
 	gcFrom  uint32 // the old block

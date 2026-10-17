@@ -193,6 +193,7 @@ func hHalt(s *sched, pc uint32) uint32 { return 0 }
 
 // hFuncInfo is where a call lands when no clause of the function matched.
 func hFuncInfo(s *sched, pc uint32) uint32 {
+	xHead(s, code[pc+1], code[pc+2], code[pc+3], mkSmall(int32(pc)))
 	return raiseAtom(s, atomError, atomFunctionClause)
 }
 
@@ -566,6 +567,7 @@ func applyX(s *sched, a uint32) uint32 {
 	}
 	b, ok := bifByName(m, f, a)
 	if !ok {
+		xHead(s, m, f, a, nilTerm)
 		return raiseAtom(s, atomError, atomUndef)
 	}
 	for i := uint32(0); i < a; i++ {
@@ -592,9 +594,11 @@ func applyX(s *sched, a uint32) uint32 {
 // BIF itself: a chain of applies does not deepen the stack, and no BIF is a
 // caller of BIFs to the bound ogo reads off the listing.
 func callBif(s *sched, b, arity uint32) uint32 {
+	s.bifNum = b
 	r := bifs[b].f(s, arity)
 	for r == bifValue {
 		s.curLive = int32(s.nbargs)
+		s.bifNum = s.bifJump
 		r = bifs[s.bifJump].f(s, s.nbargs)
 	}
 	return r
@@ -730,6 +734,7 @@ func hRecvMarkerReserve(s *sched, pc uint32) uint32 {
 func hBif0(s *sched, pc uint32) uint32 {
 	s.nbargs = 0
 	s.curLive = -1
+	s.bifNum = code[pc+1]
 	r := bifs[code[pc+1]].f(s, 0)
 	if r == nonValue {
 		return bifRaise(s)
@@ -742,6 +747,7 @@ func hBif1(s *sched, pc uint32) uint32 {
 	s.bargs[0] = src(s, code[pc+3])
 	s.nbargs = 1
 	s.curLive = -1
+	s.bifNum = code[pc+2]
 	r := bifs[code[pc+2]].f(s, 1)
 	s.nbargs = 0
 	return bifDone(s, pc, r, code[pc+4], pc+5)
@@ -752,6 +758,7 @@ func hBif2(s *sched, pc uint32) uint32 {
 	s.bargs[1] = src(s, code[pc+4])
 	s.nbargs = 2
 	s.curLive = -1
+	s.bifNum = code[pc+2]
 	r := bifs[code[pc+2]].f(s, 2)
 	s.nbargs = 0
 	return bifDone(s, pc, r, code[pc+5], pc+6)
@@ -761,6 +768,7 @@ func hGcBif1(s *sched, pc uint32) uint32 {
 	s.bargs[0] = src(s, code[pc+4])
 	s.nbargs = 1
 	s.curLive = int32(code[pc+2])
+	s.bifNum = code[pc+3]
 	r := bifs[code[pc+3]].f(s, 1)
 	s.nbargs = 0
 	return bifDone(s, pc, r, code[pc+5], pc+6)
@@ -771,6 +779,7 @@ func hGcBif2(s *sched, pc uint32) uint32 {
 	s.bargs[1] = src(s, code[pc+5])
 	s.nbargs = 2
 	s.curLive = int32(code[pc+2])
+	s.bifNum = code[pc+3]
 	r := bifs[code[pc+3]].f(s, 2)
 	s.nbargs = 0
 	return bifDone(s, pc, r, code[pc+6], pc+7)
@@ -782,6 +791,7 @@ func hGcBif3(s *sched, pc uint32) uint32 {
 	s.bargs[2] = src(s, code[pc+6])
 	s.nbargs = 3
 	s.curLive = int32(code[pc+2])
+	s.bifNum = code[pc+3]
 	r := bifs[code[pc+3]].f(s, 3)
 	s.nbargs = 0
 	return bifDone(s, pc, r, code[pc+7], pc+8)
@@ -902,21 +912,14 @@ func hBuildStacktrace(s *sched, pc uint32) uint32 {
 	return pc + 1
 }
 
-// hRawRaise is erlang:raise/3: the class in x0, the reason in x1 and the
-// stacktrace, a list, in x2; a class that is none answers badarg in x0.
+// hRawRaise is erlang:raise/3 of a catch's stacktrace: the class in x0, the
+// reason in x1 and the stacktrace, raw as the catch had it, in x2; a class
+// that is none answers badarg in x0.
 func hRawRaise(s *sched, pc uint32) uint32 {
 	class := s.x[0]
 	if !isClass(class) {
 		s.x[0] = mkAtom(atomBadarg)
 		return pc + 1
 	}
-	if !ensure(s, 3, 3) {
-		return raiseAtom(s, atomError, atomSystemLimit)
-	}
-	i := s.cur.htop
-	arena[i] = mkHeader(hdrTuple, 2)
-	arena[i+1] = class
-	arena[i+2] = s.x[2]
-	s.cur.htop += 3
-	return throw(s, class, s.x[1], mkBoxed(i))
+	return throw(s, class, s.x[1], s.x[2])
 }

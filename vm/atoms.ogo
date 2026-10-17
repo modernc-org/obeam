@@ -165,4 +165,8 @@ const (
 	atomStep             = 159
 	atomNil              = 160
 	atomFunctionExported = 161
+	atomErrorInfo        = 162
+	atomModule           = 163
+	atomErlErtsErrors    = 164
+	atomErlStdlibErrors  = 165
 )

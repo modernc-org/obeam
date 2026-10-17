@@ -939,6 +939,17 @@ func bifApply3(s *sched, n uint32) uint32 {
 		s.bifJump = i
 		return bifValue
 	}
+	// The stacktrace begins with the function that is not there.
+	if ensure(s, 5, s.curLive) {
+		i := s.cur.htop
+		arena[i] = mkHeader(hdrTuple, 4)
+		arena[i+1] = s.bargs[0]
+		arena[i+2] = s.bargs[1]
+		arena[i+3] = s.bargs[2]
+		arena[i+4] = nilTerm
+		s.cur.htop += 5
+		s.head = mkBoxed(i)
+	}
 	return failAtom(s, atomUndef)
 }
 
@@ -1016,6 +1027,7 @@ func bifRaise3(s *sched, n uint32) uint32 {
 	if !isClass(s.bargs[0]) {
 		return mkAtom(atomBadarg)
 	}
+	s.raiseRaw = s.bargs[2]
 	return failWith(s, atomIdx(s.bargs[0]), s.bargs[1])
 }
 

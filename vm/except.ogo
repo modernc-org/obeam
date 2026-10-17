@@ -9,7 +9,10 @@
 // a term and the collector passes over both. An exception unwinds the stack
 // to the innermost tag and goes on at its handler with x1 the class, x2 the
 // reason and x3 the raw stacktrace, which is {Class, [Offset, ...]}, the
-// code offsets of the frames, built into Erlang's list only when asked.
+// code offsets of the frames, or {Class, [Offset, ...], Head} with the first
+// frame of its own a failing BIF, a function no clause of which matched or
+// an undefined function made, {M, F, Args, Where}: built into Erlang's list
+// only when asked.
 
 const noTag = 0xffffffff
 
@@ -38,13 +41,77 @@ func failTagged(s *sched, tag, v uint32) uint32 {
 	return nonValue
 }
 
-// bifRaise raises what a BIF failed with.
+// bifRaise raises what a BIF failed with: the stacktrace erlang:raise/3 was
+// given, or the stack's with the BIF's own frame first.
 func bifRaise(s *sched) uint32 {
+	if raw := s.raiseRaw; raw != 0 {
+		s.raiseRaw = 0
+		return throw(s, mkAtom(s.bifClass), s.bifReason, raw)
+	}
+	if s.head == 0 {
+		bifHead(s)
+	}
 	if tag := s.bifTag; tag != noTag {
 		s.bifTag = noTag
 		return raiseTagged(s, s.bifClass, tag, s.bifReason)
 	}
 	return raise(s, mkAtom(s.bifClass), s.bifReason)
+}
+
+// bifHead makes the frame of the BIF that failed, {M, F, Args,
+// error_info}, unless it is one that raises, whose stacktrace begins where it
+// was called, or one whose names are no well-known atoms.
+func bifHead(s *sched) {
+	b := s.bifNum
+	switch b {
+	case bixError1, bixError2, bixExit1, bixThrow, bixRaise3:
+		return
+	}
+	nm := bifNames[b]
+	if nm.module == noAtom || nm.function == noAtom {
+		return
+	}
+	n := uint32(bifs[b].arity)
+	class, tag := s.bifClass, s.bifTag
+	s.bargs[n] = s.bifReason
+	s.nbargs = n + 1
+	ok := ensure(s, 2*n+5, 0)
+	s.bifClass, s.bifReason, s.bifTag = class, s.bargs[n], tag
+	s.nbargs = 0
+	if ok {
+		setHead(s, mkAtom(nm.module), mkAtom(nm.function), s.bargs[:n], mkAtom(atomErrorInfo), false)
+	}
+}
+
+// xHead makes the frame of a function called with its n arguments in the X
+// registers and not entered, Where a code offset for one no clause of which
+// matched, [] for one that is not there.
+func xHead(s *sched, m, f, n, where uint32) {
+	if ensure(s, 2*n+5, int32(n)) {
+		setHead(s, m, f, s.x[:n], where, true)
+	}
+}
+
+// setHead makes the head of the arguments, the room for it made.
+func setHead(s *sched, m, f uint32, args []uint32, where uint32, skip bool) {
+	p := s.cur
+	l := uint32(nilTerm)
+	for k := len(args) - 1; k >= 0; k-- {
+		i := p.htop
+		arena[i] = args[k]
+		arena[i+1] = l
+		p.htop += 2
+		l = mkCons(i)
+	}
+	i := p.htop
+	arena[i] = mkHeader(hdrTuple, 4)
+	arena[i+1] = m
+	arena[i+2] = f
+	arena[i+3] = l
+	arena[i+4] = where
+	p.htop += 5
+	s.head = mkBoxed(i)
+	s.headSkip = skip
 }
 
 func failAtom(s *sched, reason uint32) uint32 { return failWith(s, atomError, mkAtom(reason)) }
@@ -90,7 +157,8 @@ func throw(s *sched, class, reason, raw uint32) uint32 {
 	p := s.cur
 	if raw == 0 {
 		s.bargs[0] = reason
-		s.nbargs = 1
+		s.bargs[1] = s.head
+		s.nbargs = 2
 		raw = buildRaw(s, class)
 		reason = s.bargs[0]
 		s.nbargs = 0
@@ -98,7 +166,17 @@ func throw(s *sched, class, reason, raw uint32) uint32 {
 			raw = nilTerm
 		}
 	}
+	s.head = 0
+	s.headSkip = false
 	if p.catches == 0 {
+		// The stacktrace is made once, for the report and the exit reason.
+		s.bargs[0] = reason
+		s.nbargs = 1
+		if stk := stackList(s, raw, 0); stk != nonValue {
+			raw = stk
+		}
+		reason = s.bargs[0]
+		s.nbargs = 0
 		// An exit nothing catches is how a process ends, which Erlang does
 		// not log; an error or a throw is a crash, which it does, as the
 		// shell does for its own process, whose part the entry process has.
@@ -130,13 +208,15 @@ func throw(s *sched, class, reason, raw uint32) uint32 {
 }
 
 // frames collects the code offsets of the running process's frames: where it
-// is, then the continuation it holds unless the frame holds it already, then
-// the stack's, traceDepth at most.
-func frames(s *sched, offs *[traceDepth]uint32) int {
+// is, unless that is a function not entered, then the continuation it holds
+// unless the frame holds it already, then the stack's, max at most.
+func frames(s *sched, offs *[traceDepth]uint32, max int) int {
 	p := s.cur
 	n := 0
-	offs[n] = p.pc
-	n++
+	if !s.headSkip {
+		offs[n] = p.pc
+		n++
+	}
 	end := p.blockEnd()
 	first := uint32(0)
 	for i := p.stop; i < end; i++ {
@@ -145,11 +225,11 @@ func frames(s *sched, offs *[traceDepth]uint32) int {
 			break
 		}
 	}
-	if p.cp != 0 && p.cp != first && n < traceDepth {
+	if p.cp != 0 && p.cp != first && n < max {
 		offs[n] = p.cp
 		n++
 	}
-	for i := p.stop; i < end && n < traceDepth; i++ {
+	for i := p.stop; i < end && n < max; i++ {
 		if w := arena[i]; isCP(w) && cpOf(w) != 0 {
 			offs[n] = cpOf(w)
 			n++
@@ -159,13 +239,20 @@ func frames(s *sched, offs *[traceDepth]uint32) int {
 }
 
 // buildRaw makes the raw stacktrace of where the process is, {Class, [Offset,
-// ...]}, on its heap, or answers nonValue when there is no room.
+// ...]}, with the head bargs[1] holds, {Class, [Offset, ...], Head}, the head
+// one of the traceDepth frames; on its heap, or answers nonValue when there is
+// no room.
 func buildRaw(s *sched, class uint32) uint32 {
-	if !ensure(s, 3+2*traceDepth, 0) {
+	if !ensure(s, 4+2*traceDepth, 0) {
 		return nonValue
 	}
+	head := s.bargs[1]
+	max := traceDepth
+	if head != 0 {
+		max--
+	}
 	var offs [traceDepth]uint32
-	n := frames(s, &offs)
+	n := frames(s, &offs, max)
 	p := s.cur
 	l := uint32(nilTerm)
 	for k := n - 1; k >= 0; k-- {
@@ -176,17 +263,23 @@ func buildRaw(s *sched, class uint32) uint32 {
 		l = mkCons(i)
 	}
 	i := p.htop
-	arena[i] = mkHeader(hdrTuple, 2)
+	if head == 0 {
+		arena[i] = mkHeader(hdrTuple, 2)
+		p.htop += 3
+	} else {
+		arena[i] = mkHeader(hdrTuple, 3)
+		arena[i+3] = head
+		p.htop += 4
+	}
 	arena[i+1] = class
 	arena[i+2] = l
-	p.htop += 3
 	return mkBoxed(i)
 }
 
 // rawClass returns the class of a raw stacktrace, and whether the term is
 // one.
 func rawClass(raw uint32) (uint32, bool) {
-	if !isTuple(raw) || tupleArity(raw) != 2 || !isClass(tupleElem(raw, 1)) {
+	if !isTuple(raw) || tupleArity(raw) < 2 || tupleArity(raw) > 3 || !isClass(tupleElem(raw, 1)) {
 		return 0, false
 	}
 	return tupleElem(raw, 1), true
@@ -203,28 +296,40 @@ func frameLine(off uint32, first bool) (uint32, uint32, bool) {
 }
 
 // stackList turns a raw stacktrace into Erlang's list of {M, F, A, [{file,
-// F}, {line, L}]}, on the heap, with live X registers and the caller's bargs
-// as roots; a stacktrace that is a list already is answered as it is, and
-// nonValue says there was no room. It keeps the stacktrace in the bargs
-// after the caller's while it makes room, and leaves the caller's as they
-// were.
+// F}, {line, L}]}, its head first, on the heap, with live X registers and the
+// caller's bargs as roots; a stacktrace that is a list already is answered
+// as it is, and nonValue says there was no room. It keeps the stacktrace in
+// the bargs after the caller's while it makes room, and leaves the caller's
+// as they were.
 func stackList(s *sched, raw uint32, live int32) uint32 {
-	if !isTuple(raw) || tupleArity(raw) != 2 {
+	if !isTuple(raw) || tupleArity(raw) < 2 {
 		return raw
 	}
 	offs := tupleElem(raw, 2)
-	if !isCons(offs) || !isSmall(arena[consIdx(offs)]) {
+	if offs != nilTerm && (!isCons(offs) || !isSmall(arena[consIdx(offs)])) {
 		return offs
 	}
-	need := uint32(0)
+	// The first offset is an instruction, unless the head is a function's
+	// not entered, after which the offsets are all return addresses.
+	head, where := uint32(0), uint32(0)
 	first := true
-	for t := offs; isCons(t); t = arena[consIdx(t)+1] {
-		off := uint32(smallVal(arena[consIdx(t)]))
-		need += 5 + 2 + 2 + 3 + 2 + 3
-		if file, _, ok := frameLine(off, first); ok {
+	need := uint32(0)
+	if tupleArity(raw) == 3 {
+		head = tupleElem(raw, 3)
+		where = tupleElem(head, 4)
+		first = where == mkAtom(atomErrorInfo)
+		need += 7 + 8
+		if file, _, ok := frameLine(uint32(smallVal(where)), true); isSmall(where) && ok {
 			need += 2 * uint32(nameLen(file))
 		}
-		first = false
+	}
+	for t, f := offs, first; isCons(t); t = arena[consIdx(t)+1] {
+		off := uint32(smallVal(arena[consIdx(t)]))
+		need += 5 + 2 + 2 + 3 + 2 + 3
+		if file, _, ok := frameLine(off, f); ok {
+			need += 2 * uint32(nameLen(file))
+		}
+		f = false
 	}
 	k := s.nbargs
 	s.bargs[k] = raw
@@ -241,50 +346,86 @@ func stackList(s *sched, raw uint32, live int32) uint32 {
 		o[n] = uint32(smallVal(arena[consIdx(t)]))
 		n++
 	}
-	p := s.cur
 	l := uint32(nilTerm)
 	for k := n - 1; k >= 0; k-- {
 		m, f, a, ok := funcAt(o[k])
 		if !ok {
 			continue
 		}
+		l = framed(s, m, f, mkSmall(int32(a)), locList(s, o[k], k == 0 && first), l)
+	}
+	if head != 0 {
+		head = tupleElem(raw, 3)
+		where = tupleElem(head, 4)
 		loc := uint32(nilTerm)
-		if file, line, ok := frameLine(o[k], k == 0); ok {
-			// [{file, "f.erl"}, {line, N}]
+		switch {
+		case isSmall(where):
+			loc = locList(s, uint32(smallVal(where)), true)
+		case where == mkAtom(atomErrorInfo):
+			// [{error_info, #{module => erl_erts_errors}}], OTP's for a
+			// BIF of erlang's, erl_stdlib_errors for another's.
+			mod := mkAtom(atomErlErtsErrors)
+			if tupleElem(head, 1) != mkAtom(atomErlang) {
+				mod = mkAtom(atomErlStdlibErrors)
+			}
+			p := s.cur
 			i := p.htop
-			arena[i] = mkHeader(hdrTuple, 2)
-			arena[i+1] = mkAtom(atomLine)
-			arena[i+2] = mkSmall(int32(line))
-			p.htop += 3
-			lineT := mkBoxed(i)
-			str := nameList(s, file)
-			i = p.htop
-			arena[i] = mkHeader(hdrTuple, 2)
-			arena[i+1] = mkAtom(atomFile)
-			arena[i+2] = str
-			p.htop += 3
-			fileT := mkBoxed(i)
-			i = p.htop
-			arena[i] = lineT
-			arena[i+1] = nilTerm
-			arena[i+2] = fileT
-			arena[i+3] = mkCons(i)
-			p.htop += 4
-			loc = mkCons(i + 2)
+			arena[i] = mkHeader(hdrMap, 2)
+			arena[i+1] = mkAtom(atomModule)
+			arena[i+2] = mod
+			arena[i+3] = mkHeader(hdrTuple, 2)
+			arena[i+4] = mkAtom(atomErrorInfo)
+			arena[i+5] = mkBoxed(i)
+			arena[i+6] = mkBoxed(i + 3)
+			arena[i+7] = nilTerm
+			p.htop += 8
+			loc = mkCons(i + 6)
 		}
-		i := p.htop
-		arena[i] = mkHeader(hdrTuple, 4)
-		arena[i+1] = m
-		arena[i+2] = f
-		arena[i+3] = mkSmall(int32(a))
-		arena[i+4] = loc
-		p.htop += 5
-		arena[i+5] = mkBoxed(i)
-		arena[i+6] = l
-		p.htop += 2
-		l = mkCons(i + 5)
+		l = framed(s, tupleElem(head, 1), tupleElem(head, 2), tupleElem(head, 3), loc, l)
 	}
 	return l
+}
+
+// framed puts a frame {M, F, A, Loc} before the list l; the room is made.
+func framed(s *sched, m, f, a, loc, l uint32) uint32 {
+	p := s.cur
+	i := p.htop
+	arena[i] = mkHeader(hdrTuple, 4)
+	arena[i+1] = m
+	arena[i+2] = f
+	arena[i+3] = a
+	arena[i+4] = loc
+	arena[i+5] = mkBoxed(i)
+	arena[i+6] = l
+	p.htop += 7
+	return mkCons(i + 5)
+}
+
+// locList makes a frame's location, [{file, "f.erl"}, {line, N}], or [] when
+// the line table does not say; the room is made.
+func locList(s *sched, off uint32, first bool) uint32 {
+	file, line, ok := frameLine(off, first)
+	if !ok {
+		return nilTerm
+	}
+	p := s.cur
+	i := p.htop
+	arena[i] = mkHeader(hdrTuple, 2)
+	arena[i+1] = mkAtom(atomLine)
+	arena[i+2] = mkSmall(int32(line))
+	p.htop += 3
+	lineT := mkBoxed(i)
+	str := nameList(s, file)
+	i = p.htop
+	arena[i] = mkHeader(hdrTuple, 2)
+	arena[i+1] = mkAtom(atomFile)
+	arena[i+2] = str
+	arena[i+3] = lineT
+	arena[i+4] = nilTerm
+	arena[i+5] = mkBoxed(i)
+	arena[i+6] = mkCons(i + 3)
+	p.htop += 7
+	return mkCons(i + 5)
 }
 
 // nameList makes a list of a name's bytes on the heap; the room is made.
@@ -302,43 +443,136 @@ func nameList(s *sched, nm uint32) uint32 {
 }
 
 // report writes what the shell would of an exception nothing caught: the
-// class, the reason explained, and the frames, under the output's lock.
-func report(s *sched, class, reason, raw uint32) {
+// class, the reason explained, and the frames of the stacktrace, a list, as
+// stackList makes it, under the output's lock. A first frame with arguments
+// is a BIF's, which the shell writes with the call, or a function's no
+// clause of which matched, or one that is not there, which the explanation
+// names.
+func report(s *sched, class, reason, stk uint32) {
 	lock(lockOut)
 	emits(s, "** exception ")
 	emitName(s, atomName(class))
 	emits(s, ": ")
 	explain(s, reason)
-	if isTuple(raw) && tupleArity(raw) == 2 {
-		first := true
-		for t := tupleElem(raw, 2); isCons(t); t = arena[consIdx(t)+1] {
-			off := uint32(smallVal(arena[consIdx(t)]))
-			m, f, a, ok := funcAt(off)
-			if !ok {
-				continue
-			}
-			if first {
-				emits(s, "\n     in function  ")
+	in := "\n     in function  "
+	if fr, ok := frameAt(stk); ok && isList(tupleElem(fr, 3)) {
+		m, f, args := tupleElem(fr, 1), tupleElem(fr, 2), tupleElem(fr, 3)
+		n := int(listLen(args))
+		switch reason {
+		case mkAtom(atomFunctionClause):
+			emit(s, ' ')
+			writeCall(s, m, f, args)
+			writeLoc(s, tupleElem(fr, 4))
+		case mkAtom(atomUndef):
+			emit(s, ' ')
+			writeMFA(s, m, f, n)
+		default:
+			if i := atomIdx(f); isAtom(f) && n <= 2 && (i >= atomNot && i <= atomSubtract || i == atomFdiv) {
+				// An operator is written as it is, div as div, not 'div'.
+				emits(s, "\n     in operator  ")
+				emitName(s, atomName(f))
+				emit(s, '/')
+				writeInt(s, int64(n))
+				emits(s, "\n        called as ")
+				if n == 2 {
+					writeTerm(s, arena[consIdx(args)], false)
+					emit(s, ' ')
+					args = arena[consIdx(args)+1]
+				}
+				emitName(s, atomName(f))
+				emit(s, ' ')
+				writeTerm(s, arena[consIdx(args)], false)
 			} else {
-				emits(s, "\n     in call from ")
+				if m == mkAtom(atomErlang) {
+					m = 0
+				}
+				emits(s, in)
+				writeMFA(s, m, f, n)
+				emits(s, "\n        called as ")
+				writeCall(s, m, f, args)
 			}
-			writeAtom(s, m)
-			emit(s, ':')
-			writeAtom(s, f)
-			emit(s, '/')
-			writeInt(s, int64(a))
-			if file, line, ok := frameLine(off, first); ok {
-				emits(s, " (")
-				emitName(s, file)
-				emits(s, ", line ")
-				writeInt(s, int64(line))
-				emit(s, ')')
-			}
-			first = false
+			in = "\n     in call from "
 		}
+		stk = arena[consIdx(stk)+1]
+	}
+	for ; isCons(stk); stk = arena[consIdx(stk)+1] {
+		fr, ok := frameAt(stk)
+		if !ok {
+			continue
+		}
+		emits(s, in)
+		in = "\n     in call from "
+		a := tupleElem(fr, 3)
+		if isList(a) {
+			a = mkSmall(int32(listLen(a)))
+		}
+		writeMFA(s, tupleElem(fr, 1), tupleElem(fr, 2), int(smallVal(a)))
+		writeLoc(s, tupleElem(fr, 4))
 	}
 	emit(s, '\n')
 	unlock(lockOut)
+}
+
+// frameAt answers the frame a stacktrace begins with, {M, F, A, Loc}.
+func frameAt(stk uint32) (uint32, bool) {
+	if !isCons(stk) {
+		return 0, false
+	}
+	fr := arena[consIdx(stk)]
+	return fr, isTuple(fr) && tupleArity(fr) == 4
+}
+
+// writeMFA writes m:f/a, or f/a for m 0.
+func writeMFA(s *sched, m, f uint32, a int) {
+	if m != 0 {
+		writeAtom(s, m)
+		emit(s, ':')
+	}
+	writeAtom(s, f)
+	emit(s, '/')
+	writeInt(s, int64(a))
+}
+
+// writeCall writes m:f(A1,A2), or f(A1,A2) for m 0.
+func writeCall(s *sched, m, f, args uint32) {
+	if m != 0 {
+		writeAtom(s, m)
+		emit(s, ':')
+	}
+	writeAtom(s, f)
+	emit(s, '(')
+	for t := args; isCons(t); t = arena[consIdx(t)+1] {
+		if t != args {
+			emit(s, ',')
+		}
+		writeTerm(s, arena[consIdx(t)], false)
+	}
+	emit(s, ')')
+}
+
+// writeLoc writes a frame's location, " (f.erl, line N)", when it has one.
+func writeLoc(s *sched, loc uint32) {
+	file, line := uint32(0), uint32(0)
+	for ; isCons(loc); loc = arena[consIdx(loc)+1] {
+		if e := arena[consIdx(loc)]; isTuple(e) && tupleArity(e) == 2 {
+			switch tupleElem(e, 1) {
+			case mkAtom(atomFile):
+				file = tupleElem(e, 2)
+			case mkAtom(atomLine):
+				line = tupleElem(e, 2)
+			}
+		}
+	}
+	if file == 0 || !isSmall(line) {
+		return
+	}
+	emits(s, " (")
+	for ; isCons(file); file = arena[consIdx(file)+1] {
+		emit(s, byte(smallVal(arena[consIdx(file)])))
+	}
+	emits(s, ", line ")
+	writeInt(s, int64(smallVal(line)))
+	emit(s, ')')
 }
 
 // explain writes a reason as the shell explains the ones it knows.

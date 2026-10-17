@@ -41,11 +41,12 @@ var (
 )
 
 // withoutReports drops the VM's reports of crashes from what it printed: the
-// lines of "** exception" and of the frames under them.
+// lines of "** exception" and of the frames under them, a BIF's call among
+// them.
 func withoutReports(b []byte) []byte {
 	var r []byte
 	for _, line := range bytes.SplitAfter(b, []byte("\n")) {
-		if bytes.HasPrefix(line, []byte("** exception ")) || bytes.HasPrefix(line, []byte("     in ")) {
+		if bytes.HasPrefix(line, []byte("** exception ")) || bytes.HasPrefix(line, []byte("     in ")) || bytes.HasPrefix(line, []byte("        called as ")) {
 			continue
 		}
 		r = append(r, line...)
@@ -67,7 +68,7 @@ func TestErl(t *testing.T) {
 	if err != nil {
 		t.Skip("no erl on PATH")
 	}
-	for _, m := range []string{"hello", "fac", "fib", "lst", "tuples", "funs", "pingpong", "ring", "sieve", "counter", "exc", "links", "sup", "flt", "fmt", "mp", "bin", "listlib", "exits", "waits", "gs", "sv", "bench"} {
+	for _, m := range []string{"hello", "fac", "fib", "lst", "tuples", "funs", "pingpong", "ring", "sieve", "counter", "exc", "links", "sup", "flt", "fmt", "mp", "bin", "listlib", "exits", "waits", "gs", "sv", "stacks", "bench"} {
 		t.Run(m, func(t *testing.T) {
 			var files []string
 			for _, mod := range append([]string{m}, uses[m]...) {

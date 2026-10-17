@@ -88,6 +88,8 @@ var WellKnownAtoms = []string{
 	// Elixir's nil, which to_string writes as nothing and inspect as it is.
 	"nil",
 	"function_exported",
+	// A stacktrace's first frame of a BIF: [{error_info, #{module => M}}].
+	"error_info", "module", "erl_erts_errors", "erl_stdlib_errors",
 }
 
 // A Bif is a function the VM implements itself: what an import of it resolves

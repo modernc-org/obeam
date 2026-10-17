@@ -315,12 +315,15 @@ the tree or be ahead of what this file knows; do not install over it.
   in the top 16 KB while loading), which `TestBootable` in
   `internal/vmbin` holds both VMs to; a larger one does not boot, and the
   board, finding the file, answers no serial loader either (found
-  2026-10-17). The checked VM binary is 505,952 bytes, whatever the image,
-  the unchecked 506,796, 1,952 and 1,108 under; `make budget` says how far.
+  2026-10-17). The checked VM binary is 505,316 bytes, whatever the image,
+  the unchecked 505,880, 2,588 and 2,024 under; `make budget` says how far.
+  The arenas are 217 and 271 KB since the stacktraces' 6 KB of code. The
+  goroutine slots are 800 longs checked; a build with `--gostack N` shows
+  by the size how much of a growth is theirs.
   The next VM growth may take a kilobyte or two of the arenas. The arena is
-  224 KB (`arenaChecked`): the demo's image takes 69 KB of it and leaves
-  154 KB to the heaps, which `obeam` reports. The unchecked VM's arena is
-  276 KB (`arenaUnchecked`, which `make vms` swaps in, in a copy of the
+  217 KB (`arenaChecked`): the demo's image takes 69 KB of it and leaves
+  147 KB to the heaps, which `obeam` reports. The unchecked VM's arena is
+  271 KB (`arenaUnchecked`, which `make vms` swaps in, in a copy of the
   tree under `build/unchecked`).
 - **The board's slot**: p2-11's 32 GB card belongs there; the user's 4 GB
   card (FAT32, partition type 0x0b) is for OctoBeam's SD tests. With the
@@ -375,6 +378,15 @@ the tree or be ahead of what this file knows; do not install over it.
   which the test reports as `erl: exit status 1` for every module. Cap the
   compiler in a subshell, `(ulimit -v 4000000; ogo build .)`, and nothing
   else. Found 2026-10-16, twice, before the crash dump said why.
+- **A stacktrace's head**: a raw stacktrace is `{Class, Offsets}` or
+  `{Class, Offsets, {M, F, Args, Where}}`; `s.head` is made just before a
+  raise (`bifHead` in `bifRaise`, `xHead` at `func_info` and in `applyX`,
+  `bifApply3`), `throw` roots it in `bargs[1]` for `buildRaw` and clears it;
+  `s.headSkip` drops the frame of the pc, a function not entered. Every BIF
+  handler sets `s.bifNum`. `erlang:raise/3` leaves its stacktrace in
+  `s.raiseRaw`; `raw_raise`'s x2 is the raw stacktrace as it is. A crash
+  report is written from the list `stackList` makes, once, in `throw`.
+  `erl/stacks.erl` holds it all to `erl`.
 - **A receive of no clauses** (`receive after T -> ok end`, and `receive
   after infinity -> ok end`, which is a `wait`) is a wait whose label is
   itself: `allSeen` marks every message seen for it, or `sleep`, finding one

@@ -40,6 +40,10 @@ The first release.
   simple_one_for_one; permanent, transient and temporary children and their
   shutdown; the restart intensity; start_child, terminate_child,
   restart_child, delete_child, which_children and count_children.
+- **Stacktraces as OTP's**: a failing BIF's or operator's own frame with its
+  arguments and `error_info`, a `function_clause`'s and an `undef`'s with the
+  function's arguments, and `erlang:raise/3` keeping the stacktrace it is
+  given; a crash report writes the call as the shell does.
 - **`examples/leds.beam`**: "let it crash" on a P2-EDGE's two LEDs, a blinker
   for each under an OTP supervisor that starts a new one when its bug crashes
   it.

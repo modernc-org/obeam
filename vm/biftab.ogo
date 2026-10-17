@@ -3,7 +3,7 @@
 // TableID is the fingerprint of the well-known atoms and the BIFs, which an
 // image must carry too: one packed before the tables changed calls BIFs by
 // numbers that are no longer theirs.
-const TableID = 0x924592a0
+const TableID = 0x85238351
 
 // nBifs is how many BIFs there are.
 const nBifs = 135

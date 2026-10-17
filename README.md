@@ -66,7 +66,7 @@ of another OTP release may use an instruction OctoBeam does not know yet, and
 
    ```
    $ obeam run examples/hello.beam
-   obeam: hello.binary: hello:main/0, the VM checked; the image 490 longs, 12 of them code; 222 KB of the arena left for the heaps
+   obeam: hello.binary: hello:main/0, the VM checked; the image 490 longs, 12 of them code; 215 KB of the arena left for the heaps
    obeam: loading hello.binary; Ctrl-] leaves the terminal
    ( Entering terminal mode.  Press Ctrl-] or Ctrl-Z to exit. )
    obeam: hello:main/0, 12 longs of code, 7 schedulers
@@ -168,14 +168,14 @@ shim's named there, `{gen_server, start_link, ...}`, is not packed.
 Not yet: bignums, bitstrings that are not whole bytes, OTP's other
 behaviours (`gen_statem`, `gen_event` and the like) and the `sys` and
 `proc_lib` sides of `gen_server` and `supervisor`, `~p`'s line breaking, and OTP's and Elixir's
-libraries beyond the shims. A stacktrace's first frame, for an error in a
-BIF or a `function_clause`, is the caller's, with its arity, where Erlang's
-is the BIF's or the function's, with its arguments. A map with atom
+libraries beyond the shims. The functions of OTP's `lists` that the VM has
+as BIFs, `reverse`, `member` and `keyfind`, fail as BIFs do, with `badarg`,
+where OTP's `reverse` fails with a `function_clause` of its own. A map with atom
 keys prints its keys in term order, where `erl` and `elixir` print them in
 the order of their atom tables, and a map of more than 32 keys in term
-order, where OTP prints its hash trie's. The arena is 224 KB (276 KB
+order, where OTP prints its hash trie's. The arena is 217 KB (271 KB
 unchecked), the image at its bottom and the process heaps above, so the
-demo's image of 69 KB leaves its heaps 154 KB and a hello, world 222 KB; the
+demo's image of 69 KB leaves its heaps 147 KB and a hello, world 215 KB; the
 VM is no larger than the 496 KB the P2's ROM boots from an SD card. A
 process's stack is bounded by its largest heap block, 8,192 longs, so a
 recursion 20,000 deep that Erlang takes ends here in `system_limit`; write it
@@ -206,7 +206,7 @@ them, on seven scheduler cogs, running modules compiled by `erlc` and
   caught by `try` and `catch`, floats, binaries and their matching, maps,
   135 BIFs, `io:format` with its widths and precisions, Elixir's `inspect`,
   and the exception reports. It is Go once given a package clause, and the
-  tests run it so, on seven goroutines, against `erl` and `elixir`: twenty-three
+  tests run it so, on seven goroutines, against `erl` and `elixir`: twenty-four
   Erlang modules of the corpus, from `hello` to a ring of a hundred processes,
   a server with timeouts, linked workers, a process linked to fifty, `try`
   and `catch`, floats, maps and binary parsers, and the seven Elixir ones,
@@ -234,9 +234,9 @@ them, on seven scheduler cogs, running modules compiled by `erlc` and
   hundred processes, string interpolation of every kind, and maps, structs
   and ranges, held to what `elixir` prints; `ex/shim/` the parts of Elixir's
   `Enum` and `Map` they use, in Erlang.
-- `erl/`: the corpus, twenty-eight small Erlang modules from `hello` to a
+- `erl/`: the corpus, twenty-nine small Erlang modules from `hello` to a
   process ring, a concurrent prime sieve, linked workers, exit reasons,
-  timeouts, floats, maps, binary parsers, OTP's `lists`, `gen_server` and
+  stacktraces, timeouts, floats, maps, binary parsers, OTP's `lists`, `gen_server` and
   `supervisor`, and `blink` and `leds` for the board's LEDs, compiled with
   OTP 27 and committed; `erl/shim/` OTP's `gen_server`, `supervisor`,
   `lists` and the functions of `maps` that take a fun;

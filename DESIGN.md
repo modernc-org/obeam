@@ -952,3 +952,28 @@ label is itself: the fix of the waits of no clauses covers `wait` too now,
 and `waits.erl` a process that waits so and is sent a message, which hung
 the twin without it. The VMs are 505,952 and 506,796 bytes, 1,952 and
 1,108 under the limit.
+
+**Stacktraces as OTP's**, 2026-10-17, after the ogo session confirmed that
+nothing of ogo's in progress touches them or the VM's size. A raw stacktrace
+may carry a head now, {Class, [Offset, ...], {M, F, Args, Where}}, the first
+frame a failing BIF makes of itself (`bifHead`, from `bifNum`, the BIF the
+handler called, and its arguments in `bargs`; none for error, exit, throw
+and raise), a function no clause of which matched (`xHead` at `func_info`,
+its arguments in the X registers) and an undefined function (`applyX`,
+`apply/3`); `stackList` makes OTP's frame of it, `[{error_info, #{module =>
+erl_erts_errors}}]` for a BIF of erlang's, the head's file and line for a
+clause, `[]` for an undef. The first frame had been the function before the
+callee in the code, for a function_clause, its `func_info` being before its
+entry label. Two faults went with it: `raw_raise` wrapped the raw
+stacktrace it was given in another, so that a re-raise caught gave a tuple
+for a stacktrace, and `erlang:raise/3` called by name, as the shims call
+it, raised with the stack of where it was called. A crash report is
+written from the list now, a BIF's call as the shell writes it, `in
+operator  div/2` and `called as 1 div 0`, and after a re-raise it names the
+crash's place. `erl/stacks.erl` holds sixteen cases to `erl`, 32 lines, in
+the twin and on the board in both builds, and `exits.erl` takes back its
+BIF and function_clause cases. It cost 6 KB of code checked and 4 KB
+unchecked, the goroutines' slots 16 longs more (measured by building with
+`--gostack 784`), so the arenas gave 7 and 5 KB: 217 and 271 KB, the VMs
+505,316 and 505,880 bytes, 2,588 and 2,024 under the limit, the demo's heaps
+147 KB and 201 KB.
