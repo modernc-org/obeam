@@ -315,8 +315,8 @@ the tree or be ahead of what this file knows; do not install over it.
   in the top 16 KB while loading), which `TestBootable` in
   `internal/vmbin` holds both VMs to; a larger one does not boot, and the
   board, finding the file, answers no serial loader either (found
-  2026-10-17). The checked VM binary is 505,900 bytes, whatever the image,
-  the unchecked 506,728, 2,004 and 1,176 under; `make budget` says how far.
+  2026-10-17). The checked VM binary is 505,952 bytes, whatever the image,
+  the unchecked 506,796, 1,952 and 1,108 under; `make budget` says how far.
   The next VM growth may take a kilobyte or two of the arenas. The arena is
   224 KB (`arenaChecked`): the demo's image takes 69 KB of it and leaves
   154 KB to the heaps, which `obeam` reports. The unchecked VM's arena is
@@ -375,10 +375,11 @@ the tree or be ahead of what this file knows; do not install over it.
   which the test reports as `erl: exit status 1` for every module. Cap the
   compiler in a subshell, `(ulimit -v 4000000; ogo build .)`, and nothing
   else. Found 2026-10-16, twice, before the crash dump said why.
-- **A receive of no clauses** (`receive after T -> ok end`) is a
-  `wait_timeout` whose label is itself: `hWaitTimeout` marks every message
-  seen for it, or `sleep`, finding one unseen, answers the label and the
-  process goes round in one turn for ever. A receive's timeout is `armed`
+- **A receive of no clauses** (`receive after T -> ok end`, and `receive
+  after infinity -> ok end`, which is a `wait`) is a wait whose label is
+  itself: `allSeen` marks every message seen for it, or `sleep`, finding one
+  unseen, answers the label and the process goes round in one turn for
+  ever. A receive's timeout is `armed`
   at its first wait and disarmed when it takes a message or times out.
   `stackList` keeps the caller's `bargs` (found 2026-10-17 by `erl/leds.erl`,
   held by `erl/exits.erl` and `erl/waits.erl`; `reports` in
@@ -388,7 +389,11 @@ the tree or be ahead of what this file knows; do not install over it.
   (`spawn_link(fun() -> init_it(...) end)`): a library is packed by what
   the program reaches, and `spawn(M, F, A)` with atoms reaches nothing, so
   the function would be left out and the spawn fail with `undef`
-  (`gen_server`, 2026-10-17). `TestErl` reads the corpus through
+  (`gen_server`, 2026-10-17). A shim that is a behaviour's callback module
+  has the same trouble, its callbacks being called by name: `supervisor`
+  runs its own loop and answers `gen_server:call` itself; and a child
+  spec's start function, called by `apply`, must be the program's own.
+  `TestErl` reads the corpus through
   `OBEAM_ROOT`, which go test's cache does not see: `-count=1` after a
   `.beam` changes.
 - A process's turn ends only at a call (`jump`) or a `receive` that waits;

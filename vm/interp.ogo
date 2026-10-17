@@ -672,6 +672,7 @@ func hRemoveMessage(s *sched, pc uint32) uint32 {
 }
 
 func hWait(s *sched, pc uint32) uint32 {
+	allSeen(s, pc)
 	return sleep(s, code[pc+1], false, 0, 0)
 }
 
@@ -679,23 +680,29 @@ func hWait(s *sched, pc uint32) uint32 {
 // being no time.
 func hWaitTimeout(s *sched, pc uint32) uint32 {
 	t := src(s, code[pc+2])
+	allSeen(s, pc)
 	if t == mkAtom(atomInfinity) {
 		return sleep(s, code[pc+1], false, 0, 0)
 	}
 	if !isSmall(t) || smallVal(t) < 0 {
 		return raiseAtom(s, atomError, atomTimeoutValue)
 	}
-	if code[pc+1] == pc {
-		// A receive of no clauses, an after alone, goes on waiting where
-		// it waits: no message is of interest to it, so all are seen, and
-		// one that came is not a reason to go on.
-		p := s.cur
-		lock(stripe(p))
-		p.mboxCur = noBlock
-		p.mboxPrev = p.mboxTail
-		unlock(stripe(p))
-	}
 	return sleep(s, code[pc+1], true, uint32(smallVal(t)), pc+3)
+}
+
+// allSeen marks every message seen when the wait at pc is a receive of no
+// clauses, an after alone, which goes on waiting where it waits: no message
+// is of interest to it, and one that came is not a reason to go on, as it
+// would be, for ever in one turn, for a receive whose label looks at it.
+func allSeen(s *sched, pc uint32) {
+	if code[pc+1] != pc {
+		return
+	}
+	p := s.cur
+	lock(stripe(p))
+	p.mboxCur = noBlock
+	p.mboxPrev = p.mboxTail
+	unlock(stripe(p))
 }
 
 // hTimeout is where a timed-out receive goes on: the mailbox is looked at

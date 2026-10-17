@@ -28,6 +28,7 @@ import (
 var (
 	uses = map[string][]string{
 		"bench": {"fib", "lst", "tuples", "pingpong", "ring", "sieve"},
+		"sv":    {"svw"},
 	}
 	exUses = map[string][]string{
 		"Maps": {"Point"},
@@ -36,7 +37,7 @@ var (
 	// reports names the modules whose spawned processes crash: erl logs
 	// that, if at all, in its own words, and the VM in the shell's, so what
 	// the VM prints of a crash is left out of the comparison.
-	reports = map[string]bool{"exits": true, "gs": true}
+	reports = map[string]bool{"exits": true, "gs": true, "sv": true}
 )
 
 // withoutReports drops the VM's reports of crashes from what it printed: the
@@ -66,7 +67,7 @@ func TestErl(t *testing.T) {
 	if err != nil {
 		t.Skip("no erl on PATH")
 	}
-	for _, m := range []string{"hello", "fac", "fib", "lst", "tuples", "funs", "pingpong", "ring", "sieve", "counter", "exc", "links", "sup", "flt", "fmt", "mp", "bin", "listlib", "exits", "waits", "gs", "bench"} {
+	for _, m := range []string{"hello", "fac", "fib", "lst", "tuples", "funs", "pingpong", "ring", "sieve", "counter", "exc", "links", "sup", "flt", "fmt", "mp", "bin", "listlib", "exits", "waits", "gs", "sv", "bench"} {
 		t.Run(m, func(t *testing.T) {
 			var files []string
 			for _, mod := range append([]string{m}, uses[m]...) {

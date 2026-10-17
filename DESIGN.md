@@ -932,3 +932,23 @@ reports left out. The VMs are 505,900 and 506,728 bytes, 2,004 and 1,176
 under the SD card's limit. After an exception raised again, the VM's report
 names the place of the raise, where the stacktrace it carries names the
 crash's.
+
+**supervisor**, 2026-10-17, a shim too, `erl/shim/supervisor.erl`: the
+four strategies, the three kinds of restart and the shutdowns, the restart
+intensity, and the children's API, held to OTP by `erl/sv.erl` with its
+workers in `erl/svw.erl`, 27 lines, in the twin and on the board in both
+builds. OTP's supervisor is a gen_server callback module; this one runs its
+own loop and answers `gen_server:call` itself, since a library is packed by
+reach and the callbacks gen_server calls by name would be left out. For the
+same reason a child's start function, called by `apply`, is to be the
+program's own, as OTP's examples have it. Its first fault, found by `sv`: a
+child that died was still running to the supervisor when the restart
+intensity shut the children down, and `shutdown` waited for the `'EXIT'`
+the loop had already taken. `leds.erl` runs on it now, its blinkers
+children of an OTP supervisor, ten crashes in ten seconds allowed: 13
+crashes and as many restarts in 70 s on the board. Its `main/0` waits with
+`receive after infinity -> ok end`, which erlc compiles to a `wait` whose
+label is itself: the fix of the waits of no clauses covers `wait` too now,
+and `waits.erl` a process that waits so and is sent a message, which hung
+the twin without it. The VMs are 505,952 and 506,796 bytes, 1,952 and
+1,108 under the limit.

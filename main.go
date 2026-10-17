@@ -30,9 +30,9 @@
 //
 // obeam carries the VM built twice, checked and unchecked, and the shims, the
 // Erlang modules that stand for the functions of OTP's and Elixir's libraries
-// the VM runs: gen_server, lists, maps, Enum, Map. The board needs nothing
-// else: the binary is the whole program, and the VM starts the entry
-// function as its first process when it is loaded.
+// the VM runs: gen_server, supervisor, lists, maps, Enum, Map. The board
+// needs nothing else: the binary is the whole program, and the VM starts
+// the entry function as its first process when it is loaded.
 //
 // For OctoBeam's developers there are also
 //

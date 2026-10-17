@@ -18,7 +18,8 @@ It runs a subset of Erlang and Elixir, in 512 KB: processes, messages,
 links, monitors, exceptions, floats, binaries and maps, but no bignums,
 floats of 32 bits, no distribution, and of OTP's and Elixir's libraries only
 what the VM's BIFs and the shims `obeam` carries do (`io:format`,
-`gen_server`, `lists`, `maps`, `Enum`, `Map` and more, listed below). `obeam` names what a program
+`gen_server`, `supervisor`, `lists`, `maps`, `Enum`, `Map` and more, listed
+below). `obeam` names what a program
 uses that the VM does not have, before anything runs.
 
 The repository you are currently viewing might be a mirror. Please review the
@@ -83,7 +84,8 @@ of another OTP release may use an instruction OctoBeam does not know yet, and
    ring of processes; `examples/leds.beam`, Erlang's "let it crash" to be
    seen: the P2-EDGE's two LEDs, on pins 56 and 57 (its DIP switch LED on),
    each blinked by a process with a bug that crashes it now and then, its LED
-   going out, and a supervisor that restarts it a second later, saying so;
+   going out, under an OTP supervisor that starts a new one, which keeps the
+   LED dark for a second and says so;
    and the whole demo, 26 modules of Erlang and Elixir: `obeam run -entry
    demo:main/0 examples/demo/*.beam`.
 4. **Write a program.** `hello.erl`:
@@ -155,13 +157,17 @@ and `String.Chars`. The shims `obeam` carries are Erlang modules for the
 rest of what programs reach for first: OTP's `gen_server` (start and
 start_link, named or not, call, cast, reply and stop, timeouts and
 `{continue, _}`, the optional callbacks, and a crash calling `terminate/2`),
-`lists` (`map`, `foldl`, `filter`, `seq`, `sort`, `zip`, `keysort` and
+`supervisor` (the four strategies, permanent, transient and temporary
+children, the restart intensity, and the children's API), `lists` (`map`, `foldl`, `filter`, `seq`, `sort`, `zip`, `keysort` and
 fifty-five more) and `maps`' functions that take a fun, and Elixir's `Enum`
-and `Map`. A program takes what it calls of them and nothing else.
+and `Map`. A program takes what it calls of them and nothing else, so a
+child spec's start function, which a supervisor calls by `apply`, is to be
+the program's own, as in OTP's examples (`{my_server, start_link, []}`): a
+shim's named there, `{gen_server, start_link, ...}`, is not packed.
 
 Not yet: bignums, bitstrings that are not whole bytes, OTP's other
-behaviours (`supervisor`, `gen_statem` and the like) and `gen_server`'s
-`sys` and `proc_lib` sides, `~p`'s line breaking, and OTP's and Elixir's
+behaviours (`gen_statem`, `gen_event` and the like) and the `sys` and
+`proc_lib` sides of `gen_server` and `supervisor`, `~p`'s line breaking, and OTP's and Elixir's
 libraries beyond the shims. A stacktrace's first frame, for an error in a
 BIF or a `function_clause`, is the caller's, with its arity, where Erlang's
 is the BIF's or the function's, with its arguments. A map with atom
@@ -200,7 +206,7 @@ them, on seven scheduler cogs, running modules compiled by `erlc` and
   caught by `try` and `catch`, floats, binaries and their matching, maps,
   135 BIFs, `io:format` with its widths and precisions, Elixir's `inspect`,
   and the exception reports. It is Go once given a package clause, and the
-  tests run it so, on seven goroutines, against `erl` and `elixir`: twenty-two
+  tests run it so, on seven goroutines, against `erl` and `elixir`: twenty-three
   Erlang modules of the corpus, from `hello` to a ring of a hundred processes,
   a server with timeouts, linked workers, a process linked to fifty, `try`
   and `catch`, floats, maps and binary parsers, and the seven Elixir ones,
@@ -228,12 +234,12 @@ them, on seven scheduler cogs, running modules compiled by `erlc` and
   hundred processes, string interpolation of every kind, and maps, structs
   and ranges, held to what `elixir` prints; `ex/shim/` the parts of Elixir's
   `Enum` and `Map` they use, in Erlang.
-- `erl/`: the corpus, twenty-six small Erlang modules from `hello` to a
+- `erl/`: the corpus, twenty-eight small Erlang modules from `hello` to a
   process ring, a concurrent prime sieve, linked workers, exit reasons,
-  timeouts, floats, maps, binary parsers, OTP's `lists` and `gen_server`,
-  and `blink` and `leds` for the board's LEDs, compiled with OTP 27 and
-  committed; `erl/shim/` OTP's `gen_server`, `lists` and the functions of
-  `maps` that take a fun;
+  timeouts, floats, maps, binary parsers, OTP's `lists`, `gen_server` and
+  `supervisor`, and `blink` and `leds` for the board's LEDs, compiled with
+  OTP 27 and committed; `erl/shim/` OTP's `gen_server`, `supervisor`,
+  `lists` and the functions of `maps` that take a fun;
   `erl/stats.txt` is the opcode and call histogram M0 measured over the
   first eleven.
 - `DESIGN.md`: how it is made, and what each milestone measured.

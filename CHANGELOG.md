@@ -36,6 +36,11 @@ The first release.
   reply and stop, timeouts and `{continue, _}`, the optional callbacks, a throw
   as a callback's result, and a crash calling `terminate/2`; and
   `erlang:function_exported/3`, which it asks.
+- **`supervisor`**, as a shim: one_for_one, one_for_all, rest_for_one and
+  simple_one_for_one; permanent, transient and temporary children and their
+  shutdown; the restart intensity; start_child, terminate_child,
+  restart_child, delete_child, which_children and count_children.
 - **`examples/leds.beam`**: "let it crash" on a P2-EDGE's two LEDs, a blinker
-  for each under a supervisor that restarts it when its bug crashes it.
+  for each under an OTP supervisor that starts a new one when its bug crashes
+  it.
 
