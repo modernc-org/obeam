@@ -39,6 +39,13 @@ type Options struct {
 	Entry string   // module:function/arity; the first module's main/0 by default
 	Lines bool     // keep the line table
 	Lib   []string // library modules: packed by what the program reaches, their exports no roots
+	Shims []Beam   // library modules in memory, as the obeam command carries its shims: one of a module given otherwise is left out
+}
+
+// A Beam is a .beam file's name and bytes.
+type Beam struct {
+	Name string
+	Data []byte
 }
 
 type fnKey struct {
@@ -87,6 +94,16 @@ type fixup struct {
 	label int
 }
 
+// has reports whether a module is among the files.
+func (p *packer) has(module string) bool {
+	for _, g := range p.files {
+		if g.Module == module {
+			return true
+		}
+	}
+	return false
+}
+
 // Pack packs the modules of the files into one image.
 func Pack(paths []string, opts Options) (*Image, error) {
 	if len(paths) == 0 {
@@ -113,11 +130,21 @@ func Pack(paths []string, opts Options) (*Image, error) {
 			return nil, err
 		}
 		p.lib[f] = i >= len(paths)
-		for _, g := range p.files {
-			if g.Module == f.Module {
-				return nil, fmt.Errorf("%s: module %s twice", path, f.Module)
-			}
+		if p.has(f.Module) {
+			return nil, fmt.Errorf("%s: module %s twice", path, f.Module)
 		}
+		p.files = append(p.files, f)
+		p.img.Modules = append(p.img.Modules, f.Module)
+	}
+	for _, b := range opts.Shims {
+		f, err := beam.Read(b.Name, b.Data)
+		if err != nil {
+			return nil, err
+		}
+		if p.has(f.Module) {
+			continue
+		}
+		p.lib[f] = true
 		p.files = append(p.files, f)
 		p.img.Modules = append(p.img.Modules, f.Module)
 	}

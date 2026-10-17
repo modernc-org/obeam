@@ -11,13 +11,21 @@
 // the arena in the VM's binary by the mark it begins with; the allocator has
 // the rest.
 
+// The arena's length. The unchecked VM is 52 KB smaller, and make vms builds
+// it from a copy of the tree in which arenaLongs is arenaUnchecked, so that
+// the room goes to the heaps.
 const (
-	arenaLongs = 59392 // 232 KB for the image and the heaps above it, since the image left the binary for it; before, 160 KB of heaps since M6b, 192 KB from the room before M6b, 128 KB from M4 until the room
-	minOrder   = 3     // 8 longs
-	maxOrder   = 13    // 8,192 longs
-	orders     = maxOrder - minOrder + 1
-	minBlock   = 1 << minOrder
-	noBlock    = 0xffffffff
+	arenaLongs     = arenaChecked
+	arenaChecked   = 59392 // 232 KB for the image and the heaps above it, since the image left the binary for it; before, 160 KB of heaps since M6b, 192 KB from the room before M6b, 128 KB from M4 until the room
+	arenaUnchecked = 72704 // 284 KB
+)
+
+const (
+	minOrder = 3  // 8 longs
+	maxOrder = 13 // 8,192 longs
+	orders   = maxOrder - minOrder + 1
+	minBlock = 1 << minOrder
+	noBlock  = 0xffffffff
 )
 
 var (

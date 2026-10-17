@@ -2,6 +2,8 @@
 
 *Eight cogs. Seven schedulers. One tiny BEAM.*
 
+*For M. G., who likes Erlang — from a fan of Go. We both like the Propeller 2.*
+
 # OctoBeam
 
 OctoBeam is a BEAM, the Erlang virtual machine, for the
@@ -12,34 +14,177 @@ seven of them. Its short name, the repository's and the host tool's, is
 `obeam`, as OctoGo's is `ogo`. It is the second program of size in OctoGo,
 after [p2-11](https://gitlab.com/cznic/p2-11), a PDP-11/40 that runs Unix V6.
 
-## Status
+It runs a subset of Erlang and Elixir, in 512 KB: processes, messages,
+links, monitors, exceptions, floats, binaries and maps, but no bignums,
+floats of 32 bits, no distribution, and of OTP's and Elixir's libraries only
+what the VM's BIFs and the shims `obeam` carries do (`io:format`, `lists`,
+`maps`, `Enum`, `Map` and more, listed below). `obeam` names what a program
+uses that the VM does not have, before anything runs.
 
-Begun on 2026-10-16, and at milestone M6b of the plan in `ASSESSMENT.md`:
-Erlang and Elixir processes, spawned, linked and monitored, sending and
+The repository you are currently viewing might be a mirror. Please review the
+guidelines below based on where you are viewing this:
+
+| Platform | Role | Contributing Guidelines |
+| :--- | :--- | :--- |
+| **GitLab** | **Primary Source** | This is the canonical repository ([`cznic/obeam`](https://gitlab.com/cznic/obeam)). Development happens here. |
+| **GitHub** | **Mirror** | This is a mirror ([`modernc-org/obeam`](https://github.com/modernc-org/obeam)), where the release binaries are published. We **do accept** Issues and Pull Requests here for your convenience! <br> *Note: PRs submitted here will be manually merged into the GitLab source, so please allow extra time for processing.* |
+
+## Installation
+
+`obeam` is one program. It carries the VM, built for the P2 once and for
+all, the shims, and a P2 loader, so there is no OctoGo, FlexProp or loader to
+install beside it. Either:
+
+- **A release zip**, no Go needed: from the
+  [releases page](https://github.com/modernc-org/obeam/releases), take the zip
+  for your system (`linux-amd64`, `linux-arm64`, `windows-amd64`,
+  `darwin-arm64` for Apple silicon, `darwin-amd64`), unzip it, and put
+  `obeam` (`obeam.exe` on Windows) in a directory on your `PATH`. The zip has
+  `examples/` beside it.
+- **With Go 1.26 or newer**: `go install modernc.org/obeam@latest`.
+
+To compile programs of your own you also need Erlang/OTP's `erlc`, and for
+Elixir `elixirc`. OctoBeam is built and tested with OTP 27.3 and Elixir 1.18.3,
+which is what Debian 13 has: `sudo apt install erlang-base`, and `elixir`.
+Elsewhere, see [erlang.org](https://www.erlang.org/downloads). A `.beam` file
+of another OTP release may use an instruction OctoBeam does not know yet, and
+`obeam` then says which.
+
+## Getting started, step by step
+
+1. **Connect the board.** A Propeller 2 board with a USB serial port, such as
+   the P2-EDGE (P2-EC) on a breakout board, which is what OctoBeam is tested
+   on, plugged into a USB port.
+   - On Linux, the serial port belongs to a group, usually `dialout` (`ls -l
+     /dev/ttyUSB0` shows it). Join it once, then log out and in again: `sudo
+     usermod -aG dialout $USER`.
+   - On Windows, run `obeam` from `cmd.exe` or PowerShell, not from git-bash,
+     MSYS2 or Cygwin, whose consoles the loader cannot drive.
+2. **Check obeam**: `obeam version` says which release it is.
+3. **Run an example** from the zip's `examples/`:
+
+   ```
+   $ obeam run examples/hello.beam
+   obeam: hello.binary: hello:main/0, the VM checked; the image 490 longs, 12 of them code; 230 KB of the arena left for the heaps
+   obeam: loading hello.binary; Ctrl-] leaves the terminal
+   ( Entering terminal mode.  Press Ctrl-] or Ctrl-Z to exit. )
+   obeam: hello:main/0, 12 longs of code, 7 schedulers
+
+   Hello, world!
+
+   3 instructions in 1 ms, 3000 a second, 0 collections, the core run 2 times
+   ```
+
+   `obeam run` wrote `hello.binary`, the VM with the program in it, loaded it
+   into the board's RAM, and shows what the board prints until you press
+   Ctrl-]. The loader finds the board by itself; with several, name the port:
+   `-p /dev/ttyUSB0` (`-p COM3` on Windows). The program is in the board's
+   RAM, not its flash, so a reset ends it. Then try `examples/ring.beam`, a
+   ring of processes; `examples/blink.beam`, the P2-EDGE's two LEDs on pins
+   56 and 57, a process each; and the whole demo, 26 modules of Erlang and
+   Elixir: `obeam run -entry demo:main/0 examples/demo/*.beam`.
+4. **Write a program.** `hello.erl`:
+
+   ```erlang
+   -module(hello).
+   -export([main/0]).
+
+   main() ->
+       io:format("Hello, world!~n").
+   ```
+
+   then `erlc hello.erl` and `obeam run hello.beam`. The program starts at the
+   first module's `main/0`; `-entry hello:world/0` starts it elsewhere, at an
+   exported function of no arguments. A program of several modules is named
+   whole: `obeam run main.beam util.beam`, or `obeam run -entry main:main/0
+   *.beam`. What a program reaches of OTP that the VM does not have is refused
+   by name:
+
+   ```
+   obeam: greet.beam: greet:main/0, call_ext at code offset 19: calls string:uppercase/1, which is no BIF and no function of the modules packed
+   ```
+
+5. **Elixir** works the same way: `elixirc hello.ex` writes
+   `Elixir.Hello.beam`, and `obeam run Elixir.Hello.beam` runs its `main/0`,
+   `def main`.
+6. **The pins** are the module `p2`: `p2:pin_high(56)`, `pin_low/1`,
+   `pin_toggle/1`, `pin_float/1`, `pin_write/2`, `pin_in/1`, `p2:cog()`, the
+   scheduler a process runs on, and `get_ct/0`, `clock_freq/0` and `rnd/0`.
+   `examples/blink.erl` uses them. Such a program compiles anywhere but runs
+   on the board only.
+7. **Without `run`**, `obeam hello.beam` only writes `hello.binary`, an
+   ordinary P2 binary for any loader: `obeam loadp2 -t -b 230400
+   hello.binary`, FlexProp's `loadp2`, or `ogo loadp2`. The board prints at
+   230400 baud.
+
+The flags, before or after the files (`obeam help`):
+
+| Flag | |
+| :--- | :--- |
+| `-o FILE` | the binary to write; by default the entry's module's name, `.binary`, in the current directory |
+| `-entry m:f/a` | the function to start, exported, of no arguments; the first module's `main/0` by default |
+| `-unchecked` | the VM without its runtime checks: 52 KB more for the heaps, and a fifth faster, but a fault of the VM's corrupts memory silently where the checked VM stops with a `panic:` message. Develop with the default. |
+| `-lines=false` | leave out the line numbers a crash report names, for room |
+| `-lib A.beam,...` | more library modules, of which the program takes what it reaches |
+| `-p PORT` | with `run`: the board's serial port |
+| `-vm FILE` | a VM binary of your own, built from this repository with `ogo build ./board` |
+
+## What the VM has and has not
+
+The VM's BIFs include `io:format` with its widths and precisions,
+`erlang`'s arithmetic, comparisons, type tests, lists, tuples, binaries,
+maps, processes, links, monitors, registered names and exceptions,
+`lists:reverse`, `member` and `keyfind`, and Elixir's `IO`, `Kernel.inspect`
+and `String.Chars`. The shims `obeam` carries are Erlang modules for the
+rest of what programs reach for first: OTP's `lists` (`map`, `foldl`,
+`filter`, `seq`, `sort`, `zip`, `keysort` and fifty-five more) and `maps`'
+functions that take a fun, and Elixir's `Enum` and `Map`. A program takes
+what it calls of them and nothing else.
+
+Not yet: bignums, bitstrings that are not whole bytes, OTP's behaviours
+(`gen_server` and the like), an image loaded from the SD card, `~p`'s line
+breaking, and OTP's and Elixir's libraries beyond the shims. A map with atom
+keys prints its keys in term order, where `erl` and `elixir` print them in
+the order of their atom tables, and a map of more than 32 keys in term
+order, where OTP prints its hash trie's. The arena is 232 KB (284 KB
+unchecked), the image at its bottom and the process heaps above, so the
+demo's image of 69 KB leaves its heaps 162 KB and a hello, world 230 KB. A
+process's stack is bounded by its largest heap block, 8,192 longs, so a
+recursion 20,000 deep that Erlang takes ends here in `system_limit`; write it
+as a tail call. The links and monitors of all processes together are 256 at
+most, a record at each end. Floats are 32 bits wide: what is not exact in 32
+bits prints differently from Erlang's 64.
+
+## Status, and the repository
+
+This repository is for OctoBeam's development; to use it, `obeam` is
+enough. Begun on 2026-10-16, and at milestone M6b of the plan in
+`ASSESSMENT.md`: Erlang and Elixir processes, spawned, linked and monitored, sending and
 receiving, catching exceptions, computing in floats, making and matching
 binaries, and building and matching maps, Elixir's structs and ranges among
 them, on seven scheduler cogs, running modules compiled by `erlc` and
 `elixirc`.
 
-- `cmd/obeam`: the host tool, Go. `obeam pack` turns `.beam` files into the
-  image the board runs, every operand resolved and every literal laid out as
-  the board's own terms, and refuses, by module, function and line, what the
-  VM cannot run yet; `obeam pack -vm` puts the image into the arena of a VM
-  binary built once, in milliseconds. `obeam dis` and `obeam stats` list and
-  count a module.
+- The root: `obeam`, the host tool, Go. It turns `.beam` files into the image
+  the board runs, every operand resolved and every literal laid out as the
+  board's own terms, refuses, by module, function and line, what the VM
+  cannot run yet, and puts the image into the arena of the VM it carries, in
+  milliseconds. `internal/vmbin` holds that VM, checked and unchecked, built
+  from `board/` by `make vms`. `obeam dis` and `obeam stats` list and count a
+  module.
 - `vm/`: the VM, in OctoGo: about 8,500 lines for the terms, a buddy arena,
   processes with mailboxes, links, monitors and a run queue, seven schedulers
   each a cog, the interpreter, a copying collector per process, exceptions
   caught by `try` and `catch`, floats, binaries and their matching, maps,
   134 BIFs, `io:format` with its widths and precisions, Elixir's `inspect`,
   and the exception reports. It is Go once given a package clause, and the
-  tests run it so, on seven goroutines, against `erl` and `elixir`: seventeen
-  Erlang modules of the corpus, from `fac` to a ring of a hundred processes,
+  tests run it so, on seven goroutines, against `erl` and `elixir`: nineteen
+  Erlang modules of the corpus, from `hello` to a ring of a hundred processes,
   a server with timeouts, linked workers, a process linked to fifty, `try`
   and `catch`, floats, maps and binary parsers, and the seven Elixir ones,
   print the same bytes under both.
-- `main.ogo`: the board program, the VM, which runs the image at the bottom
-  of its arena, and the demo, which runs the sixteen Erlang modules, the
+- `board/`: the board program, the VM, which runs the image at the bottom
+  of its arena; and the demo, which runs the sixteen Erlang modules, the
   seven Elixir ones, and then `cogs`, seven workers that report which
   scheduler ran them. `make demo` builds the VM with `ogo build` and puts
   the demo into it, and `make run` runs it. On a P2-EC it prints what `erl`
@@ -61,36 +206,32 @@ them, on seven scheduler cogs, running modules compiled by `erlc` and
   hundred processes, string interpolation of every kind, and maps, structs
   and ranges, held to what `elixir` prints; `ex/shim/` the parts of Elixir's
   `Enum` and `Map` they use, in Erlang.
-- `erl/`: the corpus, twenty small Erlang modules from `fac` to a process
-  ring, a concurrent prime sieve, linked workers, floats, maps and binary
-  parsers, compiled with OTP 27 and committed; `erl/shim/` the functions of
-  OTP's `maps` that take a fun; `erl/stats.txt` is the opcode and call
-  histogram M0 measured over the first eleven.
+- `erl/`: the corpus, twenty-two small Erlang modules from `hello` to a
+  process ring, a concurrent prime sieve, linked workers, floats, maps,
+  binary parsers and OTP's `lists`, compiled with OTP 27 and committed;
+  `erl/shim/` OTP's `lists` and the functions of `maps` that take a fun;
+  `erl/stats.txt` is the opcode and call histogram M0 measured over the
+  first eleven.
 - `DESIGN.md`: how it is made, and what each milestone measured.
 
-Not yet: bignums, bitstrings that are not whole bytes, an image loaded from
-the SD card, `~p`'s line breaking, and OTP's and Elixir's libraries beyond
-the shims. A map with atom keys prints its keys in term order, where `erl`
-and `elixir` print them in the order of their atom tables, and a map of more
-than 32 keys in term order, where OTP prints its hash trie's. The arena is
-232 KB, the image at its bottom and the process heaps above, so the demo's
-image of 69 KB leaves its heaps 162 KB and a hello, world 230 KB; the
-checked VM leaves 11 KB of the 512 KB beside it (`make budget`). A process's stack is bounded by its largest
-heap block, 8,192 longs, so a recursion 20,000 deep that Erlang takes ends
-here in `system_limit`; write it as a tail call. The links and monitors of
-all processes together are 256 at most, a record at each end. Floats are 32
-bits wide: what is not exact in 32 bits prints differently from Erlang's 64.
+Developing it takes Go 1.26, OctoGo (`ogo`) and OTP 27:
 
 ```sh
+make test                                    # the gate: formats, vet, the tests, then the VM under Go against erl
 make demo                                    # the VM, obeam.binary, and demo.binary, the VM with the demo in its arena
 make run                                     # load demo.binary onto the board (under the shared board lock)
-make test                                    # the gate: formats, vet, the reader's tests, then the VM under Go against erl
 make budget                                  # build the VM and say how much of the hub it leaves
-go run ./cmd/obeam pack -vm obeam.binary -o hello.binary hello.beam   # a program of your own: hello:main/0
-go run ./cmd/obeam dis erl/pingpong.beam     # the module's code, as erlc -S would list it
-go run ./cmd/obeam stats erl/*.beam          # the histogram
+make vms                                     # rebuild the VMs obeam carries, after any change to board/, vm/ or core/
+go run . -vm obeam.binary hello.beam         # a program into the VM built from the tree
+go run . dis erl/pingpong.beam               # the module's code, as erlc -S would list it
+go run . stats erl/*.beam                    # the histogram
 make beam                                    # recompile the corpus after editing a .erl file (erlc of OTP 27)
 ```
+
+A release: `make vms OGO=<a released ogo>` if the VM changed since the last
+one, a section in `CHANGELOG.md`, commit, `git tag -a vX.Y.Z`, then `make
+release`, which writes `build/release/vX.Y.Z/`: a zip for each of the five
+targets OctoGo's releases have, and `SHA256SUMS`, for the GitHub release.
 
 The reader is held to OTP's own disassembler, `beam_disasm`, through
 `erl/oracle.escript`; the VM to `erl` itself, module by module.

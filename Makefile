@@ -13,7 +13,7 @@ comma := ,
 empty :=
 space := $(empty) $(empty)
 
-.PHONY: all test twin beam exbeam stats generate demo prof prof-run run budget clean
+.PHONY: all test twin beam exbeam stats generate demo vms prof prof-run run budget release clean
 
 all: test
 
@@ -30,15 +30,34 @@ test:
 twin:
 	scripts/twin.sh -k build/twin $(ARGS)
 
-# obeam.binary is the VM, built by ogo build, with an empty arena; demo.binary
-# is the VM with the demo's image in its arena, which obeam pack -vm puts
-# there.
-VM_SRCS = main.ogo ogo.mod $(wildcard vm/*.ogo) $(wildcard core/*.ogo core/*.spin2)
-PACK    = go run ./cmd/obeam pack
-PACKER  = $(wildcard cmd/obeam/*.go internal/*/*.go)
+# obeam.binary is the VM, built by ogo build from board/, with an empty
+# arena; demo.binary is the VM with the demo's image in its arena, which the
+# obeam command puts there.
+# OGO is the OctoGo compiler; make vms OGO=... builds the VMs a release
+# carries with a released one.
+OGO     ?= ogo
+VM_SRCS = ogo.mod $(wildcard board/*.ogo vm/*.ogo core/*.ogo core/*.spin2)
+OBEAM   = go run .
+PACKER  = $(wildcard *.go internal/*/*.go)
 
 obeam.binary: $(VM_SRCS)
-	ogo build
+	$(OGO) build -o $@ ./board
+
+# vms builds the VMs the obeam command carries, internal/vmbin: the checked
+# one, and the unchecked one from a copy of the tree whose arena is
+# arenaUnchecked, the room its checks leave; and BUILD, the hash of the
+# sources they were built from, which go test holds the tree to.
+VMBIN = internal/vmbin
+
+vms:
+	$(OGO) build -o $(VMBIN)/obeam.binary ./board
+	rm -rf build/unchecked && mkdir -p build/unchecked
+	cp -r ogo.mod board vm core build/unchecked/
+	sed -i 's/^\(\tarenaLongs *= \)arenaChecked$$/\1arenaUnchecked/' build/unchecked/vm/arena.ogo
+	grep -q '^.arenaLongs *= arenaUnchecked$$' build/unchecked/vm/arena.ogo
+	$(OGO) build --unchecked -o $(VMBIN)/obeam-unchecked.binary build/unchecked/board
+	rm -f $(VMBIN)/*.p2asm
+	$(OBEAM) gen -build $(VMBIN)/BUILD -ogo "$$($(OGO) version | head -1)"
 
 DEMO_ENTRY   = demo:main/0
 DEMO_MODULES = erl/demo.beam erl/fac.beam erl/fib.beam erl/lst.beam erl/tuples.beam erl/funs.beam \
@@ -47,13 +66,14 @@ DEMO_MODULES = erl/demo.beam erl/fac.beam erl/fib.beam erl/lst.beam erl/tuples.b
 	ex/Elixir.Hello.beam ex/Elixir.Fac.beam ex/Elixir.Ping.beam ex/Elixir.Ring.beam \
 	ex/Elixir.Enums.beam ex/Elixir.Strings.beam ex/Elixir.Maps.beam ex/Elixir.Point.beam
 # DEMO_LIBS are the shims, Erlang's of OTP's and Erlang's of Elixir's
-# library, which a program takes by what it reaches.
+# library, which a program takes by what it reaches, and which the obeam
+# command carries.
 DEMO_LIBS = $(wildcard erl/shim/*.beam) $(wildcard ex/shim/*.beam)
 
 demo: demo.binary
 
 demo.binary: obeam.binary $(DEMO_MODULES) $(DEMO_LIBS) $(PACKER)
-	$(PACK) -vm obeam.binary -o $@ -entry $(DEMO_ENTRY) -lib $(subst $(space),$(comma),$(strip $(DEMO_LIBS))) $(DEMO_MODULES)
+	$(OBEAM) -vm obeam.binary -o $@ -entry $(DEMO_ENTRY) $(DEMO_MODULES)
 
 # prof writes the names the profiler prints, builds the profiler, and puts
 # erl/bench.erl into its arena, prof/prof.binary; prof-run runs it on the
@@ -62,9 +82,9 @@ PROF_MODULES = erl/bench.beam erl/fib.beam erl/lst.beam erl/tuples.beam erl/ping
 	erl/ring.beam erl/sieve.beam
 
 prof: $(BEAMS)
-	go run ./cmd/obeam gen -vm vm -names prof
-	ogo build --unchecked -o prof/vm.binary ./prof
-	$(PACK) -vm prof/vm.binary -o prof/prof.binary -entry bench:main/0 $(PROF_MODULES)
+	$(OBEAM) gen -vm vm -names prof
+	$(OGO) build --unchecked -o prof/vm.binary ./prof
+	$(OBEAM) -vm prof/vm.binary -o prof/prof.binary -entry bench:main/0 $(PROF_MODULES)
 
 prof-run: prof
 	flock -o -w 900 /tmp/p2-board.lock ogo loadp2 -t -b 230400 prof/prof.binary
@@ -80,6 +100,14 @@ budget: obeam.binary
 # share.
 run: demo.binary
 	flock -o -w 900 /tmp/p2-board.lock ogo loadp2 -b 230400 -t demo.binary
+
+# release builds the obeam command for every target OctoGo's releases have,
+# each zip with the VMs and the shims inside it and examples beside it, under
+# build/release/<version>/ with a SHA256SUMS, ready for a GitHub Release.
+# VERSION defaults to the tag at HEAD; tag first, so that the binaries say
+# which release they are.
+release:
+	DEMO_MODULES="$(DEMO_MODULES)" scripts/release.sh $(VERSION)
 
 # beam compiles the corpus with OTP 27's erlc. The .beam files are committed,
 # so this is needed only after a .erl file changes.
@@ -100,7 +128,7 @@ exbeam:
 
 # stats regenerates erl/stats.txt, the corpus's opcode and call histogram.
 stats: $(BEAMS)
-	go run ./cmd/obeam stats $(BEAMS) > erl/stats.txt
+	$(OBEAM) stats $(BEAMS) > erl/stats.txt
 
 # generate regenerates internal/beam/opcodes.go from the genop.tab of the
 # pinned OTP release, and the VM's copies of the packer's tables.
@@ -108,7 +136,7 @@ generate:
 	mkdir -p build
 	curl -sSL -o build/genop.tab $(GENOP_URL)
 	go run ./internal/beam/gen_opcodes.go -tab build/genop.tab -tag $(GENOP_TAG) -o internal/beam/opcodes.go
-	go run ./cmd/obeam gen -vm vm
+	$(OBEAM) gen -vm vm
 
 clean:
 	rm -rf build obeam obeam.binary demo.binary

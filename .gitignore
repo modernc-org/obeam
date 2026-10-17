@@ -2,8 +2,9 @@
 /build/
 /obeam
 
-# ogo build artifacts
+# ogo build artifacts, but for the VMs the obeam command carries
 *.binary
+!/internal/vmbin/*.binary
 *.p2asm
 
 # Local assistant state, as in ogo's and p2-11's .gitignore: a `git add -A`

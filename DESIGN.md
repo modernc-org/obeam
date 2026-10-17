@@ -19,15 +19,18 @@ in section 8.
 
 Three things, two of them programs:
 
-- **The host tool, `obeam`, in Go** (`cmd/obeam`, `internal/beam`). It reads
+- **The host tool, `obeam`, in Go** (the repository's root, `internal/beam`,
+  `internal/pack`, `internal/vmbin`). It reads
   `.beam` files and, as the packer, turns a set of them into an image for the
   board. Everything that can be decided before the board runs is decided
   here: atoms are numbered, labels and imports resolved, literals laid out in
   the board's own term format, unreachable functions dropped, and anything the
   board cannot run refused by name, with the module, function and line.
-- **The board program, in OctoGo**, at the repository's root beside an
-  `ogo.mod`, so that `ogo run` works after cloning, as p2-11 does. `main`
-  starts a scheduler on each of seven cogs and then serves the serial line.
+- **The board program, in OctoGo**, in `board/`, under the `ogo.mod` at the
+  repository's root (at the root itself, as p2-11's is, until the Go command
+  took the root on 2026-10-17). `main` starts a scheduler on each of seven
+  cogs and then serves the pins. Users never build it: `obeam` carries it
+  built, checked and unchecked.
   The packages that do not import `p2` (the interpreter, the terms, the GC,
   the image reader) are Go once given a package clause, and are tested on the
   host under `go test` as p2-11's are, with OTP's own `erl` as the oracle.
@@ -853,3 +856,22 @@ before `cogs` that `erl` and `elixir` print, in 5,506 ms checked and 4,454
 unchecked; the bare VM says it has no image; the profiler, which loads the
 image afresh for each of its runs, finds 662 clocks an instruction with the
 core.
+
+**One program for users**, 2026-10-17, step 2: `obeam` is the Go command at
+the root, so that `go install modernc.org/obeam@latest` installs it, and the
+board program moved to `board/`. It carries the VM built twice by `make
+vms` (`internal/vmbin`, committed with the hash of the sources, which a test
+holds the tree to), the shims (`go:embed` of `erl/shim` and `ex/shim`; a
+user's module of the same name wins), and the P2 loader, ogo's, now
+`modernc.org/ogo/loadp2`: `obeam hello.beam` writes `hello.binary`, `obeam
+run hello.beam` loads it and shows what the board prints, `obeam loadp2` is
+the loader as it is. The unchecked VM has the 52 KB its checks leave for its
+arena, 284 KB: ogo has no build-time constants, so `make vms` builds it from
+a copy of the tree whose `arenaLongs` is `arenaUnchecked`. Its binary is
+514,124 bytes, and the demo's heaps get 214 KB in it. OTP's `lists`, 62
+functions of it, became a shim, held to OTP by `erl/listlib.erl`, which
+printed what `erl` prints on its first run, in the twin and on the board.
+`make release` builds the zips of ogo's five targets, 1.8 MB each, with
+examples. The VMs carried are built by ogo v0.57.0; on the board, through
+`obeam run`, both print the demo's 143 lines, in 5,506 ms checked and 4,452
+unchecked.
