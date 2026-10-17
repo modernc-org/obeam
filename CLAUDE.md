@@ -96,8 +96,10 @@ The files:
   leave the profiler's tables and `runProfiled` out, 5.8 KB.
 - `ex/`: the Elixir corpus, `*.ex` compiled by `make exbeam` into committed
   `Elixir.*.beam`; `ex/shim/` the Erlang shims of Elixir's library (`Enum`,
-  `Map`, `elixir_erl_pass`), and `erl/shim/` of OTP's (`maps`' functions
-  that take a fun), packed as libraries (`obeam pack -lib`, by what the
+  `Map`, `elixir_erl_pass`), and `erl/shim/` of OTP's (`lists`,
+  `gen_server`, `supervisor`, `string`, `timer`, `queue`, `proplists`,
+  `rand`, `maps`' functions that take a fun, and `erlang`'s that are no BIF
+  of the VM's), packed as libraries (`obeam pack -lib`, by what the
   program reaches) and **never on the oracle's path**, where they would hide
   the real ones. `TestElixir` runs `elixir -pa ex -e "Mod.main()"`; `exUses`
   in `vm/host_test.go` names the modules an Elixir one is packed with
@@ -208,6 +210,7 @@ What matters most for a VM:
 ```sh
 make test                        # gofmt and ogo fmt -l, go vet, go test ./..., then the twin; the gate
 make twin ARGS='-run TestErl -v ./vm'   # the twin alone, kept in build/twin, with go test arguments
+make shimcheck                   # erl/shim's erlang, proplists, queue and string against OTP's under erl, generated arguments
 scripts/twin.sh -run TestErl/lst ./vm   # the same without make
 ogo build ./vm                   # the VM through OctoGo's checker, no main, no board
 make obeam.binary                # the VM from board/: ogo build -o obeam.binary ./board, its arena empty, marked
@@ -318,8 +321,8 @@ the tree or be ahead of what this file knows; do not install over it.
   in the top 16 KB while loading), which `TestBootable` in
   `internal/vmbin` holds both VMs to; a larger one does not boot, and the
   board, finding the file, answers no serial loader either (found
-  2026-10-17). The checked VM binary is 504,492 bytes, whatever the image,
-  the unchecked 505,424, 3,412 and 2,480 under; `make budget` says how far.
+  2026-10-17). The checked VM binary is 504,804 bytes, whatever the image,
+  the unchecked 505,608, 3,100 and 2,296 under; `make budget` says how far.
   The arenas are 222 and 276 KB: the stacktraces' 6 KB of code took 7 and
   5 KB of them, and the profiler, out of the board's build since
   (`profOn`), gave 5 and 5 KB back. The
@@ -402,6 +405,17 @@ the tree or be ahead of what this file knows; do not install over it.
   held by `erl/exits.erl` and `erl/waits.erl`; `reports` in
   `vm/host_test.go` leaves the VM's crash reports out of the comparison and
   runs `erl` with `-kernel logger_level none` for those modules).
+- **A shim is held to OTP's own under `erl` first**: `make shimcheck`
+  (`scripts/shimcheck.sh`, `scripts/shimcheck/*.escript`) compiles a copy
+  renamed (`-module(ostring)`) and calls it and OTP's module with the same
+  generated arguments, results and errors compared as terms, so that a
+  nested answer's shape is held too (`string` 1.2 million calls, `queue`
+  3,000 runs of 25 operations, the funs' calls in order with them); then a
+  corpus module in the twin and on the board. A new shim whose answers are
+  its arguments' gets an escript there. `erl/shim/erlang.erl` serves a call
+  of `erlang:F/A` that is no BIF of the VM's: the packer takes a BIF first
+  and a packed module's function after, so a guard BIF (`node/0`,
+  `ceil/1`, `floor/1`) cannot be a shim, a guard calling no function.
 - **A shim that spawns** begins the new process in a fun
   (`spawn_link(fun() -> init_it(...) end)`): a library is packed by what
   the program reaches, and `spawn(M, F, A)` with atoms reaches nothing, so
@@ -476,7 +490,7 @@ the tree or be ahead of what this file knows; do not install over it.
   not the compiler's regrouping into `{test,is_lt,...}`, `{bif,...}` and
   `{gc_bif,...}` that `erlc -S` and beam_disasm print; `erl/oracle.escript`
   undoes that regrouping so the two can be compared.
-- `erl/` holds the corpus: twenty modules, each with a `main/0` that prints
+- `erl/` holds the corpus: thirty-five modules, each with a `main/0` that prints
   its result, so that the board's twin can be held to `erl` later; `blink`
   calls the board's `p2` module and does not run under `erl`. The `.beam`
   files are committed, compiled by `make beam` with `+deterministic`; commit

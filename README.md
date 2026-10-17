@@ -18,8 +18,8 @@ It runs a subset of Erlang and Elixir, in 512 KB: processes, messages,
 links, monitors, exceptions, floats, binaries and maps, but no bignums,
 floats of 32 bits, no distribution, and of OTP's and Elixir's libraries only
 what the VM's BIFs and the shims `obeam` carries do (`io:format`,
-`gen_server`, `supervisor`, `lists`, `maps`, `Enum`, `Map` and more, listed
-below). `obeam` names what a program
+`gen_server`, `supervisor`, `lists`, `maps`, `string`, `timer`, `queue`,
+`Enum`, `Map` and more, listed below). `obeam` names what a program
 uses that the VM does not have, before anything runs.
 
 The repository you are currently viewing might be a mirror. Please review the
@@ -159,7 +159,14 @@ start_link, named or not, call, cast, reply and stop, timeouts and
 `{continue, _}`, the optional callbacks, and a crash calling `terminate/2`),
 `supervisor` (the four strategies, permanent, transient and temporary
 children, the restart intensity, and the children's API), `lists` (`map`, `foldl`, `filter`, `seq`, `sort`, `zip`, `keysort` and
-fifty-five more) and `maps`' functions that take a fun, and Elixir's `Enum`
+fifty-five more), `maps`' functions that take a fun, `string` (the functions
+of today and the old ones, of lists of characters and of binaries in
+UTF-8), `timer` (`sleep`, `tc`, the one-shot and interval timers and
+`cancel`), `queue`, `proplists`, `rand` (`uniform/0,1`, `uniform_real/0`
+and `bytes/1`, from the P2's hardware generator), and the functions of
+`erlang` that Erlang can write (`tuple_to_list/1`, `spawn_monitor/1,3`,
+`integer_to_list/2`, `list_to_integer/2`, `binary_to_integer/1,2`,
+`iolist_size/1`, `convert_time_unit/3` and a few more); and Elixir's `Enum`
 and `Map`. A program takes what it calls of them and nothing else, so a
 child spec's start function, which a supervisor calls by `apply`, is to be
 the program's own, as in OTP's examples (`{my_server, start_link, []}`): a
@@ -167,8 +174,14 @@ shim's named there, `{gen_server, start_link, ...}`, is not packed.
 
 Not yet: bignums, bitstrings that are not whole bytes, OTP's other
 behaviours (`gen_statem`, `gen_event` and the like) and the `sys` and
-`proc_lib` sides of `gen_server` and `supervisor`, `~p`'s line breaking, and OTP's and Elixir's
-libraries beyond the shims. The functions of OTP's `lists` that the VM has
+`proc_lib` sides of `gen_server` and `supervisor`, `~p`'s line breaking,
+BIFs such as the process dictionary's, `list_to_tuple/1`, `list_to_atom/1`,
+the float conversions, `node/0`, `ceil/1`, `floor/1` and `halt/0`, and OTP's
+and Elixir's libraries beyond the shims. Of the shims, `string` takes a
+grapheme cluster to be a character, or `"\r\n"`, changes the case of
+Latin-1's letters only, and has no `to_float/1`; `rand` takes no seed of
+one's own, its numbers being the hardware's; and `proplists:get_keys/1`
+answers its keys in a map's order, where OTP's are in its set's. The functions of OTP's `lists` that the VM has
 as BIFs, `reverse`, `member` and `keyfind`, fail as BIFs do, with `badarg`,
 where OTP's `reverse` fails with a `function_clause` of its own. A map with atom
 keys prints its keys in term order, where `erl` and `elixir` print them in
@@ -234,12 +247,14 @@ them, on seven scheduler cogs, running modules compiled by `erlc` and
   hundred processes, string interpolation of every kind, and maps, structs
   and ranges, held to what `elixir` prints; `ex/shim/` the parts of Elixir's
   `Enum` and `Map` they use, in Erlang.
-- `erl/`: the corpus, twenty-nine small Erlang modules from `hello` to a
+- `erl/`: the corpus, thirty-five small Erlang modules from `hello` to a
   process ring, a concurrent prime sieve, linked workers, exit reasons,
-  stacktraces, timeouts, floats, maps, binary parsers, OTP's `lists`, `gen_server` and
-  `supervisor`, and `blink` and `leds` for the board's LEDs, compiled with
-  OTP 27 and committed; `erl/shim/` OTP's `gen_server`, `supervisor`,
-  `lists` and the functions of `maps` that take a fun;
+  stacktraces, timeouts, floats, maps, binary parsers, OTP's `lists`, `gen_server`,
+  `supervisor`, `string`, `timer`, `queue`, `proplists` and `rand`, and
+  `blink` and `leds` for the board's LEDs, compiled with OTP 27 and
+  committed; `erl/shim/` OTP's `gen_server`, `supervisor`, `lists`,
+  `string`, `timer`, `queue`, `proplists`, `rand`, the functions of `maps`
+  that take a fun and those of `erlang` that Erlang can write;
   `erl/stats.txt` is the opcode and call histogram M0 measured over the
   first eleven.
 - `DESIGN.md`: how it is made, and what each milestone measured.

@@ -68,7 +68,7 @@ func TestErl(t *testing.T) {
 	if err != nil {
 		t.Skip("no erl on PATH")
 	}
-	for _, m := range []string{"hello", "fac", "fib", "lst", "tuples", "funs", "pingpong", "ring", "sieve", "counter", "exc", "links", "sup", "flt", "fmt", "mp", "bin", "listlib", "exits", "waits", "gs", "sv", "stacks", "bench"} {
+	for _, m := range []string{"hello", "fac", "fib", "lst", "tuples", "funs", "pingpong", "ring", "sieve", "counter", "exc", "links", "sup", "flt", "fmt", "mp", "bin", "listlib", "exits", "waits", "gs", "sv", "stacks", "erls", "tmr", "rnd", "strs", "props", "queues", "bench"} {
 		t.Run(m, func(t *testing.T) {
 			var files []string
 			for _, mod := range append([]string{m}, uses[m]...) {

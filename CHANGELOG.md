@@ -40,6 +40,12 @@ The first release.
   simple_one_for_one; permanent, transient and temporary children and their
   shutdown; the restart intensity; start_child, terminate_child,
   restart_child, delete_child, which_children and count_children.
+- **More of OTP's library, as shims**: `string`, `timer`, `queue`,
+  `proplists`, `rand` (over the P2's hardware generator), and the functions
+  of `erlang` that Erlang can write, `tuple_to_list/1`, `spawn_monitor/1,3`
+  and conversions in a base among them; each held to OTP's own.
+- **`~s` and `io:put_chars` take nested chardata**, as OTP's do: what
+  `string:pad/2` and `string:replace/3` answer prints.
 - **Stacktraces as OTP's**: a failing BIF's or operator's own frame with its
   arguments and `error_info`, a `function_clause`'s and an `undef`'s with the
   function's arguments, and `erlang:raise/3` keeping the stacktrace it is

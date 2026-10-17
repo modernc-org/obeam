@@ -13,7 +13,7 @@ comma := ,
 empty :=
 space := $(empty) $(empty)
 
-.PHONY: all test twin beam exbeam stats generate demo vms prof prof-run run budget release clean
+.PHONY: all test twin shimcheck beam exbeam stats generate demo vms prof prof-run run budget release clean
 
 all: test
 
@@ -29,6 +29,12 @@ test:
 # twin runs the VM's packages under Go alone, and keeps the twin in build/twin.
 twin:
 	scripts/twin.sh -k build/twin $(ARGS)
+
+# shimcheck holds the shims whose answers are functions of their arguments
+# to OTP's own modules under erl, with generated arguments, in seconds: run
+# it after a change to one of them.
+shimcheck:
+	scripts/shimcheck.sh
 
 # obeam.binary is the VM, built by ogo build from board/, with an empty
 # arena; demo.binary is the VM with the demo's image in its arena, which the

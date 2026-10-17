@@ -991,3 +991,31 @@ unchecked, and the arenas 5 KB each: 222 and 276 KB, the VMs 504,492 and
 505,424 bytes, 3,412 and 2,480 under the limit, the demo's heaps 152 and
 206 KB, its run on the board 5,509 and 4,448 ms as before. The stacktraces
 cost the checked arena 2 KB in all and the unchecked none.
+
+**OTP's library, the first of it as shims**, 2026-10-18. A survey of what
+small programs call, the 176 BIFs `erlc` imports without a module and the
+modules the examples of OTP's guides reach, found the VM without `timer`,
+`rand`, `string`, `proplists` and `queue`, and without functions of
+`erlang` such as `tuple_to_list/1`. What Erlang can write of them are shims
+now, which cost a program only what it reaches: `erl/shim/timer.erl`, every
+timer a process of its own, which `cancel/1` stops and waits for, an
+interval timer watching the process it works for; `rand.erl`, over
+`p2:rnd/0`, with no seed of one's own; `string.erl`, OTP's functions of
+today and its old ones, of lists and of binaries in UTF-8, answering the
+shapes OTP's answer, a grapheme cluster being a character or `"\r\n"` and
+case changed in Latin-1; `proplists.erl`; `queue.erl`, OTP's `{Rear,
+Front}` balanced as OTP balances it; and `erlang.erl`, which the packer
+reaches for a call of `erlang:F/A` that is no BIF, the guard BIFs
+(`node/0`, `ceil/1`, `floor/1`) excepted, since a guard calls no function.
+Each was held to OTP's own under `erl` first, a renamed copy and OTP's
+module given the same generated arguments and their results and errors
+compared as terms, which `make shimcheck` does again in seconds: `string` 1.2 million calls, `proplists` 36,437, alike
+but for the order of `get_keys/1`'s keys (a hashed set's in OTP 27),
+`queue` 3,000 runs of 25 operations with the order of the funs' calls,
+`erlang` 600. Then a corpus module each, `erls`, `tmr`, `rnd`, `strs`,
+`props` and `queues`, prints what `erl` prints in the twin and on the board
+in both builds. Printing what `string:pad/2` answers found `~s` taking a
+flat list only: it and `io:put_chars` take nested chardata now, the lists
+waiting on the writer's stack, 312 bytes of the checked VM and 184 of the
+unchecked, which fit with the arenas as they were: 504,804 and 505,608
+bytes, 3,100 and 2,296 under the limit.

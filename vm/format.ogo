@@ -380,31 +380,47 @@ func floatVal(t uint32) float32 {
 	return floatOf(arena[boxIdx(t)+1])
 }
 
-// writeChars writes a list of characters, a binary or an atom, and reports
-// whether it was one; a list within the list, which io would take, is not
-// taken, so that nothing here recurses.
+// writeChars writes chardata, as ~s and io:put_chars take it: a list of
+// characters, binaries and lists of them, nested, a binary, or an atom, and
+// reports whether it was one. What is left of a list while a list within it
+// is written waits on the scheduler's stack, so that nothing here recurses.
 func writeChars(s *sched, t uint32) bool {
-	if isBinary(t) {
-		n := binaryLen(t)
-		for k := uint32(0); k < n; k++ {
-			emit(s, binaryByte(t, k))
-		}
-		return true
-	}
 	if isAtom(t) {
 		emitName(s, atomName(t))
 		return true
 	}
-	for isCons(t) {
-		i := consIdx(t)
-		h := arena[i]
-		if !isSmall(h) {
+	sp := 0
+	for {
+		switch {
+		case isCons(t):
+			i := consIdx(t)
+			h := arena[i]
+			t = arena[i+1]
+			if isSmall(h) {
+				emit(s, byte(smallVal(h)))
+				continue
+			}
+			if !isCons(h) && !isBinary(h) && h != nilTerm || sp == writeDepth {
+				return false
+			}
+			s.wstack[sp].t = t
+			sp++
+			t = h
+			continue
+		case isBinary(t):
+			n := binaryLen(t)
+			for k := uint32(0); k < n; k++ {
+				emit(s, binaryByte(t, k))
+			}
+		case t != nilTerm:
 			return false
 		}
-		emit(s, byte(smallVal(h)))
-		t = arena[i+1]
+		if sp == 0 {
+			return true
+		}
+		sp--
+		t = s.wstack[sp].t
 	}
-	return t == nilTerm
 }
 
 // format writes a format string with its arguments as io:format does: the
