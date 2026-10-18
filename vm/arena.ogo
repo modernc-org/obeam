@@ -11,7 +11,7 @@
 // the arena in the VM's binary by the mark it begins with; the allocator has
 // the rest.
 
-// The arena's length. The unchecked VM is 54 KB smaller, and make vms builds
+// The arena's length. The unchecked VM is 55 KB smaller, and make vms builds
 // it from a copy of the tree in which arenaLongs is arenaUnchecked, so that
 // the room goes to the heaps. Each is what leaves its VM's binary within the
 // 496 KB the P2's ROM loads from an SD card, _BOOT_P2.BIX, with a little to
@@ -19,8 +19,8 @@
 // both to it.
 const (
 	arenaLongs     = arenaChecked
-	arenaChecked   = 56832 // 222 KB for the image and the heaps above it, since the image left the binary for it, gave 8 KB to the SD card's limit and 2 KB to Erlang's stacktraces, the profiler having left the board's build; before, 160 KB of heaps since M6b, 192 KB from the room before M6b, 128 KB from M4 until the room
-	arenaUnchecked = 70656 // 276 KB
+	arenaChecked   = 56064 // 219 KB for the image and the heaps above it, since the image left the binary for it, gave 8 KB to the SD card's limit, 2 KB to Erlang's stacktraces, the profiler having left the board's build, and 3 KB to the BIFs of OTP's library the shims could not be; before, 160 KB of heaps since M6b, 192 KB from the room before M6b, 128 KB from M4 until the room
+	arenaUnchecked = 70144 // 274 KB
 )
 
 const (

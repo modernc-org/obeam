@@ -20,7 +20,7 @@
 //	                 copied to the root directory of a FAT32 card in the board's
 //	                 slot, it is what the board runs when it is reset
 //	-entry m:f/a     the function to start; the first module's main/0 by default
-//	-unchecked       the VM without its runtime checks: 54 KB more for the heaps,
+//	-unchecked       the VM without its runtime checks: 55 KB more for the heaps,
 //	                 and faster, but a fault of the VM's corrupts memory silently
 //	                 where the checked VM stops with a panic message
 //	-lines=false     leave out the line numbers a crash report names
@@ -149,7 +149,7 @@ The flags may come before or after the files:
                    copied to the root directory of a FAT32 card in the board's slot,
                    it is what the board runs when it is reset
   -entry m:f/a     the function to start; the first module's main/0 by default
-  -unchecked       the VM without its runtime checks: 54 KB more for the heaps, and
+  -unchecked       the VM without its runtime checks: 55 KB more for the heaps, and
                    faster, but a fault of the VM's corrupts memory silently where
                    the checked VM stops with a panic message
   -lines=false     leave out the line numbers a crash report names

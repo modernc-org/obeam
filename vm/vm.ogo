@@ -93,8 +93,8 @@ func Start(entry uint32, n int) bool {
 	return true
 }
 
-// Finished reports whether the entry process has ended, after which the
-// schedulers stop.
+// Finished reports whether the entry process has ended, or erlang:halt was
+// called, after which the schedulers stop.
 func Finished() bool {
 	lock(lockRun)
 	f := stopping
@@ -111,10 +111,13 @@ func Running() int {
 }
 
 // Succeeded reports whether the entry process ended normally rather than with
-// an exception.
+// an exception, or erlang:halt was called with a status of 0.
 func Succeeded() bool {
 	lock(lockRun)
 	d := entryDone
+	if haltDone != procFree {
+		d = haltDone
+	}
 	unlock(lockRun)
 	return d == procExited
 }

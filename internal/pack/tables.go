@@ -90,6 +90,8 @@ var WellKnownAtoms = []string{
 	"function_exported",
 	// A stacktrace's first frame of a BIF: [{error_info, #{module => M}}].
 	"error_info", "module", "erl_erts_errors", "erl_stdlib_errors",
+	"io_lib", "list_to_tuple", "list_to_existing_atom", "node", "nonode@nohost",
+	"ceil", "floor", "halt", "abort",
 }
 
 // A Bif is a function the VM implements itself: what an import of it resolves
@@ -240,6 +242,17 @@ var Bifs = []Bif{
 	{"maps", "merge", 2, "bifMapsMerge"},
 	{"maps", "size", 1, "bifMapSize"},
 	{"maps", "new", 0, "bifMapsNew"},
+	{"erlang", "get", 1, "bifGet"},
+	{"erlang", "$dict", 1, "bifDict"},
+	{"erlang", "node", 0, "bifNode"},
+	{"erlang", "node", 1, "bifNode"},
+	{"erlang", "ceil", 1, "bifCeil"},
+	{"erlang", "floor", 1, "bifFloor"},
+	{"erlang", "list_to_tuple", 1, "bifListToTuple"},
+	{"erlang", "list_to_existing_atom", 1, "bifListToExistingAtom"},
+	{"erlang", "$float", 2, "bifFloatOf"},
+	{"erlang", "halt", 1, "bifHalt"},
+	{"io_lib", "format", 2, "bifIoLibFormat"},
 }
 
 // bifIndex answers the number of a BIF, if there is one.

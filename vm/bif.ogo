@@ -339,6 +339,27 @@ func bifSetelement(s *sched, n uint32) uint32 {
 	return mkBoxed(d)
 }
 
+// bifListToTuple makes a tuple of a list's elements.
+func bifListToTuple(s *sched, n uint32) uint32 {
+	l := listLen(s.bargs[0])
+	if l < 0 {
+		return badarg(s)
+	}
+	if !ensure(s, uint32(l)+1, s.curLive) {
+		return nonValue
+	}
+	p := s.cur
+	i := p.htop
+	arena[i] = mkHeader(hdrTuple, uint32(l))
+	k := i
+	for t := s.bargs[0]; isCons(t); t = arena[consIdx(t)+1] {
+		k++
+		arena[k] = arena[consIdx(t)]
+	}
+	p.htop = k + 1
+	return mkBoxed(i)
+}
+
 func bifTupleSize(s *sched, n uint32) uint32 {
 	if !isTuple(s.bargs[0]) {
 		return badarg(s)
@@ -455,6 +476,29 @@ func bifListToInteger(s *sched, n uint32) uint32 {
 	return intResult(s, v)
 }
 
+// bifListToExistingAtom answers the atom of the image whose name the list's
+// bytes are, as atom_to_list writes a name, or badarg: no atom is made at
+// run time.
+func bifListToExistingAtom(s *sched, n uint32) uint32 {
+	l := s.bargs[0]
+	k := int(listLen(l))
+	for i := range atoms {
+		nm := atoms[i]
+		if nameLen(nm) != k {
+			continue
+		}
+		t, j := l, 0
+		for j < k && arena[consIdx(t)] == mkSmall(int32(nameAt(nm, j))) {
+			t = arena[consIdx(t)+1]
+			j++
+		}
+		if j == k {
+			return mkAtom(uint32(i))
+		}
+	}
+	return badarg(s)
+}
+
 func bifAtomToList(s *sched, n uint32) uint32 {
 	if !isAtom(s.bargs[0]) {
 		return badarg(s)
@@ -569,6 +613,57 @@ func bifMax(s *sched, n uint32) uint32 {
 // Processes, exceptions, time.
 
 func bifSelf(s *sched, n uint32) uint32 { return s.cur.pid() }
+
+// bifNode is node/0 and node/1: the VM is no node of a distributed system,
+// and says so as OTP's does then, node/1 of whatever it is given.
+func bifNode(s *sched, n uint32) uint32 { return mkAtom(atomNonodeNohost) }
+
+// bifGet is get/1, which the compiler makes an instruction: the value of a
+// key in the process dictionary, the heap's first long, or undefined. The
+// rest of the dictionary is erlang.erl's shim, which keeps it, a map, [] before
+// the first put, through bifDict, erlang:'$dict'/1, which puts a dictionary
+// in its place and answers the one that was there.
+func bifGet(s *sched, n uint32) uint32 {
+	d := arena[s.cur.block]
+	if isMap(d) {
+		if i, ok := mapFind(s, d, s.bargs[0]); ok {
+			return mapVal(d, i)
+		}
+	}
+	return mkAtom(atomUndefined)
+}
+
+func bifDict(s *sched, n uint32) uint32 {
+	i := s.cur.block
+	old := arena[i]
+	arena[i] = s.bargs[0]
+	return old
+}
+
+// bifHalt is erlang:halt/1, which erlang.erl's halt/0 and halt/2 call: the
+// schedulers stop when they have ended the turns they are in, nothing more is
+// written, and the halting process goes on nowhere. A status of 0 is a
+// success, an integer, abort or a string any other a failure.
+func bifHalt(s *sched, n uint32) uint32 {
+	st := s.bargs[0]
+	if !(isSmall(st) && smallVal(st) >= 0 || st == mkAtom(atomAbort) || isList(st)) {
+		return badarg(s)
+	}
+	done := uint8(procFailed)
+	if st == mkSmall(0) {
+		done = procExited
+	}
+	lock(lockOut)
+	halted = true
+	unlock(lockOut)
+	lock(lockRun)
+	stopping = true
+	haltDone = done
+	unlock(lockRun)
+	s.bifJump = 0
+	s.bifLive = 0
+	return jumpValue
+}
 
 // bifMakeRef makes a reference: the scheduler's number and its count, so
 // that no two schedulers make the same.
@@ -704,6 +799,37 @@ func bifIoPutChars(s *sched, n uint32) uint32 {
 		return badarg(s)
 	}
 	return okTerm
+}
+
+// bifIoLibFormat is io_lib:format/2: what io:format/2 would write, as a
+// string, flat where OTP's is a deep list of the same characters. The format
+// is written twice, to count the characters and then into the string, room
+// having been made for it between.
+func bifIoLibFormat(s *sched, n uint32) uint32 {
+	s.sink = sinkCount
+	s.binPos = 0
+	ok := format(s, s.bargs[0], s.bargs[1])
+	s.sink = sinkOut
+	cells := s.binPos
+	if !ok {
+		return badarg(s)
+	}
+	if cells == 0 {
+		return nilTerm
+	}
+	if !ensure(s, 2*cells, s.curLive) {
+		return nonValue
+	}
+	p := s.cur
+	at := p.htop
+	s.binAt = at
+	s.binPos = 0
+	s.sink = sinkList
+	format(s, s.bargs[0], s.bargs[1])
+	s.sink = sinkOut
+	p.htop = at + 2*cells
+	arena[at+2*cells-1] = nilTerm
+	return mkCons(at)
 }
 
 func bifIoNl(s *sched, n uint32) uint32 {

@@ -147,7 +147,7 @@ The files:
   `p2` package name for name in snake_case, plus `p2:cog/0`, with no blocking
   waits. The arena was 128 KB from M4 until the room before M6b gave the
   192 KB back, 160 KB since M6b, 232 KB since the image moved into it
-  from the binary, 224 KB since the binary must fit the SD boot's 496 KB, and 222 KB since the stacktraces took 7 KB and the profiler, leaving the board's build, gave 5 back (`arenaLongs` in `vm/arena.ogo`), what the image does not
+  from the binary, 224 KB since the binary must fit the SD boot's 496 KB, 222 KB since the stacktraces took 7 KB and the profiler, leaving the board's build, gave 5 back, and 219 KB since the BIFs of OTP's library that could be no shims took 3 (`arenaLongs` in `vm/arena.ogo`), what the image does not
   take going to the heaps; it is the lever when the hub runs short. `ogo build` says by how much a build
   misses the 512 KB, but when it misses, the size it names is of an attempt
   with other stack slots: compare only builds that fit.
@@ -321,18 +321,21 @@ the tree or be ahead of what this file knows; do not install over it.
   in the top 16 KB while loading), which `TestBootable` in
   `internal/vmbin` holds both VMs to; a larger one does not boot, and the
   board, finding the file, answers no serial loader either (found
-  2026-10-17). The checked VM binary is 504,804 bytes, whatever the image,
-  the unchecked 505,608, 3,100 and 2,296 under; `make budget` says how far.
-  The arenas are 222 and 276 KB: the stacktraces' 6 KB of code took 7 and
-  5 KB of them, and the profiler, out of the board's build since
-  (`profOn`), gave 5 and 5 KB back. The
-  goroutine slots are 800 longs checked; a build with `--gostack N` shows
-  by the size how much of a growth is theirs.
-  The next VM growth may take a kilobyte or two of the arenas. The arena is
-  222 KB (`arenaChecked`): the demo's image takes 69 KB of it and leaves
-  152 KB to the heaps, which `obeam` reports. The unchecked VM's arena is
-  276 KB (`arenaUnchecked`, which `make vms` swaps in, in a copy of the
-  tree under `build/unchecked`).
+  2026-10-17). The checked VM binary is 506,632 bytes, whatever the image,
+  the unchecked 507,044, 1,272 and 860 under; `make budget` says how far.
+  The arenas are 219 and 274 KB: the stacktraces' 6 KB of code took 7 and
+  5 KB of them, the profiler, out of the board's build since (`profOn`),
+  gave 5 and 5 KB back, and the BIFs of 2026-10-18 took 3 and 2. The
+  goroutine slots are 800 longs checked, 798 of them the deepest's; a
+  build with `--gostack N` shows by the size how much of a growth is
+  theirs. In the checked build every field of a pointer and every `arena`
+  index read is a test and a jump of 16 to 44 bytes: a new function reads a
+  field once into a local, and `ogo build --report` (ogo master) names the
+  largest functions and variables. The next VM growth takes the arenas: the
+  arena is 219 KB (`arenaChecked`): the demo's image takes 69 KB of it and
+  leaves 149 KB to the heaps, which `obeam` reports. The unchecked VM's
+  arena is 274 KB (`arenaUnchecked`, which `make vms` swaps in, in a copy of
+  the tree under `build/unchecked`).
 - **The board's slot**: p2-11's 32 GB card belongs there; the user's 4 GB
   card (FAT32, partition type 0x0b) is for OctoBeam's SD tests. With the
   P2-EDGE's DIP switch SD on and a card holding `_BOOT_P2.BIX`, the board
@@ -412,10 +415,27 @@ the tree or be ahead of what this file knows; do not install over it.
   nested answer's shape is held too (`string` 1.2 million calls, `queue`
   3,000 runs of 25 operations, the funs' calls in order with them); then a
   corpus module in the twin and on the board. A new shim whose answers are
-  its arguments' gets an escript there. `erl/shim/erlang.erl` serves a call
-  of `erlang:F/A` that is no BIF of the VM's: the packer takes a BIF first
-  and a packed module's function after, so a guard BIF (`node/0`,
-  `ceil/1`, `floor/1`) cannot be a shim, a guard calling no function.
+  its arguments' gets an escript there; a shim's call of a BIF of the VM's
+  own that OTP has not, `erlang:'$float'/2`, `shimcheck.sh` points at
+  `scripts/shimcheck/obeam_vm.erl`, which does it in OTP's terms.
+  `erl/shim/erlang.erl` serves a call of `erlang:F/A` that is no BIF of
+  the VM's: the packer takes a BIF first and a packed module's function
+  after, so what `erlc` makes an instruction of (`get/1`, `node/0`,
+  `ceil/1`, `floor/1`; `erlc -S` says) cannot be a shim, an instruction
+  calling no function. Where a library function needs the VM, the VM gives
+  a small BIF named `erlang:'$name'` and the shim does the rest:
+  `erlang:'$dict'/1` swaps the process dictionary, a map in the heap's first
+  long, which `gc` keeps first; `erlang:'$float'/2` is the float nearest
+  0.D times 10^k, found by halving the floats' bits and comparing digits
+  (`readFloat`), the syntax being the shim's: 5 to 34 ms a call on the
+  board, a trade-off the README names and the user left for later on
+  2026-10-18 (DESIGN.md has the faster ways and their bytes). `~e`, `~f` and `~g` and the
+  shim's `float_to_list/2` round the exact 21 digits `fdigits` writes, as
+  OTP's `io_lib_format` rounds `float_to_list/1`'s; `TestDigits21` and
+  `TestReadFloat` hold them to Go's `strconv`. `io_lib:format/2` writes the
+  format twice, through `put`'s sinks: counting, then into a string's cells
+  at the heap's top. `halt/1` sets `halted` under `lockOut`, after which
+  `put` writes nothing, and `stopping`, and the process jumps to 0.
 - **A shim that spawns** begins the new process in a fun
   (`spawn_link(fun() -> init_it(...) end)`): a library is packed by what
   the program reaches, and `spawn(M, F, A)` with atoms reaches nothing, so
@@ -490,7 +510,7 @@ the tree or be ahead of what this file knows; do not install over it.
   not the compiler's regrouping into `{test,is_lt,...}`, `{bif,...}` and
   `{gc_bif,...}` that `erlc -S` and beam_disasm print; `erl/oracle.escript`
   undoes that regrouping so the two can be compared.
-- `erl/` holds the corpus: thirty-five modules, each with a `main/0` that prints
+- `erl/` holds the corpus: thirty-nine modules, each with a `main/0` that prints
   its result, so that the board's twin can be held to `erl` later; `blink`
   calls the board's `p2` module and does not run under `erl`. The `.beam`
   files are committed, compiled by `make beam` with `+deterministic`; commit

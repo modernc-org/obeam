@@ -60,7 +60,7 @@ var operatorNames = map[string]string{
 	"+": "Plus", "-": "Minus", "*": "Times", "++": "Append", "--": "Subtract",
 	"==": "Eq", "/=": "Ne", "=:=": "EqExact", "=/=": "NeExact",
 	"<": "Lt", ">": "Gt", "=<": "Le", ">=": "Ge", "/": "Fdiv",
-	"Elixir.Range": "ElixirRange",
+	"Elixir.Range": "ElixirRange", "nonode@nohost": "NonodeNohost",
 }
 
 // ident turns is_eq_exact into IsEqExact, and an operator into its name.

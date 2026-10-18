@@ -66,7 +66,7 @@ of another OTP release may use an instruction OctoBeam does not know yet, and
 
    ```
    $ obeam run examples/hello.beam
-   obeam: hello.binary: hello:main/0, the VM checked; the image 511 longs, 12 of them code; 220 KB of the arena left for the heaps
+   obeam: hello.binary: hello:main/0, the VM checked; the image 539 longs, 12 of them code; 216 KB of the arena left for the heaps
    obeam: loading hello.binary; Ctrl-] leaves the terminal
    ( Entering terminal mode.  Press Ctrl-] or Ctrl-Z to exit. )
    obeam: hello:main/0, 12 longs of code, 7 schedulers
@@ -141,7 +141,7 @@ The flags, before or after the files (`obeam help`):
 | `-o FILE` | the binary to write; by default the entry's module's name, `.binary`, in the current directory |
 | `-sd` | name it `_BOOT_P2.BIX`, the file the P2 boots from an SD card |
 | `-entry m:f/a` | the function to start, exported, of no arguments; the first module's `main/0` by default |
-| `-unchecked` | the VM without its runtime checks: 54 KB more for the heaps, and a fifth faster, but a fault of the VM's corrupts memory silently where the checked VM stops with a `panic:` message. Develop with the default. |
+| `-unchecked` | the VM without its runtime checks: 55 KB more for the heaps, and a fifth faster, but a fault of the VM's corrupts memory silently where the checked VM stops with a `panic:` message. Develop with the default. |
 | `-lines=false` | leave out the line numbers a crash report names, for room |
 | `-lib A.beam,...` | more library modules, of which the program takes what it reaches |
 | `-p PORT` | with `run`: the board's serial port |
@@ -149,11 +149,12 @@ The flags, before or after the files (`obeam help`):
 
 ## What the VM has and has not
 
-The VM's BIFs include `io:format` with its widths and precisions,
-`erlang`'s arithmetic, comparisons, type tests, lists, tuples, binaries,
-maps, processes, links, monitors, registered names and exceptions,
-`lists:reverse`, `member` and `keyfind`, and Elixir's `IO`, `Kernel.inspect`
-and `String.Chars`. The shims `obeam` carries are Erlang modules for the
+The VM's BIFs include `io:format` and `io_lib:format` with their widths and
+precisions, `erlang`'s arithmetic, comparisons, type tests, lists, tuples,
+binaries, maps, processes, links, monitors, registered names, exceptions,
+`get/1`, `list_to_tuple/1`, `list_to_existing_atom/1`, `node/0`, `ceil/1`,
+`floor/1` and `halt/1`, `lists:reverse`, `member` and `keyfind`, and
+Elixir's `IO`, `Kernel.inspect` and `String.Chars`. The shims `obeam` carries are Erlang modules for the
 rest of what programs reach for first: OTP's `gen_server` (start and
 start_link, named or not, call, cast, reply and stop, timeouts and
 `{continue, _}`, the optional callbacks, and a crash calling `terminate/2`),
@@ -166,8 +167,12 @@ UTF-8), `timer` (`sleep`, `tc`, the one-shot and interval timers and
 and `bytes/1`, from the P2's hardware generator), and the functions of
 `erlang` that Erlang can write (`tuple_to_list/1`, `spawn_monitor/1,3`,
 `integer_to_list/2`, `list_to_integer/2`, `binary_to_integer/1,2`,
-`iolist_size/1`, `convert_time_unit/3` and a few more); and Elixir's `Enum`
-and `Map`. A program takes what it calls of them and nothing else, so a
+`iolist_size/1`, `convert_time_unit/3` and a few more), with the process
+dictionary's (`put/2`, `get/0`, `get_keys/0,1`, `erase/0,1`), the timers of
+`send_after/3,4`, `start_timer/3,4`, `cancel_timer/1,2` and
+`read_timer/1,2`, and the floats' conversions (`float_to_list/1,2`,
+`float_to_binary/1,2`, `list_to_float/1`, `binary_to_float/1`); and Elixir's
+`Enum` and `Map`. A program takes what it calls of them and nothing else, so a
 child spec's start function, which a supervisor calls by `apply`, is to be
 the program's own, as in OTP's examples (`{my_server, start_link, []}`): a
 shim's named there, `{gen_server, start_link, ...}`, is not packed.
@@ -175,26 +180,37 @@ shim's named there, `{gen_server, start_link, ...}`, is not packed.
 Not yet: bignums, bitstrings that are not whole bytes, OTP's other
 behaviours (`gen_statem`, `gen_event` and the like) and the `sys` and
 `proc_lib` sides of `gen_server` and `supervisor`, `~p`'s line breaking,
-BIFs such as the process dictionary's, `list_to_tuple/1`, `list_to_atom/1`,
-the float conversions, `node/0`, `ceil/1`, `floor/1` and `halt/0`, and OTP's
-and Elixir's libraries beyond the shims. Of the shims, `string` takes a
+atoms made at run time (`list_to_atom/1`; `list_to_existing_atom/1` answers
+the program's, comparing a name's bytes, UTF-8 past ASCII), and OTP's and
+Elixir's libraries beyond the shims. Of the shims, `string` takes a
 grapheme cluster to be a character, or `"\r\n"`, changes the case of
 Latin-1's letters only, and has no `to_float/1`; `rand` takes no seed of
-one's own, its numbers being the hardware's; and `proplists:get_keys/1`
-answers its keys in a map's order, where OTP's are in its set's. The functions of OTP's `lists` that the VM has
+one's own, its numbers being the hardware's; `proplists:get_keys/1`,
+`get/0` and `get_keys/0,1` answer in a map's order, where OTP's are in a
+hash table's; `io_lib:format/2` answers a flat list where OTP's is deep;
+`float_to_list/2` works, as `~e` and `~f` do, from the 21 significant digits
+of `float_to_list/1`, writing 0s past them where OTP writes the exact value's
+digits; an `erlang:send_after/3` timer is not cancelled when its process
+ends; `node/1` answers `nonode@nohost` for whatever it is given; and
+`halt/2` reads no options. The functions of OTP's `lists` that the VM has
 as BIFs, `reverse`, `member` and `keyfind`, fail as BIFs do, with `badarg`,
 where OTP's `reverse` fails with a `function_clause` of its own. A map with atom
 keys prints its keys in term order, where `erl` and `elixir` print them in
 the order of their atom tables, and a map of more than 32 keys in term
-order, where OTP prints its hash trie's. The arena is 222 KB (276 KB
+order, where OTP prints its hash trie's. The arena is 219 KB (274 KB
 unchecked), the image at its bottom and the process heaps above, so the
-demo's image of 69 KB leaves its heaps 152 KB and a hello, world 220 KB; the
+demo's image of 69 KB leaves its heaps 149 KB and a hello, world 216 KB; the
 VM is no larger than the 496 KB the P2's ROM boots from an SD card. A
 process's stack is bounded by its largest heap block, 8,192 longs, so a
 recursion 20,000 deep that Erlang takes ends here in `system_limit`; write it
 as a tail call. The links and monitors of all processes together are 256 at
 most, a record at each end. Floats are 32 bits wide: what is not exact in 32
-bits prints differently from Erlang's 64.
+bits prints differently from Erlang's 64. And reading a float is slow, the
+VM's code being kept small for the heaps' sake: `list_to_float/1` and
+`binary_to_float/1` take 5 to 34 ms a call on the board, about 10 for
+`"3.14"`, and writing one, by `io:format`, `io_lib:format` or
+`float_to_list/1`, 2 to 4 ms; a program that reads many numbers is faster
+reading integers.
 
 ## Status, and the repository
 
@@ -247,9 +263,10 @@ them, on seven scheduler cogs, running modules compiled by `erlc` and
   hundred processes, string interpolation of every kind, and maps, structs
   and ranges, held to what `elixir` prints; `ex/shim/` the parts of Elixir's
   `Enum` and `Map` they use, in Erlang.
-- `erl/`: the corpus, thirty-five small Erlang modules from `hello` to a
+- `erl/`: the corpus, thirty-nine small Erlang modules from `hello` to a
   process ring, a concurrent prime sieve, linked workers, exit reasons,
-  stacktraces, timeouts, floats, maps, binary parsers, OTP's `lists`, `gen_server`,
+  stacktraces, timeouts, floats read and written, maps, binary parsers, the
+  process dictionary, `erlang`'s timers, `halt`, OTP's `lists`, `gen_server`,
   `supervisor`, `string`, `timer`, `queue`, `proplists` and `rand`, and
   `blink` and `leds` for the board's LEDs, compiled with OTP 27 and
   committed; `erl/shim/` OTP's `gen_server`, `supervisor`, `lists`,

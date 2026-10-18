@@ -229,10 +229,11 @@ func writeKind(s *sched, kind int, t uint32) bool {
 // argument: once to count the bytes, once into the binary, the argument read
 // again after the room is made, a collection perhaps having moved it.
 func binaryOf(s *sched, kind int) uint32 {
-	s.ncap = 0
+	s.sink = sinkCount
+	s.binPos = 0
 	ok := writeKind(s, kind, s.bargs[0])
-	n := uint32(s.ncap)
-	s.ncap = -1
+	n := s.binPos
+	s.sink = sinkOut
 	if !ok {
 		return badarg(s)
 	}
@@ -248,8 +249,9 @@ func binaryOf(s *sched, kind int) uint32 {
 	}
 	s.binAt = i + 2
 	s.binPos = 0
+	s.sink = sinkBinary
 	writeKind(s, kind, s.bargs[0])
-	s.binAt = 0
+	s.sink = sinkOut
 	s.cur.htop += 2 + longs
 	return mkBoxed(i)
 }

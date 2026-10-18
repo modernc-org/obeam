@@ -1019,3 +1019,55 @@ flat list only: it and `io:put_chars` take nested chardata now, the lists
 waiting on the writer's stack, 312 bytes of the checked VM and 184 of the
 unchecked, which fit with the arenas as they were: 504,804 and 505,608
 bytes, 3,100 and 2,296 under the limit.
+
+**The BIFs the shims could not be**, 2026-10-18. What `erlc` makes an
+instruction of is the VM's: `get/1`, `node/0,1`, `ceil/1`, `floor/1`, and
+with them `io_lib:format/2`, `list_to_tuple/1`, `list_to_existing_atom/1`
+and `halt/1`, which Erlang cannot write. The rest are `erlang.erl`'s over two
+small BIFs of the VM's own: the process dictionary, `put/2`, `get/0`,
+`erase/0,1` and the others, is a map in the heap's first long, which the
+collector keeps first, swapped by `erlang:'$dict'/1`; and the floats'
+conversions. `~e`, `~f` and `~g` had worked in the board's 32-bit floats,
+which wrote noise past the seventh digit, and `~.21e` overran a buffer of
+12: they, and the shim's `float_to_list/1,2`, now round the exact 21
+digits OTP's `float_to_list/1` writes, as OTP's `io_lib_format` rounds them,
+so the board and `erl` write the same for every float exact in 32 bits,
+and `TestDigits21` holds the digits to Go's for a hundred thousand floats.
+`list_to_float/1` is the shim's syntax and `erlang:'$float'/2`'s value: a
+first version, a 224-bit integer scaled by tens and rounded, was 2.4 KB of
+the checked VM; the float is found now by halving the range of the floats'
+bits, each float compared with the decimal digit by digit through the
+writer's digit loop, then the midpoint above it for the tie, exact for any
+number of digits in a third of the code and 31 comparisons, which
+`TestReadFloat` holds to Go's `strconv.ParseFloat` on 70,000 decimals and
+the exact midpoints between floats. `erlang:send_after/3` and the other
+timers are one process of the shim's. `io_lib:format/2` writes the format
+twice, counting and then into a string at the heap's top, which made
+`emit`'s sinks one function, `put`; and only a directive with a field width
+or a `~s` with a precision is captured now: the capture had cut any
+directive at 256 bytes, a `~w` of a list of 120 integers among them. `make
+shimcheck` holds the shim's float functions too, 20,986 calls of `erlang`,
+`erlang:'$float'/2` pointed at an equivalent in OTP's terms. The checked
+build, where every field of a pointer and every index of `arena` read is a
+test and a jump, took 8,132 bytes at first, 1 KB of it a dictionary field in
+the 256 processes; moving the dictionary into the heap, the syntax into the
+shim, the reader to the halving and fields into locals brought it to 4,912
+checked and 3,492 unchecked, the goroutines' deepest 791 longs to 798 of
+800. The arenas gave 3 and 2 KB: 219 and 274 KB, the VMs 506,632 and
+507,044 bytes, 1,272 and 860 under the limit, the demo's heaps 149 and
+204 KB, its run on the board 5,522 and 4,456 ms, the committed VM's 5,487
+checked the same hour, and the corpus's new modules, `pdict`, `etimer`,
+`convs` and `halts`, print what `erl` prints in the twin and on the board in
+both builds. What the small reader costs in time, measured on the board in
+the checked build: `list_to_float/1` takes 5 to 34 ms a call, about 10 for
+`"3.14"`, the 31 comparisons each scaling and walking the digits;
+`float_to_list/1` 4 ms; a float through `io_lib:format/2` 1.93 ms by `~w`,
+2.21 by `~.2f`, 2.26 by `~f`, 2.35 by `~e`, 2.24 by `~g` and 2.60 by
+`~.21e`, against 0.31 for an integer by `~b` (unchecked 1.41, 1.67, 1.71,
+1.81, 1.70, 2.02 and 0.29), so the exact digits cost `~f` some 15% over the
+shortest writer `~w` keeps. The user left the speed for later on
+2026-10-18, room before speed, and the README names it a trade-off. Two
+ways to a faster reader, neither tried: a first guess from the digits
+computed in 32-bit floats, then the halving over a few neighbouring floats
+only, some 250 bytes by estimate; or the scaled 224-bit integer of the first
+version, 1.1 KB more of the checked VM.

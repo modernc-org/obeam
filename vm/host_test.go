@@ -9,6 +9,7 @@ package vm
 import (
 	"bytes"
 	"math"
+	"math/big"
 	"math/rand"
 	"os"
 	"os/exec"
@@ -68,7 +69,7 @@ func TestErl(t *testing.T) {
 	if err != nil {
 		t.Skip("no erl on PATH")
 	}
-	for _, m := range []string{"hello", "fac", "fib", "lst", "tuples", "funs", "pingpong", "ring", "sieve", "counter", "exc", "links", "sup", "flt", "fmt", "mp", "bin", "listlib", "exits", "waits", "gs", "sv", "stacks", "erls", "tmr", "rnd", "strs", "props", "queues", "bench"} {
+	for _, m := range []string{"hello", "fac", "fib", "lst", "tuples", "funs", "pingpong", "ring", "sieve", "counter", "exc", "links", "sup", "flt", "fmt", "mp", "bin", "listlib", "exits", "waits", "gs", "sv", "stacks", "erls", "tmr", "rnd", "strs", "props", "queues", "pdict", "etimer", "convs", "halts", "bench"} {
 		t.Run(m, func(t *testing.T) {
 			var files []string
 			for _, mod := range append([]string{m}, uses[m]...) {
@@ -206,24 +207,8 @@ func runImage(img *pack.Image) []byte {
 // the same, for the powers of ten and of two, the ends of the range, and a
 // hundred thousand floats of random bits.
 func TestShortest(t *testing.T) {
-	var fs []float32
-	for e := -45; e <= 38; e++ {
-		f := float32(math.Pow(10, float64(e)))
-		fs = append(fs, f, math.Nextafter32(f, 0), math.Nextafter32(f, math.MaxFloat32))
-	}
-	for e := -149; e <= 127; e++ {
-		fs = append(fs, float32(math.Ldexp(1, e)))
-	}
-	fs = append(fs, math.MaxFloat32, math.SmallestNonzeroFloat32, 0.1, 0.3, 1.0/3, 0.0015, 16777216, 16777215)
-	rng := rand.New(rand.NewSource(1))
-	for len(fs) < 100000 {
-		f := math.Float32frombits(rng.Uint32() & 0x7fffffff)
-		if f != 0 && !math.IsInf(float64(f), 0) && !math.IsNaN(float64(f)) {
-			fs = append(fs, f)
-		}
-	}
 	s := &scheds[0]
-	for _, f := range fs {
+	for _, f := range floatSample() {
 		if f == 0 {
 			continue
 		}
@@ -235,6 +220,145 @@ func TestShortest(t *testing.T) {
 		n, e := shortest(s, math.Float32bits(f), &d)
 		if got := string(d[:n]); got != mant || e != wantE {
 			t.Fatalf("%v (%#08x): digits %s e%d, Go's %s e%d", f, math.Float32bits(f), got, e, mant, wantE)
+		}
+	}
+}
+
+// floatSample is the floats TestShortest and TestDigits21 try: the powers of
+// ten and their neighbours, the powers of two, the ends of the range, and a
+// hundred thousand of random bits, none negative.
+func floatSample() []float32 {
+	var fs []float32
+	for e := -45; e <= 38; e++ {
+		f := float32(math.Pow(10, float64(e)))
+		fs = append(fs, f, math.Nextafter32(f, 0), math.Nextafter32(f, math.MaxFloat32))
+	}
+	for e := -149; e <= 127; e++ {
+		fs = append(fs, float32(math.Ldexp(1, e)))
+	}
+	fs = append(fs, math.MaxFloat32, math.SmallestNonzeroFloat32, 0.1, 0.3, 1.0/3, 0.0015, 16777216, 16777215, 0)
+	rng := rand.New(rand.NewSource(1))
+	for len(fs) < 100000 {
+		f := math.Float32frombits(rng.Uint32() & 0x7fffffff)
+		if !math.IsInf(float64(f), 0) && !math.IsNaN(float64(f)) {
+			fs = append(fs, f)
+		}
+	}
+	return fs
+}
+
+// TestDigits21 holds fdigits, the 21 digits ~e, ~f and ~g and the shim's
+// float_to_list round again, to Go's strconv.FormatFloat(f, 'e', 20, 64) of
+// the same value, which rounds the exact digits half to even as C's printf
+// does for OTP.
+func TestDigits21(t *testing.T) {
+	s := &scheds[0]
+	for _, f := range floatSample() {
+		want := strconv.FormatFloat(float64(f), 'e', fdLen-1, 64)
+		mant, exp, _ := strings.Cut(want, "e")
+		mant = strings.Replace(mant, ".", "", 1)
+		wantE, _ := strconv.Atoi(exp)
+		var d [fdLen]byte
+		e := fdigits(s, f, &d)
+		var b strings.Builder
+		for _, c := range d {
+			b.WriteByte('0' + c)
+		}
+		if got := b.String(); got != mant || e != wantE {
+			t.Fatalf("%v (%#08x): digits %s e%d, Go's %s e%d", f, math.Float32bits(f), got, e, mant, wantE)
+		}
+	}
+}
+
+// TestReadFloat holds readFloat, erlang:'$float'/2's, to Go's
+// strconv.ParseFloat(s, 32), which rounds to the nearest 32-bit float, ties to
+// even: decimals of up to seventy digits with exponents that reach past both
+// ends of the range, and the halfway cases between two floats, exact in their
+// 120 digits, and a hair either side. The digits and the power of ten are
+// what erlang.erl's list_to_float/1 makes of the syntax, which convs holds to
+// erl's; the list is made at the arena's top, nothing running.
+func TestReadFloat(t *testing.T) {
+	s := &scheds[0]
+	read := func(str string) (uint32, bool) {
+		mant, exp, _ := strings.Cut(strings.ToLower(str), "e")
+		x := 0
+		if exp != "" {
+			var err error
+			if x, err = strconv.Atoi(exp); err != nil {
+				t.Fatal(err)
+			}
+		}
+		neg := strings.HasPrefix(mant, "-")
+		whole, frac, _ := strings.Cut(strings.TrimLeft(mant, "+-"), ".")
+		digits := strings.TrimLeft(whole+frac, "0")
+		at := uint32(arenaLongs - 2*len(digits) - 2)
+		l := uint32(nilTerm)
+		for i := len(digits) - 1; i >= 0; i-- {
+			k := at + 2*uint32(i)
+			arena[k] = mkSmall(int32(digits[i]))
+			arena[k+1] = l
+			l = mkCons(k)
+		}
+		u, ok := readFloat(s, l, x-len(frac)+len(digits))
+		if neg {
+			u |= 1 << 31
+		}
+		return u, ok
+	}
+	rng := rand.New(rand.NewSource(2))
+	digits := func(n int) string {
+		b := make([]byte, n)
+		for i := range b {
+			b[i] = byte('0' + rng.Intn(10))
+		}
+		return string(b)
+	}
+	var strs []string
+	for i := 0; i < 50000; i++ {
+		str := digits(1+rng.Intn(35)) + "." + digits(1+rng.Intn(35))
+		if rng.Intn(4) != 0 {
+			str += []string{"e", "E", "e+", "e-"}[rng.Intn(4)] + strconv.Itoa(rng.Intn(80))
+		}
+		if rng.Intn(2) == 0 {
+			str = []string{"-", "+"}[rng.Intn(2)] + str
+		}
+		strs = append(strs, str)
+	}
+	for i := 0; i < 20000; i++ {
+		// Halfway between two floats, or a hair either side.
+		f := math.Float32frombits(rng.Uint32() & 0x7f7fffff)
+		next := math.Nextafter32(f, math.MaxFloat32)
+		mid := new(big.Float).SetPrec(200).Add(big.NewFloat(float64(f)), big.NewFloat(float64(next)))
+		mid.Quo(mid, big.NewFloat(2))
+		str := mid.Text('e', 120)
+		mant, exp, _ := strings.Cut(str, "e")
+		if !strings.Contains(mant, ".") {
+			mant += ".0"
+		}
+		switch rng.Intn(3) {
+		case 1:
+			mant += "1"
+		case 2:
+			mant = strings.TrimRight(mant, "0")
+			if strings.HasSuffix(mant, ".") {
+				mant += "0"
+			}
+		}
+		strs = append(strs, mant+"e"+exp)
+	}
+	strs = append(strs, "3.4028235e38", "3.4028236e38", "1.0e39", "1.4e-45", "7.0e-46", "7.1e-46", "1.0e-46", "0.0", "-0.0",
+		"0.0e99999", "1.0e-99999", "-1.0e-99999", "1.0e99999", "0.000000000000000000000000000000000000000000000000000000001e56")
+	for _, str := range strs {
+		u, ok := read(str)
+		want, err := strconv.ParseFloat(str, 32)
+		if err != nil {
+			if ok {
+				t.Fatalf("%s: %v, Go's %v", str, math.Float32frombits(u), err)
+			}
+			continue
+		}
+		if !ok || u != math.Float32bits(float32(want)) {
+			t.Fatalf("%s: %#08x %v, Go's %#08x", str, u, ok, math.Float32bits(float32(want)))
 		}
 	}
 }

@@ -18,7 +18,7 @@ The first release.
 - **`obeam`, one program for users**: `obeam hello.beam` writes `hello.binary`,
   the VM with the program in its arena, and `obeam run hello.beam` loads it onto
   a P2 board and shows what it prints. It carries the VM built twice, checked
-  and, for `-unchecked`, without the runtime checks and with 54 KB more for the
+  and, for `-unchecked`, without the runtime checks and with 55 KB more for the
   heaps, the shims and a P2 loader (`obeam loadp2`), so nothing else is
   installed. `go install modernc.org/obeam@latest`, or a release zip.
 - **Without a computer**: `obeam -sd` writes `_BOOT_P2.BIX`, which the P2's ROM
@@ -46,6 +46,21 @@ The first release.
   and conversions in a base among them; each held to OTP's own.
 - **`~s` and `io:put_chars` take nested chardata**, as OTP's do: what
   `string:pad/2` and `string:replace/3` answer prints.
+- **The process dictionary**, `put/2`, `get/0,1`, `get_keys/0,1` and
+  `erase/0,1`; **`io_lib:format/2`**; `list_to_tuple/1`,
+  `list_to_existing_atom/1` and `binary_to_existing_atom/1,2`; `node/0,1`;
+  `ceil/1` and `floor/1`; and `halt/0,1,2`, after which nothing more is
+  written.
+- **`erlang:send_after/3,4`, `start_timer/3,4`, `cancel_timer/1,2` and
+  `read_timer/1,2`**, as a shim: one process keeps the timers.
+- **The floats read and written as OTP does**: `float_to_list/1,2` and
+  `float_to_binary/1,2` with `decimals`, `scientific`, `compact` and `short`,
+  `list_to_float/1` and `binary_to_float/1`, the nearest 32-bit float to any
+  number of digits; and `~e`, `~f` and `~g` from the exact 21 digits OTP
+  writes them from, at any precision, where the VM's own worked in 32-bit
+  floats. A directive without a field width writes all it has, where it was
+  cut at 256 bytes. Reading a float is slow, 5 to 34 ms on the board, a trade
+  of speed for the heaps' room.
 - **Stacktraces as OTP's**: a failing BIF's or operator's own frame with its
   arguments and `error_info`, a `function_clause`'s and an `undef`'s with the
   function's arguments, and `erlang:raise/3` keeping the stacktrace it is

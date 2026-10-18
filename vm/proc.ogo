@@ -127,8 +127,9 @@ type sched struct {
 	fbuf     [256]byte     // a format string being written
 	cap      [capSize]byte // what a padded directive wrote
 	ncap     int32         // how much of it, or -1 while nothing is captured
-	binAt    uint32        // where a binary being written begins, its first byte's long, or 0
-	binPos   uint32        // and the next byte's index in it
+	sink     uint8         // where put sends what is written: sinkOut, or a term being made
+	binAt    uint32        // where a binary or a string being written begins, the first byte's long or the first cell
+	binPos   uint32        // and the next byte's index in it, or the bytes counted
 
 	steps      uint32        // instructions interpreted
 	cb         [cbLen]uint32 // the core's block
@@ -154,8 +155,10 @@ var (
 	scheds    [nsched]sched
 	runHead   uint32 // the run queue, under lockRun
 	runTail   uint32
-	stopping  bool             // under lockRun: the entry process has ended
+	stopping  bool             // under lockRun: the entry process has ended, or erlang:halt was called
 	entryDone uint8            // under lockRun: how it ended
+	haltDone  uint8            // under lockRun: how erlang:halt said the program ended, or procFree
+	halted    bool             // under lockOut: erlang:halt was called, and nothing more is written
 	running   uint32           // under lockRun: schedulers in their loops
 	timers    [maxProcs]uint32 // under lockRun: the processes waiting with a timeout, by index; an entry may be stale
 	ntimers   uint32
@@ -186,6 +189,8 @@ func procsInit() {
 	runTail = noProc
 	stopping = false
 	entryDone = procFree
+	haltDone = procFree
+	halted = false
 	running = 0
 	ntimers = 0
 }
@@ -222,7 +227,9 @@ func spawn(entry, nargs, argLongs uint32) *Proc {
 	p.gen++
 	p.block = b
 	p.order = order
-	p.htop = b
+	// The heap's first long is the process dictionary, [] for none yet.
+	arena[b] = nilTerm
+	p.htop = b + 1
 	p.stop = b + 1<<order
 	p.pc = entry
 	p.cp = 0

@@ -5,11 +5,20 @@
 // Writing terms and io:format, byte by byte and with no recursion: a compound
 // term's parts wait on a stack of the scheduler's. What a directive writes
 // goes through the scheduler's capture buffer first when it has a width, so
-// that it can be padded.
+// that it can be padded, or a precision that cuts it.
 
 const (
 	writeDepth = 64
 	capSize    = 256 // the most a padded directive can write
+)
+
+// Where put sends a byte: the serial line, or, while a term is made of what a
+// writer writes, the count of its bytes, then the term.
+const (
+	sinkOut = iota
+	sinkCount
+	sinkBinary
+	sinkList
 )
 
 // A wframe is a compound term being written: a list, with what is left of it
@@ -29,14 +38,8 @@ type wframe struct {
 }
 
 // emit writes a byte of output: into the capture buffer while one is open,
-// else to the output hook.
+// else where put sends it.
 func emit(s *sched, b byte) {
-	if s.binAt != 0 {
-		// Into a binary being made, its longs zeroed.
-		arena[s.binAt+s.binPos/4] |= uint32(b) << (8 * (s.binPos % 4))
-		s.binPos++
-		return
-	}
 	if s.ncap >= 0 {
 		if s.ncap < capSize {
 			s.cap[s.ncap] = b
@@ -44,7 +47,33 @@ func emit(s *sched, b byte) {
 		s.ncap++
 		return
 	}
-	out(b)
+	put(s, b)
+}
+
+// put writes a byte where the scheduler's output goes: to the serial line,
+// under the output's lock, unless erlang:halt has been called; or, byte binPos
+// of what a writer writes, to the count of them, into a binary being made at
+// binAt, its longs zeroed, or into a string being made there, the last
+// cell's tail set by its maker. The room is made between the count and the
+// writing.
+func put(s *sched, b byte) {
+	k := s.sink
+	if k == sinkOut {
+		if !halted {
+			out(b)
+		}
+		return
+	}
+	n := s.binPos
+	s.binPos = n + 1
+	switch k {
+	case sinkBinary:
+		arena[s.binAt+n/4] |= uint32(b) << (8 * (n % 4))
+	case sinkList:
+		i := s.binAt + 2*n
+		arena[i] = mkSmall(int32(b))
+		arena[i+1] = mkCons(i + 2)
+	}
 }
 
 func emits(s *sched, str string) {
@@ -568,14 +597,21 @@ func directive(s *sched, k, n int, args uint32) (int, uint32, bool) {
 	}
 	a := arena[consIdx(args)]
 	args = arena[consIdx(args)+1]
-	s.ncap = 0
+	// Only a field or a string cut short is captured, a capture holding
+	// capSize bytes: a long term written whole goes straight out.
+	capture := width >= 0 || d == 's' && prec >= 0
+	if capture {
+		s.ncap = 0
+	}
 	ok := writeDirective(s, d, a, width, prec)
 	got := s.ncap
 	s.ncap = -1
 	if !ok {
 		return k, args, false
 	}
-	padded(s, got, width, left, pad)
+	if capture {
+		padded(s, got, width, left, pad)
+	}
 	return k, args, true
 }
 
@@ -630,13 +666,15 @@ func writeDirective(s *sched, d byte, a uint32, width, prec int) bool {
 		}
 		writeIntBase(s, intVal(a), base, d == 'B')
 	case 'e', 'f', 'g':
-		if !isNumber(a) {
-			return false
-		}
-		f := float32(numVal(a))
+		// A float only, and ~e of two digits at least, the others of one,
+		// as OTP's io_lib_format takes them.
 		if prec < 0 {
 			prec = 6
 		}
+		if !isFloat(a) || prec < 1 || d == 'e' && prec < 2 {
+			return false
+		}
+		f := floatVal(a)
 		switch d {
 		case 'e':
 			writeExp(s, f, prec)
@@ -659,15 +697,15 @@ func padded(s *sched, got int32, width int, left bool, pad byte) {
 	}
 	if !left {
 		for w := int32(width); w > got; w-- {
-			out(pad)
+			put(s, pad)
 		}
 	}
 	for i := int32(0); i < got; i++ {
-		out(s.cap[i])
+		put(s, s.cap[i])
 	}
 	if left {
 		for w := int32(width); w > got; w-- {
-			out(pad)
+			put(s, pad)
 		}
 	}
 }

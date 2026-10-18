@@ -146,7 +146,7 @@ var opNames = [256]string{
 }
 
 // nb is how many BIFs there are, and bifNames their names, by number.
-const nb = 135
+const nb = 146
 
 var bifNames = [nb]string{
 	"erlang:+/2",
@@ -284,4 +284,15 @@ var bifNames = [nb]string{
 	"maps:merge/2",
 	"maps:size/1",
 	"maps:new/0",
+	"erlang:get/1",
+	"erlang:$dict/1",
+	"erlang:node/0",
+	"erlang:node/1",
+	"erlang:ceil/1",
+	"erlang:floor/1",
+	"erlang:list_to_tuple/1",
+	"erlang:list_to_existing_atom/1",
+	"erlang:$float/2",
+	"erlang:halt/1",
+	"io_lib:format/2",
 }

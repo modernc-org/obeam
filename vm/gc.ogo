@@ -37,7 +37,10 @@ func gc(s *sched, live, heapNeed, stackNeed uint32) bool {
 	s.gcs++
 	s.gcFrom, s.gcFromE = p.block, end
 	s.gcNew, s.gcNewE = nb, nb+1<<order
-	s.gcTo = nb
+	// The heap's first long is the process dictionary: it stays first, and
+	// the scan moves what it holds.
+	arena[nb] = arena[p.block]
+	s.gcTo = nb + 1
 
 	// The stack goes to the end of the new block as it is, then its terms
 	// are moved; a word ending in 111 there is a continuation.

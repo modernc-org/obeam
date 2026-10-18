@@ -9,8 +9,11 @@
 # and scripts/shimcheck/NAME.escript calls it beside OTP's module with the same
 # generated arguments, comparing results and errors as terms, so that the shape
 # of a nested answer is held too, and the order a fun is called in where the
-# shim takes funs. timer and rand, whose answers depend on the clock and on
-# chance, are held by erl/tmr.erl and erl/rnd.erl instead.
+# shim takes funs. The erlang shim's calls of the VM's erlang:'$float'/2 go to
+# scripts/shimcheck/obeam_vm.erl, which does it with OTP's list_to_float/1.
+# timer and rand, whose answers depend on the clock and on chance, are held by
+# erl/tmr.erl and erl/rnd.erl instead, and the process dictionary and
+# erlang's timers by erl/pdict.erl and erl/etimer.erl.
 #
 # Usage: scripts/shimcheck.sh [NAME...]   (all four by default)
 
@@ -21,11 +24,14 @@ dir=$root/build/shimcheck
 names=${*:-erlang proplists queue string}
 rm -rf "$dir"
 mkdir -p "$dir"
+erlc +deterministic -o "$dir" "$root/scripts/shimcheck/obeam_vm.erl"
 for m in $names; do
-	sed "s/^-module($m)\./-module(o$m)./" "$root/erl/shim/$m.erl" >"$dir/o$m.erl"
+	sed -e "s/^-module($m)\./-module(o$m)./" -e "s/erlang:'\$float'(/obeam_vm:float(/g" \
+		"$root/erl/shim/$m.erl" >"$dir/o$m.erl"
 	grep -q "^-module(o$m)\.$" "$dir/o$m.erl"
 	erlc +deterministic -o "$dir" "$dir/o$m.erl"
 done
+grep -q "obeam_vm:float(" "$dir/oerlang.erl" 2>/dev/null || [ ! -e "$dir/oerlang.erl" ]
 status=0
 for m in $names; do
 	echo "== $m"

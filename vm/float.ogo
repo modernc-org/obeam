@@ -141,20 +141,15 @@ func bifFloat(s *sched, n uint32) uint32 {
 	return floatResult(s, float64(intVal(a)))
 }
 
-// bifTrunc and bifRound: an integer is itself; a float past 63 bits is
-// system_limit, where Erlang has a bignum.
-func bifTrunc(s *sched, n uint32) uint32 {
-	a := s.bargs[0]
-	if !isNumber(a) {
-		return badarg(s)
-	}
-	if !isFloat(a) {
-		return a
-	}
-	return floatToInt(s, math.Trunc(float64(floatVal(a))))
-}
+// bifTrunc, bifRound, bifFloor and bifCeil: an integer is itself; a float
+// past 63 bits is system_limit, where Erlang has a bignum. Floor and ceil go
+// from trunc, one down or up.
+func bifTrunc(s *sched, n uint32) uint32 { return toInt(s, 't') }
+func bifRound(s *sched, n uint32) uint32 { return toInt(s, 'r') }
+func bifFloor(s *sched, n uint32) uint32 { return toInt(s, 'f') }
+func bifCeil(s *sched, n uint32) uint32  { return toInt(s, 'c') }
 
-func bifRound(s *sched, n uint32) uint32 {
+func toInt(s *sched, how byte) uint32 {
 	a := s.bargs[0]
 	if !isNumber(a) {
 		return badarg(s)
@@ -162,7 +157,17 @@ func bifRound(s *sched, n uint32) uint32 {
 	if !isFloat(a) {
 		return a
 	}
-	return floatToInt(s, math.Round(float64(floatVal(a))))
+	x := float64(floatVal(a))
+	t := math.Trunc(x)
+	switch {
+	case how == 'r':
+		t = math.Round(x)
+	case how == 'f' && t > x:
+		t--
+	case how == 'c' && t < x:
+		t++
+	}
+	return floatToInt(s, t)
 }
 
 func floatToInt(s *sched, f float64) uint32 {
@@ -238,8 +243,9 @@ func natShl(z *nat, n uint32) {
 	z.w[0] <<= n
 }
 
-func natMul10(z *nat) {
-	carry := uint64(0)
+// natMul10 sets z to ten times z, and a more.
+func natMul10(z *nat, a uint32) {
+	carry := uint64(a)
 	for i := 0; i < natLen; i++ {
 		t := uint64(z.w[i])*10 + carry
 		z.w[i] = uint32(t)
@@ -287,17 +293,10 @@ func natCmp(x, y *nat) int {
 // boundary counts as the float's when its mantissa is even, as rounding to
 // even reads it back.
 func shortest(s *sched, u uint32, d *[12]byte) (int, int) {
-	frac := u & 0x7fffff
-	ef := int32(u >> 23 & 0xff)
-	f := frac
-	e := int32(-149)
-	if ef != 0 {
-		f = frac | 0x800000
-		e = ef - 150
-	}
+	f, e := floatParts(u)
 	even := f&1 == 0
 	r, sc, mp, mm, t := &s.dr, &s.ds, &s.dmp, &s.dmm, &s.dt
-	pow2 := f == 0x800000 && ef > 1 // the gap below is half the gap above
+	pow2 := f == 0x800000 && e > -149 // the gap below is half the gap above
 	if e >= 0 {
 		natSet(r, f)
 		natSet(mp, 1)
@@ -333,26 +332,26 @@ func shortest(s *sched, u uint32, d *[12]byte) (int, int) {
 		if c < 0 || c == 0 && !even {
 			break
 		}
-		natMul10(sc)
+		natMul10(sc, 0)
 		k++
 	}
 	for {
 		natAdd(t, r, mp)
-		natMul10(t)
+		natMul10(t, 0)
 		c := natCmp(t, sc)
 		if c > 0 || c == 0 && even {
 			break
 		}
-		natMul10(r)
-		natMul10(mp)
-		natMul10(mm)
+		natMul10(r, 0)
+		natMul10(mp, 0)
+		natMul10(mm, 0)
 		k--
 	}
 	n := 0
 	for n < len(d) {
-		natMul10(r)
-		natMul10(mp)
-		natMul10(mm)
+		natMul10(r, 0)
+		natMul10(mp, 0)
+		natMul10(mm, 0)
 		dig := byte(0)
 		for natCmp(r, sc) >= 0 {
 			natSub(r, sc)
@@ -383,17 +382,6 @@ func shortest(s *sched, u uint32, d *[12]byte) (int, int) {
 		break
 	}
 	return n, k - 1
-}
-
-func pow10(e int) float64 {
-	r := 1.0
-	for ; e > 0; e-- {
-		r *= 10
-	}
-	for ; e < 0; e++ {
-		r /= 10
-	}
-	return r
 }
 
 // writeFloat writes a float as ~w does.
@@ -477,103 +465,276 @@ func writeFloat(s *sched, f float32) {
 	writeInt(s, int64(e))
 }
 
+// ~e, ~f and ~g, as OTP's io_lib_format writes them: from the 21 significant
+// digits float_to_list/1 writes, rounded half up again to as many as the
+// directive asks for, and 0s past the 21st. A float exact in 32 bits is the
+// same number in 64, so the board and erl write the same for it.
+
+// fdLen is how many significant digits float_to_list/1 writes.
+const fdLen = 21
+
+// floatParts answers the mantissa and the exponent of the positive float of
+// the bits u: its value is f times 2^e.
+func floatParts(u uint32) (uint32, int) {
+	if u>>23 == 0 {
+		return u, -149
+	}
+	return u&0x7fffff | 0x800000, int(u>>23) - 150
+}
+
+// natScale sets the scheduler's r over sc to f times 2^e, f not 0, scaled by
+// tens until it is from 0.1 up to 1, and answers k: the value is r/sc times
+// 10^k.
+func natScale(s *sched, f uint32, e int) int {
+	r, sc, t := &s.dr, &s.ds, &s.dt
+	natSet(r, f)
+	natSet(sc, 1)
+	if e >= 0 {
+		natShl(r, uint32(e))
+	} else {
+		natShl(sc, uint32(-e))
+	}
+	k := 0
+	for natCmp(r, sc) >= 0 {
+		natMul10(sc, 0)
+		k++
+	}
+	for {
+		*t = *r
+		natMul10(t, 0)
+		if natCmp(t, sc) >= 0 {
+			return k
+		}
+		*r = *t
+		k--
+	}
+}
+
+// natDigit answers the next decimal digit of r over sc, leaving the rest.
+func natDigit(s *sched) byte {
+	r, sc := &s.dr, &s.ds
+	natMul10(r, 0)
+	d := byte(0)
+	for natCmp(r, sc) >= 0 {
+		natSub(r, sc)
+		d++
+	}
+	return d
+}
+
+// fdigits writes the first fdLen significant digits of the magnitude of a
+// float into d, rounded half to even from its exact value, as C's printf
+// rounds them for OTP's float_to_list/1, and answers the decimal exponent of
+// the first: 1.5 is 15000... and 0, and zero is all 0s and 0.
+func fdigits(s *sched, f float32, d *[fdLen]byte) int {
+	u := floatBits(f) & 0x7fffffff
+	if u == 0 {
+		for i := range d {
+			d[i] = 0
+		}
+		return 0
+	}
+	m, e := floatParts(u)
+	k := natScale(s, m, e)
+	for i := 0; i < fdLen; i++ {
+		d[i] = natDigit(s)
+	}
+	natAdd(&s.dt, &s.dr, &s.dr)
+	if c := natCmp(&s.dt, &s.ds); c > 0 || c == 0 && d[fdLen-1]&1 != 0 {
+		i := fdLen - 1
+		for i >= 0 && d[i] == 9 {
+			d[i] = 0
+			i--
+		}
+		if i < 0 {
+			d[0] = 1
+			k++
+		} else {
+			d[i]++
+		}
+	}
+	return k - 1
+}
+
+// fdig answers digit i of d with z 0s before them and 0s after.
+func fdig(d *[fdLen]byte, z, i int) byte {
+	i -= z
+	if i < 0 || i >= fdLen {
+		return 0
+	}
+	return d[i]
+}
+
+// writeMant writes ip+dp digits of d with z 0s before them, a point after the
+// first ip, rounded half up on the next digit, as OTP's float_man does. When
+// the rounding carries out of the first digit, they are all 0s, a 1 is
+// written before them, or in the first one's place when one is set, and it
+// answers true.
+func writeMant(s *sched, d *[fdLen]byte, z, ip, dp int, one bool) bool {
+	n := ip + dp
+	up := fdig(d, z, n) >= 5
+	last := n - 1
+	for up && last >= 0 && fdig(d, z, last) == 9 {
+		last--
+	}
+	carry := up && last < 0
+	if carry && !one {
+		emit(s, '1')
+	}
+	for i := 0; i < n; i++ {
+		if i == ip {
+			emit(s, '.')
+		}
+		c := fdig(d, z, i)
+		if up && i > last {
+			c = 0
+		} else if up && i == last {
+			c++
+		}
+		if carry && one && i == 0 {
+			c = 1
+		}
+		emit(s, '0'+c)
+	}
+	return carry
+}
+
+// writeSign writes the minus of a negative float, -0.0's too, as OTP does.
+func writeSign(s *sched, f float32) {
+	if floatBits(f)>>31 != 0 {
+		emit(s, '-')
+	}
+}
+
 // writeFixed writes a float with prec digits after the point, as ~f does.
 func writeFixed(s *sched, f float32, prec int) {
-	v := float64(f)
-	if v < 0 {
-		emit(s, '-')
-		v = -v
+	var d [fdLen]byte
+	writeSign(s, f)
+	x := fdigits(s, f, &d) + 1
+	z := 0
+	if x <= 0 {
+		z = 1 - x
+		x = 1
 	}
-	scale := pow10(prec)
-	whole := math.Floor(v)
-	frac := uint64((v-whole)*scale + 0.5)
-	if frac >= uint64(scale) {
-		frac -= uint64(scale)
-		whole++
-	}
-	writeInt(s, int64(whole))
-	if prec == 0 {
-		return
-	}
-	emit(s, '.')
-	var d [20]byte
-	for k := prec - 1; k >= 0; k-- {
-		d[k] = byte('0' + frac%10)
-		frac /= 10
-	}
-	for k := 0; k < prec; k++ {
-		emit(s, d[k])
-	}
+	writeMant(s, &d, z, x, prec, false)
 }
 
 // writeExp writes a float with prec significant digits in the exponent form,
 // as ~e does: 1.00000e+1.
 func writeExp(s *sched, f float32, prec int) {
-	v := float64(f)
-	if v < 0 {
-		emit(s, '-')
-		v = -v
-	}
-	e := 0
-	if v != 0 {
-		for v >= 10 {
-			v /= 10
-			e++
-		}
-		for v < 1 {
-			v *= 10
-			e--
-		}
-	}
-	scale := pow10(prec - 1)
-	m := uint64(v*scale + 0.5)
-	if m >= uint64(scale*10) {
-		m /= 10
+	var d [fdLen]byte
+	writeSign(s, f)
+	e := fdigits(s, f, &d)
+	if writeMant(s, &d, 0, 1, prec-1, true) {
 		e++
 	}
-	var d [12]byte
-	for k := prec - 1; k >= 0; k-- {
-		d[k] = byte('0' + m%10)
-		m /= 10
-	}
-	emit(s, d[0])
-	if prec > 1 {
-		emit(s, '.')
-		for k := 1; k < prec; k++ {
-			emit(s, d[k])
-		}
-	}
 	emit(s, 'e')
-	if e < 0 {
-		emit(s, '-')
-		e = -e
-	} else {
+	if e >= 0 {
 		emit(s, '+')
 	}
 	writeInt(s, int64(e))
 }
 
-// writeGeneral writes as ~g does: ~f with prec significant digits when the
-// value is from 0.1 up to 10000, ~e otherwise.
+// writeGeneral writes as ~g does: ~f with prec significant digits from 0.1
+// up to 10000, ~e otherwise, by io_lib_format's rule.
 func writeGeneral(s *sched, f float32, prec int) {
-	v := float64(f)
-	if v < 0 {
-		v = -v
+	a := f
+	if a < 0 {
+		a = -a
 	}
-	if v >= 0.1 && v < 10000 {
-		e := 0
-		for x := v; x >= 10; x /= 10 {
-			e++
-		}
-		for x := v; x < 1; x *= 10 {
-			e--
-		}
-		decimals := prec - 1 - e
-		if decimals < 0 {
-			decimals = 0
-		}
-		writeFixed(s, f, decimals)
-		return
+	e := 4 // from 10000 up
+	switch {
+	case a < 0.1:
+		e = -2
+	case a < 1:
+		e = -1
+	case a < 10:
+		e = 0
+	case a < 100:
+		e = 1
+	case a < 1000:
+		e = 2
+	case a < 10000:
+		e = 3
 	}
-	writeExp(s, f, prec)
+	switch {
+	case prec <= 1 && e == -1 || prec-1 > e && e >= -1 && e < 4:
+		writeFixed(s, f, prec-1-e)
+	case prec <= 1:
+		writeExp(s, f, 2)
+	default:
+		writeExp(s, f, prec)
+	}
+}
+
+// Reading a float, list_to_float/1's, which erlang.erl's shim parses: the
+// largest float not past the decimal is found by halving the range of the
+// floats' bits, a float compared with the decimal digit by digit, as fdigits
+// writes them, and then the decimal with the midpoint above that float, a
+// tie going to the even one. It is exact for any number of digits, and slow:
+// thirty-one comparisons.
+
+// cmpDec compares f times 2^e with the decimal 0.D times 10^k, D the digits
+// of the list t, the first not 0: less than 0, 0 or more as the first is
+// less, equal or greater.
+func cmpDec(s *sched, f uint32, e int, t uint32, k int) int {
+	if f == 0 {
+		return -1
+	}
+	if c := natScale(s, f, e) - k; c != 0 {
+		return c
+	}
+	for ; isCons(t); t = arena[consIdx(t)+1] {
+		if c := int(natDigit(s)) - int(smallVal(arena[consIdx(t)])-'0'); c != 0 {
+			return c
+		}
+	}
+	for _, w := range s.dr.w {
+		if w != 0 {
+			return 1 // a rest past the decimal's digits
+		}
+	}
+	return 0
+}
+
+// bifFloatOf is erlang:'$float'/2, which erlang.erl's list_to_float/1 calls
+// with the significant digits, a list of characters the first not 0, and k:
+// the float nearest 0.D times 10^k, or badarg past the largest. What is no
+// list of digits makes a float of no meaning, and no harm.
+func bifFloatOf(s *sched, n uint32) uint32 {
+	k := s.bargs[1]
+	if !isSmall(k) {
+		return badarg(s)
+	}
+	u, ok := readFloat(s, s.bargs[0], int(smallVal(k)))
+	if !ok {
+		return badarg(s)
+	}
+	if !ensure(s, 2, s.curLive) {
+		return nonValue
+	}
+	return mkFloat(s, floatOf(u))
+}
+
+// readFloat answers the bits of the float nearest 0.D times 10^k, ties to
+// even, or false past the largest float.
+func readFloat(s *sched, t uint32, k int) (uint32, bool) {
+	u := uint32(0)
+	if !isCons(t) {
+		return u, true
+	}
+	hi := uint32(0x7f800000) // the infinity, past every decimal
+	for hi-u > 1 {
+		mid := u + (hi-u)/2
+		if f, e := floatParts(mid); cmpDec(s, f, e, t, k) <= 0 {
+			u = mid
+		} else {
+			hi = mid
+		}
+	}
+	f, e := floatParts(u)
+	if c := cmpDec(s, 2*f+1, e-1, t, k); c < 0 || c == 0 && u&1 != 0 {
+		u++
+	}
+	return u, u != 0x7f800000
 }
