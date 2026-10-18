@@ -71,6 +71,7 @@ var version string
 var shimFS embed.FS
 
 func main() {
+	noPreempt()
 	// loadp2's flags are not obeam's: they go to it untouched.
 	if len(os.Args) >= 2 && os.Args[1] == "loadp2" {
 		os.Exit(loadp2.SubCommand(os.Args[2:]))
@@ -123,10 +124,10 @@ func main() {
 // flash for flash, and shows what the board prints.
 func load(cmd, binary, port string) int {
 	if cmd == "run" {
-		fmt.Fprintf(os.Stderr, "obeam: loading %s; Ctrl-] leaves the terminal\n", binary)
+		fmt.Fprintf(os.Stderr, "obeam: loading %s; Ctrl-] or Ctrl-Z leaves the terminal\n", binary)
 		return loadp2.Load(loadp2.Options{Binary: binary, Port: port, Terminal: true})
 	}
-	fmt.Fprintf(os.Stderr, "obeam: writing %s to the board's flash; Ctrl-] leaves the terminal\n", binary)
+	fmt.Fprintf(os.Stderr, "obeam: writing %s to the board's flash; Ctrl-] or Ctrl-Z leaves the terminal\n", binary)
 	args := []string{"-f", strconv.Itoa(loadp2.DefaultClockHz), "-b", strconv.Itoa(loadp2.DefaultUserBaud), "-FLASH", "-t"}
 	if port != "" {
 		args = append([]string{"-p", port}, args...)

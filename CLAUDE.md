@@ -12,7 +12,7 @@ scheduler on each of seven cogs. The user is the author of OctoGo (`../ogo`) and
 p2-11 (`../p2-11`); the idea came from a talk with a friend who likes Erlang on
 2026-10-16.
 
-**Status, 2026-10-18: v0.1.0 being prepared, the CHANGELOG's section headed; M6b, the distribution and OTP's library as shims committed.** The user said go that afternoon; M0
+**Status, 2026-10-18: v0.1.1, the first release, being made; v0.1.0 was withdrawn unpublished, its loads failing on a Mac.** The user said go that afternoon; M0
 (the reader, the corpus, DESIGN.md) was done by evening, DESIGN.md's open
 points decided with the user, M1 (one process on one cog, e1a384e), M2
 (processes, messages, receive with timeouts, funs and apply, 18c3c27), M3
@@ -501,6 +501,15 @@ the tree or be ahead of what this file knows; do not install over it.
 
 ## The host tool and the corpus
 
+- **The loader runs with Go's asynchronous preemption off.** `obeam run`,
+  `flash` and `loadp2` call FlexProp's loadp2, C made Go, in-process
+  (`modernc.org/ogo/loadp2`), and a preemption signal cut its writes to the
+  serial port short, which loadp2 takes for a failure: "Error writing port",
+  then "timeout waiting for checksum", eight loads of ten on darwin-m1 and
+  now and then on Linux (2026-10-18). `noPreempt` (`preempt_unix.go`)
+  execs obeam again with `GODEBUG=...,asyncpreemptoff=1`, which no
+  `//go:debug` line can set; Windows is left as it is. The ogo session was
+  told, `ogo run` having the same loader.
 - `internal/beam` reads a `.beam` file whole: chunks, atoms, the code with its
   operands decoded from the compact term encoding (`decode.go`, documented at
   the decoder), imports, exports, literals through the external term format

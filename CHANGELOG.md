@@ -9,9 +9,10 @@ A released section is frozen: it says what that release did, and a later fix
 to the same area is a new entry under **Unreleased**, not an edit to the old
 one. `git show vX.Y.Z:CHANGELOG.md` is the check.
 
-## v0.1.0
+## v0.1.1
 
-The first release.
+The first release. v0.1.0 was tagged but withdrawn before it was published:
+on a Mac its loads failed eight times in ten.
 
 ### Added
 

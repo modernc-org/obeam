@@ -87,7 +87,7 @@ Elixir's elixirc); obeam reads the .beam files they write.
 
 Quick start, with a P2 board on a USB port:
   ./$bin run examples/hello.beam          # put it into the VM, load it, show what it prints
-                                          # (Ctrl-] leaves the terminal)
+                                          # (Ctrl-] or Ctrl-Z leaves the terminal)
   ./$bin run examples/leds.beam           # "let it crash" on a P2-EDGE's LEDs, pins 56 and 57
                                           # (DIP switch LED on): blinkers that crash now and
                                           # then, under an OTP supervisor

@@ -67,7 +67,7 @@ of another OTP release may use an instruction OctoBeam does not know yet, and
    ```
    $ obeam run examples/hello.beam
    obeam: hello.binary: hello:main/0, the VM checked; the image 539 longs, 12 of them code; 216 KB of the arena left for the heaps
-   obeam: loading hello.binary; Ctrl-] leaves the terminal
+   obeam: loading hello.binary; Ctrl-] or Ctrl-Z leaves the terminal
    ( Entering terminal mode.  Press Ctrl-] or Ctrl-Z to exit. )
    obeam: hello:main/0, 12 longs of code, 7 schedulers
 
@@ -78,7 +78,7 @@ of another OTP release may use an instruction OctoBeam does not know yet, and
 
    `obeam run` wrote `hello.binary`, the VM with the program in it, loaded it
    into the board's RAM, and shows what the board prints until you press
-   Ctrl-]. The loader finds the board by itself; with several, name the port:
+   Ctrl-] or Ctrl-Z, whichever your keyboard has handy. The loader finds the board by itself; with several, name the port:
    `-p /dev/ttyUSB0` (`-p COM3` on Windows). The program is in the board's
    RAM, not its flash, so a reset ends it. Then try `examples/ring.beam`, a
    ring of processes; `examples/leds.beam`, Erlang's "let it crash" to be
