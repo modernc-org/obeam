@@ -104,7 +104,7 @@ Quick start, with a P2 board on a USB port:
 
 It runs a subset of Erlang: no bignums, 32-bit floats, OTP's and Elixir's
 libraries only as far as the shims obeam carries go (gen_server, supervisor,
-lists, maps, Enum, Map),
+lists, maps, string, timer, queue, proplists, rand, Enum, Map and more),
 and 512 KB for everything. obeam says by name what a program uses that the VM
 does not have. On Windows, run it from cmd.exe or PowerShell, not git-bash.
 

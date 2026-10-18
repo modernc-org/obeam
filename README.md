@@ -106,7 +106,7 @@ of another OTP release may use an instruction OctoBeam does not know yet, and
    by name:
 
    ```
-   obeam: greet.beam: greet:main/0, call_ext at code offset 19: calls string:uppercase/1, which is no BIF and no function of the modules packed
+   obeam: greet.beam: greet:main/0, call_ext at code offset 26: calls ets:new/2, which is no BIF and no function of the modules packed
    ```
 
 5. **Elixir** works the same way: `elixirc hello.ex` writes
@@ -179,7 +179,7 @@ child spec's start function, which a supervisor calls by `apply`, is to be
 the program's own, as in OTP's examples (`{my_server, start_link, []}`): a
 shim's named there, `{gen_server, start_link, ...}`, is not packed.
 
-Not yet: bignums, bitstrings that are not whole bytes, OTP's other
+Not yet: bignums, ETS tables, bitstrings that are not whole bytes, OTP's other
 behaviours (`gen_statem`, `gen_event` and the like) and the `sys` and
 `proc_lib` sides of `gen_server` and `supervisor`, `~p`'s line breaking,
 atoms made at run time (`list_to_atom/1`; `list_to_existing_atom/1` answers
@@ -220,8 +220,8 @@ reading integers.
 ## Status, and the repository
 
 This repository is for OctoBeam's development; to use it, `obeam` is
-enough. Begun on 2026-10-16, and at milestone M6b of the plan in
-`ASSESSMENT.md`: Erlang and Elixir processes, spawned, linked and monitored, sending and
+enough. Begun on 2026-10-16, and past the last milestone, M6, of the plan
+in `ASSESSMENT.md`: Erlang and Elixir processes, spawned, linked and monitored, sending and
 receiving, catching exceptions, computing in floats, making and matching
 binaries, and building and matching maps, Elixir's structs and ranges among
 them, on seven scheduler cogs, running modules compiled by `erlc` and
@@ -234,13 +234,13 @@ them, on seven scheduler cogs, running modules compiled by `erlc` and
   milliseconds. `internal/vmbin` holds that VM, checked and unchecked, built
   from `board/` by `make vms`. `obeam dis` and `obeam stats` list and count a
   module.
-- `vm/`: the VM, in OctoGo: about 8,500 lines for the terms, a buddy arena,
+- `vm/`: the VM, in OctoGo: about 9,200 lines for the terms, a buddy arena,
   processes with mailboxes, links, monitors and a run queue, seven schedulers
   each a cog, the interpreter, a copying collector per process, exceptions
   caught by `try` and `catch`, floats, binaries and their matching, maps,
-  135 BIFs, `io:format` with its widths and precisions, Elixir's `inspect`,
+  146 BIFs, `io:format` with its widths and precisions, Elixir's `inspect`,
   and the exception reports. It is Go once given a package clause, and the
-  tests run it so, on seven goroutines, against `erl` and `elixir`: twenty-four
+  tests run it so, on seven goroutines, against `erl` and `elixir`: thirty-five
   Erlang modules of the corpus, from `hello` to a ring of a hundred processes,
   a server with timeouts, linked workers, a process linked to fifty, `try`
   and `catch`, floats, maps and binary parsers, and the seven Elixir ones,

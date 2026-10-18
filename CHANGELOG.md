@@ -9,7 +9,7 @@ A released section is frozen: it says what that release did, and a later fix
 to the same area is a new entry under **Unreleased**, not an edit to the old
 one. `git show vX.Y.Z:CHANGELOG.md` is the check.
 
-## Unreleased
+## v0.1.0
 
 The first release.
 

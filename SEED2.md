@@ -1,3 +1,8 @@
+*An input to ASSESSMENT.md, kept as it came: another LLM's answers on the fit
+with the P2 and on the architecture, given on 2026-10-16, before any of
+OctoBeam was written. It describes no part of OctoBeam; where it and
+ASSESSMENT.md differ, ASSESSMENT.md says why and what was decided.*
+
 ----
 
 Prompt:

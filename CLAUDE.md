@@ -12,7 +12,7 @@ scheduler on each of seven cogs. The user is the author of OctoGo (`../ogo`) and
 p2-11 (`../p2-11`); the idea came from a talk with a friend who likes Erlang on
 2026-10-16.
 
-**Status, 2026-10-17: M6b committed (30eb071), the image in the arena built.** The user said go that afternoon; M0
+**Status, 2026-10-18: v0.1.0 being prepared, the CHANGELOG's section headed; M6b, the distribution and OTP's library as shims committed.** The user said go that afternoon; M0
 (the reader, the corpus, DESIGN.md) was done by evening, DESIGN.md's open
 points decided with the user, M1 (one process on one cog, e1a384e), M2
 (processes, messages, receive with timeouts, funs and apply, 18c3c27), M3
