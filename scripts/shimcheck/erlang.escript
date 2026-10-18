@@ -27,7 +27,13 @@ main(_) ->
              list_to_float => [[S] || S <- float_strings()] ++ [[x], [[$1, $. | x]], [<<"1.0">>]],
              binary_to_float => [[list_to_binary(S)] || S <- lists:sublist(float_strings(), 200)] ++ [["1.0"], [x]],
              binary_to_existing_atom => [[B] || B <- [<<"ok">>, <<"erlang">>, <<"zzqq_none">>, <<>>, x]]
-                                        ++ [[B, E] || B <- [<<"ok">>, <<"zzqq_none">>], E <- [utf8, latin1, unicode, x]]},
+                                        ++ [[B, E] || B <- [<<"ok">>, <<"zzqq_none">>], E <- [utf8, latin1, unicode, x]],
+             pid_to_list => [[self()], [spawn(fun() -> ok end)], [x], [make_ref()], ["<0.1.0>"]],
+             %% The clock's answers differ, the board's counting from its
+             %% start: what is held is what is refused.
+             system_time => [[U] || U <- [x, 0, -1, 1.0, "second", {second}]],
+             time_offset => [[U] || U <- [x, 0, -1, 1.0, "second", {second}]],
+             statistics => [[K] || K <- [x, 1, "runtime", {wall_clock}]]},
     Calls = [{F, A} || {F, As} <- lists:sort(maps:to_list(Args)), A <- As],
     report(Calls, erlang, oerlang).
 

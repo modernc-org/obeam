@@ -53,6 +53,11 @@ The first release.
   written.
 - **`erlang:send_after/3,4`, `start_timer/3,4`, `cancel_timer/1,2` and
   `read_timer/1,2`**, as a shim: one process keeps the timers.
+- **The clock**, as shims: `erlang:system_time/0,1`, `time_offset/0,1` and
+  `timestamp/0`, `os:system_time/0,1` and `os:timestamp/0`, counting from the
+  board's start, which has no calendar's clock; `statistics/1`'s `wall_clock`
+  and `runtime`, the time since the last call of any process as OTP's; and
+  `pid_to_list/1`.
 - **The floats read and written as OTP does**: `float_to_list/1,2` and
   `float_to_binary/1,2` with `decimals`, `scientific`, `compact` and `short`,
   `list_to_float/1` and `binary_to_float/1`, the nearest 32-bit float to any

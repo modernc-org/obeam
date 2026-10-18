@@ -1071,3 +1071,19 @@ ways to a faster reader, neither tried: a first guess from the digits
 computed in 32-bit floats, then the halving over a few neighbouring floats
 only, some 250 bytes by estimate; or the scaled 224-bit integer of the first
 version, 1.1 KB more of the checked VM.
+
+**The clock, as shims**, 2026-10-18, the last of the survey's cheap ones
+before v0.1.0. The board has no calendar's clock, so `erlang:system_time/0,1`
+is the monotonic time, the milliseconds since the board started, as if
+that had been 1970's first instant, `time_offset/0,1` 0, and `timestamp/0`
+and `os`'s `system_time/0,1` and `timestamp/0`, a new shim module, are made
+of it. `statistics/1`'s `wall_clock` and `runtime` answer the time since the
+last call of any process, as OTP's do (measured under `erl`: a second
+process's call counts from the first's), which a process of the shim's,
+`'$obeam_stats'`, started as the timers' is, keeps; the board measuring no
+processor time, `runtime` is the wall clock's, and the other keys of
+`statistics/1` are refused. `pid_to_list/1` is what `~w` writes. Nothing of
+it is in the VM: the binaries are the same bytes. `erl/clock.erl` compares
+the clocks with each other, not their values, and prints what `erl` prints
+in the twin and on the board in both builds; `make shimcheck` holds the
+refusals, 21,007 calls of `erlang`.

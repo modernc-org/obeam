@@ -98,8 +98,8 @@ The files:
   `Elixir.*.beam`; `ex/shim/` the Erlang shims of Elixir's library (`Enum`,
   `Map`, `elixir_erl_pass`), and `erl/shim/` of OTP's (`lists`,
   `gen_server`, `supervisor`, `string`, `timer`, `queue`, `proplists`,
-  `rand`, `maps`' functions that take a fun, and `erlang`'s that are no BIF
-  of the VM's), packed as libraries (`obeam pack -lib`, by what the
+  `rand`, `os`'s time, `maps`' functions that take a fun, and `erlang`'s
+  that are no BIF of the VM's), packed as libraries (`obeam pack -lib`, by what the
   program reaches) and **never on the oracle's path**, where they would hide
   the real ones. `TestElixir` runs `elixir -pa ex -e "Mod.main()"`; `exUses`
   in `vm/host_test.go` names the modules an Elixir one is packed with
@@ -510,7 +510,7 @@ the tree or be ahead of what this file knows; do not install over it.
   not the compiler's regrouping into `{test,is_lt,...}`, `{bif,...}` and
   `{gc_bif,...}` that `erlc -S` and beam_disasm print; `erl/oracle.escript`
   undoes that regrouping so the two can be compared.
-- `erl/` holds the corpus: thirty-nine modules, each with a `main/0` that prints
+- `erl/` holds the corpus: forty modules, each with a `main/0` that prints
   its result, so that the board's twin can be held to `erl` later; `blink`
   calls the board's `p2` module and does not run under `erl`. The `.beam`
   files are committed, compiled by `make beam` with `+deterministic`; commit

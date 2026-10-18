@@ -20,8 +20,9 @@
                            garbage_collect/0, get/0, get_keys/0, get_keys/1,
                            halt/0, halt/2, integer_to_binary/2,
                            integer_to_list/2, iolist_size/1, is_alive/0,
-                           list_to_float/1, list_to_integer/2, nodes/0, put/2,
-                           spawn_monitor/1, spawn_monitor/3, tuple_to_list/1]}).
+                           list_to_float/1, list_to_integer/2, nodes/0,
+                           pid_to_list/1, put/2, spawn_monitor/1,
+                           spawn_monitor/3, statistics/1, tuple_to_list/1]}).
 -export([binary_to_existing_atom/1, binary_to_existing_atom/2,
          binary_to_float/1, binary_to_integer/1, binary_to_integer/2,
          binary_to_list/3, cancel_timer/1, cancel_timer/2,
@@ -29,11 +30,11 @@
          float_to_binary/2, float_to_list/1, float_to_list/2,
          garbage_collect/0, get/0, get_keys/0, get_keys/1, halt/0, halt/2,
          integer_to_binary/2, integer_to_list/2, iolist_size/1, is_alive/0,
-         list_to_float/1, list_to_integer/2, nodes/0, put/2, read_timer/1,
-         read_timer/2,
-         send/3, send_after/3, send_after/4, spawn_monitor/1,
-         spawn_monitor/3, start_timer/3, start_timer/4, tuple_to_list/1,
-         yield/0]).
+         list_to_float/1, list_to_integer/2, nodes/0, pid_to_list/1, put/2,
+         read_timer/1, read_timer/2, send/3, send_after/3, send_after/4,
+         spawn_monitor/1, spawn_monitor/3, start_timer/3, start_timer/4,
+         statistics/1, system_time/0, system_time/1, time_offset/0,
+         time_offset/1, timestamp/0, tuple_to_list/1, yield/0]).
 
 tuple_to_list(T) when is_tuple(T) -> tuple_to_list(T, tuple_size(T), []);
 tuple_to_list(T) -> error(badarg, [T]).
@@ -191,6 +192,49 @@ per_second(perf_counter) -> 1000000000;
 per_second(N) when is_integer(N), N > 0 -> N;
 per_second(_) -> error.
 
+%% The board has no calendar's clock: its system time is the time since it
+%% started, as if that had been 1970's first instant, and the offset from
+%% the monotonic time is 0.
+system_time() -> erlang:monotonic_time().
+
+system_time(Unit) ->
+    case per_second(Unit) of
+        error -> error(badarg, [Unit]);
+        _ -> convert_time_unit(erlang:monotonic_time(), native, Unit)
+    end.
+
+time_offset() -> 0.
+
+time_offset(Unit) ->
+    case per_second(Unit) of
+        error -> error(badarg, [Unit]);
+        _ -> 0
+    end.
+
+timestamp() ->
+    T = erlang:monotonic_time(microsecond),
+    {T div 1000000000000, T div 1000000 rem 1000000, T rem 1000000}.
+
+%% statistics/1 answers wall_clock and runtime: the milliseconds since the
+%% board started and those since the last call of any process, as OTP's do,
+%% which one process, '$obeam_stats', keeps. The board measures no processor
+%% time, so runtime is the wall clock's.
+statistics(Kind) when Kind =:= wall_clock; Kind =:= runtime ->
+    service('$obeam_stats', fun() -> stats(#{wall_clock => 0, runtime => 0}) end) ! {Kind, self()},
+    receive {'$obeam_stats', Kind, T} -> T end;
+statistics(Kind) -> error(badarg, [Kind]).
+
+stats(Last) ->
+    receive
+        {Kind, From} ->
+            Now = erlang:monotonic_time(millisecond),
+            From ! {'$obeam_stats', Kind, {Now, Now - map_get(Kind, Last)}},
+            stats(Last#{Kind := Now})
+    end.
+
+pid_to_list(P) when is_pid(P) -> lists:flatten(io_lib:format("~w", [P]));
+pid_to_list(P) -> error(badarg, [P]).
+
 %% The process dictionary: a map the VM keeps for each process, [] before the
 %% first put, which erlang:'$dict'/1 replaces, answering the one that was
 %% there. get/1, an instruction, is the VM's. get/0 and get_keys/0,1 answer
@@ -316,18 +360,21 @@ timer_op(Op, Tag, Ref, #{async := Async, info := Info}) ->
             end
     end.
 
-%% timers answers the timers' process, starting it if there is none: of two
-%% processes starting it at once, the one whose register fails kills its own.
-timers() ->
-    case whereis('$obeam_timers') of
+timers() -> service('$obeam_timers', fun() -> timers([]) end).
+
+%% service answers the shim's process of a name, starting it with the fun if
+%% there is none: of two processes starting it at once, the one whose
+%% register fails kills its own.
+service(Name, F) ->
+    case whereis(Name) of
         undefined ->
-            P = spawn(fun() -> timers([]) end),
-            try register('$obeam_timers', P) of
+            P = spawn(F),
+            try register(Name, P) of
                 true -> P
             catch
                 error:badarg ->
                     exit(P, kill),
-                    timers()
+                    service(Name, F)
             end;
         P -> P
     end.

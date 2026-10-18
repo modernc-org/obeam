@@ -170,9 +170,11 @@ and `bytes/1`, from the P2's hardware generator), and the functions of
 `iolist_size/1`, `convert_time_unit/3` and a few more), with the process
 dictionary's (`put/2`, `get/0`, `get_keys/0,1`, `erase/0,1`), the timers of
 `send_after/3,4`, `start_timer/3,4`, `cancel_timer/1,2` and
-`read_timer/1,2`, and the floats' conversions (`float_to_list/1,2`,
-`float_to_binary/1,2`, `list_to_float/1`, `binary_to_float/1`); and Elixir's
-`Enum` and `Map`. A program takes what it calls of them and nothing else, so a
+`read_timer/1,2`, the floats' conversions (`float_to_list/1,2`,
+`float_to_binary/1,2`, `list_to_float/1`, `binary_to_float/1`), the clock's
+(`system_time/0,1`, `time_offset/0,1`, `timestamp/0`, and `statistics/1`'s
+`wall_clock` and `runtime`) and `pid_to_list/1`; `os`'s `system_time/0,1`
+and `timestamp/0`; and Elixir's `Enum` and `Map`. A program takes what it calls of them and nothing else, so a
 child spec's start function, which a supervisor calls by `apply`, is to be
 the program's own, as in OTP's examples (`{my_server, start_link, []}`): a
 shim's named there, `{gen_server, start_link, ...}`, is not packed.
@@ -191,8 +193,11 @@ hash table's; `io_lib:format/2` answers a flat list where OTP's is deep;
 `float_to_list/2` works, as `~e` and `~f` do, from the 21 significant digits
 of `float_to_list/1`, writing 0s past them where OTP writes the exact value's
 digits; an `erlang:send_after/3` timer is not cancelled when its process
-ends; `node/1` answers `nonode@nohost` for whatever it is given; and
-`halt/2` reads no options. The functions of OTP's `lists` that the VM has
+ends; `node/1` answers `nonode@nohost` for whatever it is given;
+`halt/2` reads no options; the board having no calendar's clock, the system
+time counts from the board's start as from 1970's first instant, and
+`statistics/1` answers `wall_clock` and `runtime` only, the runtime being
+the wall clock's. The functions of OTP's `lists` that the VM has
 as BIFs, `reverse`, `member` and `keyfind`, fail as BIFs do, with `badarg`,
 where OTP's `reverse` fails with a `function_clause` of its own. A map with atom
 keys prints its keys in term order, where `erl` and `elixir` print them in
@@ -263,15 +268,16 @@ them, on seven scheduler cogs, running modules compiled by `erlc` and
   hundred processes, string interpolation of every kind, and maps, structs
   and ranges, held to what `elixir` prints; `ex/shim/` the parts of Elixir's
   `Enum` and `Map` they use, in Erlang.
-- `erl/`: the corpus, thirty-nine small Erlang modules from `hello` to a
+- `erl/`: the corpus, forty small Erlang modules from `hello` to a
   process ring, a concurrent prime sieve, linked workers, exit reasons,
   stacktraces, timeouts, floats read and written, maps, binary parsers, the
-  process dictionary, `erlang`'s timers, `halt`, OTP's `lists`, `gen_server`,
+  process dictionary, `erlang`'s timers and clock, `halt`, OTP's `lists`, `gen_server`,
   `supervisor`, `string`, `timer`, `queue`, `proplists` and `rand`, and
   `blink` and `leds` for the board's LEDs, compiled with OTP 27 and
   committed; `erl/shim/` OTP's `gen_server`, `supervisor`, `lists`,
-  `string`, `timer`, `queue`, `proplists`, `rand`, the functions of `maps`
-  that take a fun and those of `erlang` that Erlang can write;
+  `string`, `timer`, `queue`, `proplists`, `rand`, `os`'s time, the
+  functions of `maps` that take a fun and those of `erlang` that Erlang can
+  write;
   `erl/stats.txt` is the opcode and call histogram M0 measured over the
   first eleven.
 - `DESIGN.md`: how it is made, and what each milestone measured.
