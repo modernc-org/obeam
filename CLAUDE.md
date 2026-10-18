@@ -49,10 +49,15 @@ shim, `make release` and the README's guide, committed (7a40746). Then
 `-sd` as the user chose it, the ROM's own boot: `obeam -sd` writes
 `_BOOT_P2.BIX`, and `obeam flash` writes the board's flash; both arenas
 8 KB smaller so that every VM binary fits the 496 KB the ROM loads from a
-card. The user is to put the
-repository on GitLab (cznic/obeam) with a GitHub mirror (modernc-org/obeam)
-where the zips are published; nothing is pushed or published by an agent.
-The files:
+card. The repository is on GitLab (cznic/obeam, `origin`) and, since
+2026-10-18, GitLab's push mirror 4137203 copies it to GitHub
+(modernc-org/obeam), where the zips are published: what is pushed to GitLab
+is on GitHub a moment later, and nothing is pushed to GitHub itself, which
+the next mirroring would overwrite. Both are private until the user has
+tried the release. The mirror goes over HTTPS with a classic token of
+`j-modernc-org` (`repo` and `workflow`, no expiry), as p2-11's does;
+`modernc-org` allows no deploy keys, so SSH is not an option there. Nothing
+is pushed, tagged or published by an agent. The files:
 
 - `ASSESSMENT.md`: the consolidated assessment and the plan. Verdict: start,
   staged. It holds the measured facts (opcode counts, AtomVM's size, what a
