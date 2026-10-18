@@ -9,10 +9,12 @@ A released section is frozen: it says what that release did, and a later fix
 to the same area is a new entry under **Unreleased**, not an edit to the old
 one. `git show vX.Y.Z:CHANGELOG.md` is the check.
 
-## v0.1.1
+## v0.1.2
 
-The first release. v0.1.0 was tagged but withdrawn before it was published:
-on a Mac its loads failed eight times in ten.
+The first release. v0.1.0 and v0.1.1 were tagged but withdrawn before they
+were published: on a Mac, v0.1.0's loads failed eight times in ten, and in
+v0.1.1 a Ctrl-Z pressed during a load suspended `obeam`, which kept the
+board's port.
 
 ### Added
 

@@ -12,7 +12,7 @@ scheduler on each of seven cogs. The user is the author of OctoGo (`../ogo`) and
 p2-11 (`../p2-11`); the idea came from a talk with a friend who likes Erlang on
 2026-10-16.
 
-**Status, 2026-10-18: v0.1.1, the first release, being made; v0.1.0 was withdrawn unpublished, its loads failing on a Mac.** The user said go that afternoon; M0
+**Status, 2026-10-18: v0.1.2, the first release, being made; v0.1.0 and v0.1.1 were withdrawn unpublished, the one's loads failing on a Mac, the other suspended by a Ctrl-Z during a load.** The user said go that afternoon; M0
 (the reader, the corpus, DESIGN.md) was done by evening, DESIGN.md's open
 points decided with the user, M1 (one process on one cog, e1a384e), M2
 (processes, messages, receive with timeouts, funs and apply, 18c3c27), M3
@@ -509,7 +509,9 @@ the tree or be ahead of what this file knows; do not install over it.
   now and then on Linux (2026-10-18). `noPreempt` (`preempt_unix.go`)
   execs obeam again with `GODEBUG=...,asyncpreemptoff=1`, which no
   `//go:debug` line can set; Windows is left as it is. The ogo session was
-  told, `ogo run` having the same loader.
+  told, `ogo run` having the same loader. The same commands ignore SIGTSTP:
+  Ctrl-Z leaves loadp2's raw terminal, but pressed during the five seconds
+  of a load it suspended obeam, which held the board's port.
 - `internal/beam` reads a `.beam` file whole: chunks, atoms, the code with its
   operands decoded from the compact term encoding (`decode.go`, documented at
   the decoder), imports, exports, literals through the external term format

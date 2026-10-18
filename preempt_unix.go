@@ -8,6 +8,7 @@ package main
 
 import (
 	"os"
+	"os/signal"
 	"strings"
 	"syscall"
 )
@@ -20,6 +21,12 @@ import (
 // eight loads of ten failed so and none of ten with preemption off
 // (2026-10-18); on Linux it was seen twice. The process is the same one, so
 // the shell, its job control and the exit status see no difference.
+//
+// Such a command also ignores Ctrl-Z's signal, SIGTSTP. In loadp2's terminal
+// Ctrl-Z leaves it, as Ctrl-] does, the keyboard being raw there; pressed
+// before the terminal is up, during the five seconds of a load, it suspended
+// obeam, holding the board's port, and the next load failed (2026-10-18, a
+// Czech keyboard, where Ctrl-Z is at hand and Ctrl-] is not).
 func noPreempt() {
 	if len(os.Args) < 2 {
 		return
@@ -29,6 +36,7 @@ func noPreempt() {
 	default:
 		return
 	}
+	signal.Ignore(syscall.SIGTSTP)
 	g := os.Getenv("GODEBUG")
 	if strings.Contains(","+g+",", ",asyncpreemptoff=1,") {
 		return
