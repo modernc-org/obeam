@@ -12,7 +12,7 @@ scheduler on each of seven cogs. The user is the author of OctoGo (`../ogo`) and
 p2-11 (`../p2-11`); the idea came from a talk with a friend who likes Erlang on
 2026-10-16.
 
-**Status, 2026-10-18: v0.1.2, the first release, being made; v0.1.0 and v0.1.1 were withdrawn unpublished, the one's loads failing on a Mac, the other suspended by a Ctrl-Z during a load.** The user said go that afternoon; M0
+**Status, 2026-10-18: v0.1.2 released, the first release, public on GitLab and GitHub; v0.1.0 and v0.1.1 were withdrawn unpublished, the one's loads failing on a Mac, the other suspended by a Ctrl-Z during a load.** The user said go that afternoon; M0
 (the reader, the corpus, DESIGN.md) was done by evening, DESIGN.md's open
 points decided with the user, M1 (one process on one cog, e1a384e), M2
 (processes, messages, receive with timeouts, funs and apply, 18c3c27), M3
@@ -52,12 +52,16 @@ shim, `make release` and the README's guide, committed (7a40746). Then
 card. The repository is on GitLab (cznic/obeam, `origin`) and, since
 2026-10-18, GitLab's push mirror 4137203 copies it to GitHub
 (modernc-org/obeam), where the zips are published: what is pushed to GitLab
-is on GitHub a moment later, and nothing is pushed to GitHub itself, which
-the next mirroring would overwrite. Both are private until the user has
-tried the release. The mirror goes over HTTPS with a classic token of
-`j-modernc-org` (`repo` and `workflow`, no expiry), as p2-11's does;
-`modernc-org` allows no deploy keys, so SSH is not an option there. Nothing
-is pushed, tagged or published by an agent. The files:
+is on GitHub within five minutes, GitLab running a mirror at most that
+often, and nothing is pushed to GitHub itself, which the next mirroring
+would overwrite; a tag comes from GitLab too, and a release is made of it
+with `gh release create --verify-tag`, a pre-release as ogo's are. Both
+are public since 2026-10-18, and proxy.golang.org holds v0.1.2 for good:
+a tag, once fetched, never moves, and a fix is a new version. The mirror
+goes over HTTPS with a classic token of `j-modernc-org` (`repo` and
+`workflow`, no expiry), as p2-11's does; `modernc-org` allows no deploy
+keys, so SSH is not an option there. Nothing is pushed, tagged or
+published by an agent unless the user asks. The files:
 
 - `ASSESSMENT.md`: the consolidated assessment and the plan. Verdict: start,
   staged. It holds the measured facts (opcode counts, AtomVM's size, what a
