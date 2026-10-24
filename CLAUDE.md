@@ -156,7 +156,7 @@ published by an agent unless the user asks. The files:
   `p2` package name for name in snake_case, plus `p2:cog/0`, with no blocking
   waits. The arena was 128 KB from M4 until the room before M6b gave the
   192 KB back, 160 KB since M6b, 232 KB since the image moved into it
-  from the binary, 224 KB since the binary must fit the SD boot's 496 KB, 222 KB since the stacktraces took 7 KB and the profiler, leaving the board's build, gave 5 back, and 219 KB since the BIFs of OTP's library that could be no shims took 3 (`arenaLongs` in `vm/arena.ogo`), what the image does not
+  from the binary, 224 KB since the binary must fit the SD boot's 496 KB, 222 KB since the stacktraces took 7 KB and the profiler, leaving the board's build, gave 5 back, 219 KB since the BIFs of OTP's library that could be no shims took 3, and 207 KB since ogo's float64 in software took 12 (`arenaLongs` in `vm/arena.ogo`), what the image does not
   take going to the heaps; it is the lever when the hub runs short. `ogo build` says by how much a build
   misses the 512 KB, but when it misses, the size it names is of an attempt
   with other stack slots: compare only builds that fit.
@@ -330,20 +330,24 @@ the tree or be ahead of what this file knows; do not install over it.
   in the top 16 KB while loading), which `TestBootable` in
   `internal/vmbin` holds both VMs to; a larger one does not boot, and the
   board, finding the file, answers no serial loader either (found
-  2026-10-17). The checked VM binary is 506,632 bytes, whatever the image,
-  the unchecked 507,044, 1,272 and 860 under; `make budget` says how far.
-  The arenas are 219 and 274 KB: the stacktraces' 6 KB of code took 7 and
-  5 KB of them, the profiler, out of the board's build since (`profOn`),
-  gave 5 and 5 KB back, and the BIFs of 2026-10-18 took 3 and 2. The
+  2026-10-17). Built by ogo c9eb76c or later, whose float64 is IEEE double
+  precision in software, the checked VM binary is 506,032 bytes, whatever the
+  image, the unchecked 506,340, 1,872 and 1,564 under; built by v0.57.0, as
+  internal/vmbin's are, 494,296 and 493,680. `make budget` says how far. The
+  arenas are 207 and 261 KB: the stacktraces' 6 KB of code took 7 and 5 KB of
+  them, the profiler, out of the board's build since (`profOn`), gave 5 and 5
+  KB back, the BIFs of 2026-10-18 took 3 and 2, and the float64 12 and 13
+  (2026-10-24, the user's call: the VM was 518,368 and 519,704 bytes with
+  it, past the card's limit). The
   goroutine slots are 800 longs checked, 798 of them the deepest's; a
   build with `--gostack N` shows by the size how much of a growth is
   theirs. In the checked build every field of a pointer and every `arena`
   index read is a test and a jump of 16 to 44 bytes: a new function reads a
   field once into a local, and `ogo build --report` (ogo master) names the
   largest functions and variables. The next VM growth takes the arenas: the
-  arena is 219 KB (`arenaChecked`): the demo's image takes 69 KB of it and
-  leaves 149 KB to the heaps, which `obeam` reports. The unchecked VM's
-  arena is 274 KB (`arenaUnchecked`, which `make vms` swaps in, in a copy of
+  arena is 207 KB (`arenaChecked`): the demo's image takes 69 KB of it and
+  leaves 137 KB to the heaps, which `obeam` reports. The unchecked VM's
+  arena is 261 KB (`arenaUnchecked`, which `make vms` swaps in, in a copy of
   the tree under `build/unchecked`).
 - **The board's slot**: p2-11's 32 GB card belongs there; the user's 4 GB
   card (FAT32, partition type 0x0b) is for OctoBeam's SD tests. With the

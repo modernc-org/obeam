@@ -1087,3 +1087,17 @@ it is in the VM: the binaries are the same bytes. `erl/clock.erl` compares
 the clocks with each other, not their values, and prints what `erl` prints
 in the twin and on the board in both builds; `make shimcheck` holds the
 refusals, 21,007 calls of `erlang`.
+
+**The arenas give 12 and 13 KB to a float64**, 2026-10-24, the user's call.
+OctoGo's float64 became IEEE double precision, computed in software (ogo
+c9eb76c), where it had been a float32 under its Go name; the VM computes the
+float BIFs in it, and Go's math functions are its pure Go source now, `pow`
+2.6 KB of it. Built by that ogo, the VMs were 518,368 and 519,704 bytes,
+10,464 and 11,800 past the 507,904 the ROM boots from a card. The arenas,
+207 and 261 KB, put them at 506,032 and 506,340, 1,872 and 1,564 under; the
+demo's heaps are 137 and 191 KB and a hello, world's 204, and the demo prints
+on the board what it printed, in both builds, but for the cogs' line, which
+the scheduling decides, and the time. The VMs internal/vmbin carries are
+built by v0.57.0 still, 494,296 and 493,680 bytes. What the board's float
+arithmetic costs is ogo's to say: an addition 860 clocks, a division 2,900,
+`math.Sin` 34,000 where the float32 library took 4,000.

@@ -9,6 +9,17 @@ A released section is frozen: it says what that release did, and a later fix
 to the same area is a new entry under **Unreleased**, not an edit to the old
 one. `git show vX.Y.Z:CHANGELOG.md` is the check.
 
+## Unreleased
+
+### Behaviour changes
+
+- **The heaps are 12 KB smaller, 13 KB unchecked**: the arena is 207 KB (261 KB
+  unchecked), so the demo's heaps are 137 KB and a hello, world's 204 KB. The
+  room goes to OctoGo's float64, IEEE double precision in software since ogo
+  c9eb76c, so that the VMs still fit the 496 KB the P2's ROM boots from an SD
+  card once they are built with an ogo that has it: 506,032 and 506,340 bytes,
+  measured, where they would have been 518,368 and 519,704.
+
 ## v0.1.2
 
 The first release. v0.1.0 and v0.1.1 were tagged but withdrawn before they
