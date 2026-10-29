@@ -349,14 +349,25 @@ the tree or be ahead of what this file knows; do not install over it.
   leaves 137 KB to the heaps, which `obeam` reports. The unchecked VM's
   arena is 261 KB (`arenaUnchecked`, which `make vms` swaps in, in a copy of
   the tree under `build/unchecked`).
-- **The board's slot**: p2-11's 32 GB card belongs there; the user's 4 GB
-  card (FAT32, partition type 0x0b) is for OctoBeam's SD tests. With the
-  P2-EDGE's DIP switch SD on and a card holding `_BOOT_P2.BIX`, the board
-  boots the card at power-on and at a DTR reset, 7.7 s for a VM, and no
-  loader finds it: the card comes out before the board is loaded over USB,
-  the other sessions' loads included. The board's flash holds hello since
-  `obeam flash` was tried on 2026-10-17 (DIP switch FLASH off, so it does not
-  boot it). `scripts/listen.py -r PORT SECS`,
+- **The board's slot and flash**: the slot is empty since 2026-10-29, when
+  the user took p2-11's 32 GB card out: from the evening of 2026-10-28 it
+  stopped answering after resets (TAQOZ printed `CARD: UNKNOWN$00 .. BAD
+  CID`), and only a power cycle cured it, why not known. The user's 4 GB
+  card (FAT32, partition type 0x0b) is for OctoBeam's SD tests; a card goes
+  in and out with the power off, and a power cycle is the cure if it stops
+  answering too. With the P2-EDGE's DIP switch SD on and a card holding
+  `_BOOT_P2.BIX`, the board boots the card at power-on and at a DTR reset,
+  7.7 s for a VM, and no loader finds it: the card comes out before the
+  board is loaded over USB, the other sessions' loads included. The flash
+  holds TAQOZ Reloaded V2.14.0 since 2026-10-28, written by the oforth
+  session at the user's word, and the DIP switch FLASH is on; obeam's hello,
+  which `obeam flash` put there on 2026-10-17, is gone. After a reset that
+  no loader follows the board boots TAQOZ, which talks at 921600 baud, so
+  garbage at 230400 after a reset is TAQOZ; with the slot empty it names a
+  card, `SANDISK SD SC128 ...`, the one its image ships with. A loader still
+  finds the board, the ROM answering it for about 130 ms after a reset
+  (ogo's CLAUDE.md). Which of the flash and a card's `_BOOT_P2.BIX` the ROM
+  boots with FLASH on has not been tried. `scripts/listen.py -r PORT SECS`,
   under the lock, resets the board by DTR and prints what it sends. `ogo build` says by how much a build misses; the arena
   (`arenaLongs`) is the lever. DESIGN.md section 8 has where the bytes go.
 - **The image is the bottom of the arena** (`internal/pack/region.go`, DESIGN.md
